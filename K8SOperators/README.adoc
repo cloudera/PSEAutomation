@@ -1,0 +1,166 @@
+= Cloudera Kubernetes Operators Installation Guide
+v0.1, 2025-04-10: Draft
+:description: Installation instructions for Cloudera Kubernetes Operators
+:toc: left
+:toclevels: 2
+:sectnums:
+:source-highlighter: rouge
+:icons: font
+:imagesdir: ./images
+:hide-uri-scheme:
+:homepage: https://github.com/cloudera/cloudera-partners
+
+[WARNING]
+====
+📝 **DRAFT** — This document is WIP and Not Final.
+====
+
+== Overview
+
+This document walks through the installation and setup of Cloudera's Kubernetes Operators on a local instance for development and testing.
+The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operators[here]
+
+== Minimum Pre-Requisites
+
+. Ubuntu version 24 and above 
+.. Recommended Ubuntu 24.04.2 LTS
+. 16 GB RAM
+. 100GB HD
+
+. Cloudera license
+.. Request a https://github.com/cloudera/cloudera-partners/tree/main/PartnerResources#partner-developer-license-program[Free Partner Developer License]
+
+== Installation
+
+. Get the latest updates
++
+[source, bash]
+----
+sudo apt-get update
+----
+
+. Install docker
+.. Remove old docker instance
++
+[source, bash]
+----
+sudo apt remove docker docker-engine docker.io containerd runc
+----
+
+.. Install dependencies
++
+[source, bash]
+----
+sudo apt install ca-certificates curl gnupg lsb-release
+----
+
+.. Add Docker GPG Key & Repository
++
+[source, bash]
+----
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+----
+
+.. Add Docker Repo
++
+[source, bash]
+----
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+----
+
+.. Install 
++
+[source, bash]
+----
+sudo apt-get update
+yes | sudo apt-get install docker-ce docker-ce-cli
+----
+
+.. Manage Docker as a Non-Root User
++
+[source, bash]
+----
+sudo usermod -aG docker $USER
+----
+
+... Refresh group changes
++
+[source, bash]
+----
+newgrp docker
+----
+
+.. Enable Docker to start on Boot
++
+[source, bash]
+----
+sudo systemctl enable docker
+sudo systemctl start docker
+----
+
+. Install latest version of kubectl
++
+[source, bash]
+----
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+----
+
+.. Make it installable and move to PATH
++
+[source, bash]
+----
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+----
+
+. Install k9s utility for management
++
+[source, bash]
+----
+curl -LO https://github.com/derailed/k9s/releases/latest/download/k9s_Linux_amd64.deb
+sudo dpkg -i k9s_Linux_amd64.deb
+rm k9s_Linux_amd64.deb
+----
+
+. Install helm
++
+[source, bash]
+----
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+----
+
+. Install minikube
++
+[source, bash]
+----
+curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+sudo install minikube-linux-amd64 /usr/local/bin/minikube
+rm minikube-linux-amd64  # Cleanup
+----
+
+[NOTE]
+====
+TODO : Verify where to get the latest version of OpenLDAP 
+====
+. Deploy OpenLDAP in Kubernetes
++
+[source, bash]
+----
+helm repo add osixia https://osixia.github.io/helm-charts/
+helm install openldap osixia/openldap --namespace openldap --create-namespace
+----
+
+. Install cert-manager (for automatic SSL/TLS certificate management in Kubernetes)
++
+[source, bash]
+----
+helm repo add jetstack https://charts.jetstack.io --force-update
+helm install \
+  cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --set crds.enabled=true
+----
