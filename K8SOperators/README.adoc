@@ -141,16 +141,12 @@ sudo install minikube-linux-amd64 /usr/local/bin/minikube
 rm minikube-linux-amd64  # Cleanup
 ----
 
-[NOTE]
-====
-TODO : Verify where to get the latest version of OpenLDAP 
-====
 . Deploy OpenLDAP in Kubernetes
 +
 [source, bash]
 ----
-helm repo add osixia https://osixia.github.io/helm-charts/
-helm install openldap osixia/openldap --namespace openldap --create-namespace
+helm repo add helm-openldap https://jp-gouin.github.io/helm-openldap/
+helm install openldap helm-openldap/openldap-stack-ha --create-namespace --namespace openldap -f openldap-values.yaml
 ----
 
 . Install cert-manager (for automatic SSL/TLS certificate management in Kubernetes)
@@ -164,3 +160,489 @@ helm install \
   --create-namespace \
   --set crds.enabled=true
 ----
+
+. Deploy ClusterIssuer
++
+[source, bash]
+----
+cat <<EOF > clusterissuer.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: self-signed-ca-issuer
+spec:
+  selfSigned: {}
+EOF
+kubectl apply -f clusterissuer.yaml
+----
+
+. Deploy CFM Operator
+.. Create namespace
++
+[source, bash]
+----
+kubectl create namespace cfm-operator-system
+----
+
+.. Create Docker registry secret
++
+[source, bash]
+----
+kubectl create secret docker-registry docker-pull-secret \
+  --namespace cfm-operator-system \
+  --docker-server container.repository.cloudera.com \
+  --docker-username ${Cloudera_username} \
+  --docker-password ${Cloudera_password}
+----
+
+.. Create license secret
++
+[source, bash]
+----
+kubectl create secret generic cfm-operator-license \
+  --from-file=license.txt=./cloudera_license.txt \
+  -n cfm-operator-system
+# where cloudera_license.txt is the Cloudera license file.
+----
+
+.. Download and extract the CFM Operator package
++
+[source, bash]
+----
+curl -u "${Cloudera_username}:${Cloudera_password}" \
+  -O https://archive.cloudera.com/p/cfm-operator/cfm-operator-${cfm_operator_version}.tgz
+
+tar -xvzf cfm-operator-${cfm_operator_version}.tgz
+----
+
+.. Install the CFM Operator using Helm
++
+[source, bash]
+----
+helm install cfm-operator ./cfm-operator \
+  --create-namespace \
+  --namespace cfm-operator-system \
+  --set installCRDs=true \
+  --set image.repository=container.repository.cloudera.com/cloudera/cfm-operator \
+  --set image.tag=${cfm_operator_version} \
+  --set licenseSecret=cfm-operator-license
+----
+
+. Deploy NiFi
+.. Create namespace
++
+[source, bash]
+----
+kubectl create namespace demo-nifi
+----
+
+.. Create Docker registry secret for NiFi
++
+[source, bash]
+----
+kubectl create secret docker-registry docker-pull-secret \
+  --namespace demo-nifi \
+  --docker-server container.repository.cloudera.com \
+  --docker-username ${Cloudera_username} \
+  --docker-password ${Cloudera_password}
+----
+
+.. Create OpenLDAP secret (if using LDAP)
++
+[source, bash]
+----
+kubectl create secret generic openldap-creds \
+  --from-literal=managerPassword=${ldapadmin_password} \
+  -n demo-nifi
+----
+
+.. Apply NiFi configuration overrides
++
+[source, bash]
+----
+# Make sure you're in the same directory where nifi_overrides.yaml exists.
+kubectl apply -f nifi_overrides.yaml -n demo-nifi
+----
+
+.. Expose the NiFi UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2 instance)
+
+... Change NiFi service type to NodePort
++
+[source, bash]
+----
+kubectl -n demo-nifi patch svc demonifi-web \
+  -p '{"spec": {"type": "NodePort"}}'
+----
+
+... Get the NodePort value
++
+[source, bash]
+----
+kubectl get svc demonifi-web -n demo-nifi -o jsonpath='{.spec.ports[*].nodePort}'
+----
+
+... SSH tunneling example
++
+[source, bash]
+----
+ssh -L 8443:192.168.49.2:32156 ubuntu@13.215.183.137
+----
+
+... SSH tunneling with PEM key
++
+[source, bash]
+----
+ssh -f -N -i ~/userconfig/akt-keypair.pem \
+  -L 8443:192.168.49.2:32156 ubuntu@13.229.113.107
+----
+
+. Deploy NiFi Registry
+.. Create namespace
++
+[source,bash]
+----
+kubectl create namespace demo-nifi-registry
+----
+
+.. Create Docker registry secret for NiFi Registry
++
+[source,bash]
+----
+kubectl create secret docker-registry docker-pull-secret \
+  --namespace demo-nifi-registry \
+  --docker-server container.repository.cloudera.com \
+  --docker-username ${Cloudera_username} \
+  --docker-password ${Cloudera_password}
+----
+
+.. Create OpenLDAP secret (if using LDAP)
++
+[source,bash]
+----
+kubectl create secret generic openldap-creds \
+  --from-literal=managerPassword=${managerPassword} \
+  -n demo-nifi-registry
+----
+
+.. Apply NiFi Registry configuration
++
+[source,bash]
+----
+# Make sure you're in the same directory where nifiregistry.yaml exists.
+kubectl apply -f nifiregistry.yaml --namespace demo-nifi-registry
+----
+
+.. Expose the NiFi Registry UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2 instance)
+
+... Change NiFi Registry service type to NodePort
++
+[source,bash]
+----
+kubectl -n demo-nifi-registry patch svc demonifiregistry-web \
+  -p '{"spec": {"type": "NodePort"}}'
+----
+
+... Get the NodePort value
++
+[source,bash]
+----
+kubectl get svc demonifiregistry-web -n demo-nifi-registry -o jsonpath='{.spec.ports[*].nodePort}'
+----
+
+... SSH tunneling with PEM key
++
+[source,bash]
+----
+ssh -f -N -i ~/userconfig/akt-keypair.pem \
+  -L 18443:192.168.49.2:30888 ubuntu@13.212.218.1
+----
+
+. Deploy CSA operator
+.. Create namespace
++ 
+[source,bash]
+----
+kubectl create namespace csa-operator-system
+----
+
+.. Create Docker registry secret for CSA
++ 
+[source,bash]
+----
+kubectl create secret docker-registry docker-pull-secret \
+  --namespace csa-operator-system \
+  --docker-server container.repository.cloudera.com \
+  --docker-username ${Cloudera_username} \
+  --docker-password ${Cloudera_password}
+----
+
+.. Set environment variables for Cloudera username and password
++ 
+[source,bash]
+----
+export Cloudera_username="${Cloudera_username}"
+export Cloudera_password="${Cloudera_password}"
+----
+
+.. Log in to Cloudera registry using Helm
++ 
+[source,bash]
+----
+echo "${Cloudera_password}" | helm registry login container.repository.cloudera.com \
+    --username "$Cloudera_username" \
+    --password-stdin
+----
+
+.. Install CSA operator using Helm
++ 
+[source,bash]
+----
+helm install csa-operator --namespace csa-operator-system \
+    --set 'flink-kubernetes-operator.imagePullSecrets[0].name=docker-pull-secret' \
+    --set 'ssb.sse.image.imagePullSecrets[0].name=docker-pull-secret' \
+    --set 'ssb.sqlRunner.image.imagePullSecrets[0].name=docker-pull-secret' \
+    --set-file flink-kubernetes-operator.clouderaLicense.fileContent=./cloudera_license.txt \
+oci://container.repository.cloudera.com/cloudera-helm/csa-operator/csa-operator --version ${csa_operator_version}
+----
+
+.. Verify CSA operator installation
++ 
+[source,bash]
+----
+kubectl get pods -n csa-operator-system
+----
+
+.. Install Maven for building Flink image on your localhost
++ 
+[source,bash]
+----
+sudo apt-get update -y
+sudo apt install maven -y
+mvn --version
+----
+
+. Deploy Flink
+.. Log in to Cloudera registry
++ 
+[source,bash]
+----
+echo "${Cloudera_password}" | docker login container.repository.cloudera.com --username "$Cloudera_username" --password-stdin
+----
+
+.. Clone the Flink tutorial repository
++ 
+[source,bash]
+----
+git clone https://github.com/cloudera/flink-tutorials.git -b CSA-OPERATOR-1.2.0
+cd flink-tutorials/flink-kubernetes-tutorial
+mvn clean package
+docker build -t flink-kubernetes-tutorial .
+----
+
+.. Optional: Push the image to a Docker repository (currently loading to minikube directly)
++ 
+[source,bash]
+----
+docker image tag flink-kubernetes-tutorial [***REGISTRY HOST***]:[***PORT***]/[***PROJECT***]/flink-kubernetes-tutorial:latest
+docker push [***REGISTRY HOST***]:[***PORT***]/[***PROJECT***]/flink-kubernetes-tutorial:latest
+----
+
+.. Load the image into Minikube container
++ 
+[source,bash]
+----
+docker save flink-kubernetes-tutorial:latest -o flink-kubernetes-tutorial.tar
+docker cp flink-kubernetes-tutorial.tar minikube:flink-kubernetes-tutorial.tar
+docker exec minikube docker load -i flink-kubernetes-tutorial.tar
+----
+
+.. Deploy Flink application
++ 
+[source,bash]
+----
+kubectl -n csa-operator-system apply -f flink-deployment.yaml
+----
+
+.. Access Flink UI when running on local laptop
++ 
+[source,bash]
+----
+kubectl -n csa-operator-system port-forward service/flink-kubernetes-tutorial-rest 8081:8081
+----
+
+.. Access Flink UI when running Minikube on EC2 instance
+... Patch cluster IP service to NodePort
++ 
+[source,bash]
+----
+kubectl -n csa-operator-system patch svc flink-kubernetes-tutorial-rest -p '{"spec": {"type": "NodePort"}}'
+----
+
+... Get the NodePort value
++ 
+[source,bash]
+----
+kubectl get svc <service-name> -n <namespace> -o jsonpath='{.spec.ports[*].nodePort}'
+----
+
+... SSH tunneling for local port forward
++ 
+[source,bash]
+----
+ssh -f -N -i ~/userconfig/akt-keypair.pem -L 8081:192.168.49.2:31905 ubuntu@18.142.236.24
+----
+
+.. Access SSB UI
+... Change SSB service type to NodePort
++ 
+[source,bash]
+----
+kubectl -n csa-operator-system patch svc ssb-sse -p '{"spec": {"type": "NodePort"}}'
+----
+
+... Get the NodePort value for SSB UI
++ 
+[source,bash]
+----
+kubectl get svc <service-name> -n <namespace> -o jsonpath='{.spec.ports[*].nodePort}'
+----
+
+... SSH tunneling for local port forward
++ 
+[source,bash]
+----
+ssh -f -N -i ~/userconfig/akt-keypair.pem -L 18121:192.168.49.2:32688 ubuntu@18.142.236.24
+----
+
+. Deploy CSM Operator
+.. Create namespace for CSM Operator
++ 
+[source,bash]
+----
+kubectl create namespace csm-operator-system
+----
+
+.. Create Docker registry secret for CSM Operator
++ 
+[source,bash]
+----
+kubectl create secret docker-registry docker-pull-secret \
+  --namespace csm-operator-system \
+  --docker-server container.repository.cloudera.com \
+  --docker-username ${Cloudera_username} \
+  --docker-password ${Cloudera_password}
+----
+
+.. Set environment variables for Cloudera username and password
++ 
+[source,bash]
+----
+export Cloudera_username="${Cloudera_username}"
+export Cloudera_password="${Cloudera_password}"
+----
+
+.. Log in to Cloudera registry using Helm
++ 
+[source,bash]
+----
+echo "${Cloudera_password}" | helm registry login container.repository.cloudera.com \
+    --username "$Cloudera_username" \
+    --password-stdin
+----
+
+.. Install Strimzi Kafka Operator using Helm
++ 
+[source,bash]
+----
+helm install strimzi-cluster-operator \
+  --namespace csm-operator-system \
+  --set 'image.imagePullSecrets[0].name=docker-pull-secret' \
+  --set-file clouderaLicense.fileContent=./cloudera_license.txt \
+  --set watchAnyNamespace=true \
+  oci://container.repository.cloudera.com/cloudera-helm/csm-operator/strimzi-kafka-operator \
+  --version ${strimzi-kafka-operator}
+----
+
+.. Verify CSM Operator installation
++ 
+[source,bash]
+----
+kubectl get deployments --namespace csm-operator-system
+kubectl get pods --namespace csm-operator-system
+----
+
+. Deploy Kafka
+.. Create namespace for Kafka
++ 
+[source,bash]
+----
+kubectl create namespace cloudera-kafka-demo
+----
+
+.. Create Docker registry secret for Kafka
++ 
+[source,bash]
+----
+kubectl create secret docker-registry docker-pull-secret \
+  --namespace cloudera-kafka-demo \
+  --docker-server container.repository.cloudera.com \
+  --docker-username ${Cloudera_username} \
+  --docker-password ${Cloudera_password}
+----
+
+.. Apply Kafka configurations
++ 
+[source,bash]
+----
+# Make sure all the values.yaml exist in the same directory.
+kubectl apply --filename kafka.yaml,nodepool-broker.yaml,nodepool-controller.yaml -n cloudera-kafka-demo
+----
+
+. Validating a Kafka cluster
+.. Create topic using Kafka Admin
++ 
+[source,bash]
+----
+IMAGE=$(kubectl get pod kafka-cluster-broker-0 --namespace cloudera-kafka-demo --output jsonpath='{.spec.containers[0].image}')
+kubectl run kafka-admin -it \
+  --namespace cloudera-kafka-demo \
+  --image=$IMAGE \
+  --rm=true \
+  --restart=Never \
+  --command -- /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server kafka-cluster-kafka-bootstrap:9092 \
+    --create \
+    --topic my-topic
+----
+
+.. Produce message to the Kafka topic using Kafka console producer
++ 
+[source,bash]
+----
+kubectl run kafka-producer -it \
+  --namespace cloudera-kafka-demo \
+  --image=$IMAGE \
+  --rm=true \
+  --restart=Never \
+  --command -- /opt/kafka/bin/kafka-console-producer.sh \
+    --bootstrap-server kafka-cluster-kafka-bootstrap:9092 \
+    --topic my-topic
+----
+
+.. Consume messages from Kafka topic using Kafka console consumer
++ 
+[source,bash]
+----
+kubectl run kafka-consumer -it \
+  --namespace cloudera-kafka-demo \
+  --image=$IMAGE \
+  --rm=true \
+  --restart=Never \
+  --command -- /opt/kafka/bin/kafka-console-consumer.sh \
+    --bootstrap-server kafka-cluster-kafka-bootstrap:9092 \
+    --topic my-topic \
+    --from-beginning
+----
+
+
+
