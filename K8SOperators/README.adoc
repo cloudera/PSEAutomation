@@ -292,8 +292,8 @@ ssh -L 8443:192.168.49.2:32156 ubuntu@13.215.183.137
 +
 [source, bash]
 ----
-ssh -f -N -i ~/userconfig/akt-keypair.pem \
-  -L 8443:192.168.49.2:32156 ubuntu@13.229.113.107
+ssh -f -N -i <PEM_FILE_LOCATION> \
+  -L 8443:192.168.49.2:<NodePort> ubuntu@<ec2PublicIp>
 ----
 
 . Deploy NiFi Registry
@@ -353,8 +353,8 @@ kubectl get svc demonifiregistry-web -n demo-nifi-registry -o jsonpath='{.spec.p
 +
 [source,bash]
 ----
-ssh -f -N -i ~/userconfig/akt-keypair.pem \
-  -L 18443:192.168.49.2:30888 ubuntu@13.212.218.1
+ssh -f -N -i <PEM_FILE_LOCATION> \
+  -L 18443:192.168.49.2:<NodePort> ubuntu@<ec2PublicIp>
 ----
 
 . Deploy CSA operator
@@ -412,70 +412,48 @@ oci://container.repository.cloudera.com/cloudera-helm/csa-operator/csa-operator 
 kubectl get pods -n csa-operator-system
 ----
 
-.. Install Maven for building Flink image on your localhost
-+ 
-[source,bash]
-----
-sudo apt-get update -y
-sudo apt install maven -y
-mvn --version
-----
-
 . Deploy Flink
-.. Log in to Cloudera registry
-+ 
-[source,bash]
-----
-echo "${Cloudera_password}" | docker login container.repository.cloudera.com --username "$Cloudera_username" --password-stdin
-----
-
-.. Clone the Flink tutorial repository
-+ 
-[source,bash]
-----
-git clone https://github.com/cloudera/flink-tutorials.git -b CSA-OPERATOR-1.2.0
-cd flink-tutorials/flink-kubernetes-tutorial
-mvn clean package
-docker build -t flink-kubernetes-tutorial .
-----
-
-.. Optional: Push the image to a Docker repository (currently loading to minikube directly)
-+ 
-[source,bash]
-----
-docker image tag flink-kubernetes-tutorial [***REGISTRY HOST***]:[***PORT***]/[***PROJECT***]/flink-kubernetes-tutorial:latest
-docker push [***REGISTRY HOST***]:[***PORT***]/[***PROJECT***]/flink-kubernetes-tutorial:latest
-----
-
-.. Load the image into Minikube container
-+ 
-[source,bash]
-----
-docker save flink-kubernetes-tutorial:latest -o flink-kubernetes-tutorial.tar
-docker cp flink-kubernetes-tutorial.tar minikube:flink-kubernetes-tutorial.tar
-docker exec minikube docker load -i flink-kubernetes-tutorial.tar
-----
-
-.. Deploy Flink application
+.. Deploy Flink application using session Cluster deployments
 + 
 [source,bash]
 ----
 kubectl -n csa-operator-system apply -f flink-deployment.yaml
 ----
 
+.. Below is how you can deploy Flink job [Optional]
++ 
+[source,bash]
+----
+cat <<EOF > flink_job_session.yaml
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkSessionJob
+metadata:
+  name: basic-session-job-example
+spec:
+  deploymentName: <FLINK_DEMPLOYMENT_NAME>
+  job:
+    jarURI: https://repo1.maven.org/maven2/org/apache/flink/flink-examples-streaming_2.12/1.16.1/flink-examples-streaming_2.12-1.16.1-TopSpeedWindowing.jar
+    parallelism: 4
+    upgradeMode: stateless
+EOF
+#For deploymentName: please use the name you chose for your flink application deployment in the previous step (e.g., deploymentName: demo-flink)
+
+kubectl apply -f flink_job_session.yaml
+----
+
 .. Access Flink UI when running on local laptop
 + 
 [source,bash]
 ----
-kubectl -n csa-operator-system port-forward service/flink-kubernetes-tutorial-rest 8081:8081
+kubectl -n csa-operator-system port-forward service/demo-flink-rest 8081:8081
 ----
 
-.. Access Flink UI when running Minikube on EC2 instance
+.. Expose the Flink UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2 instance)
 ... Patch cluster IP service to NodePort
 + 
 [source,bash]
 ----
-kubectl -n csa-operator-system patch svc flink-kubernetes-tutorial-rest -p '{"spec": {"type": "NodePort"}}'
+kubectl -n csa-operator-system patch svc demo-flink-rest -p '{"spec": {"type": "NodePort"}}'
 ----
 
 ... Get the NodePort value
@@ -489,10 +467,10 @@ kubectl get svc <service-name> -n <namespace> -o jsonpath='{.spec.ports[*].nodeP
 + 
 [source,bash]
 ----
-ssh -f -N -i ~/userconfig/akt-keypair.pem -L 8081:192.168.49.2:31905 ubuntu@18.142.236.24
+ssh -f -N -i <PEM_FILE_LOCATION> -L 8081:192.168.49.2:<NodePort> ubuntu@<ec2PublicIp>
 ----
 
-.. Access SSB UI
+.. Expose the SSB UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2 instance)
 ... Change SSB service type to NodePort
 + 
 [source,bash]
@@ -511,7 +489,7 @@ kubectl get svc <service-name> -n <namespace> -o jsonpath='{.spec.ports[*].nodeP
 + 
 [source,bash]
 ----
-ssh -f -N -i ~/userconfig/akt-keypair.pem -L 18121:192.168.49.2:32688 ubuntu@18.142.236.24
+ssh -f -N -i <PEM_FILE_LOCATION> -L 18121:192.168.49.2:<NodePort> ubuntu@<ec2PublicIp>
 ----
 
 . Deploy CSM Operator
@@ -643,6 +621,7 @@ kubectl run kafka-consumer -it \
     --topic my-topic \
     --from-beginning
 ----
+
 
 
 

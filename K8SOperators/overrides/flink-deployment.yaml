@@ -1,9 +1,9 @@
 apiVersion: flink.apache.org/v1beta1
 kind: FlinkDeployment
 metadata:
-  name: flink-kubernetes-tutorial
+  name: demo-flink
 spec:
-  image: flink-kubernetes-tutorial:latest
+  image: container.repository.cloudera.com/cloudera/flink:1.19.2-csaop1.2.0-b27
   flinkVersion: v1_19
   flinkConfiguration:
     taskmanager.numberOfTaskSlots: "4"
@@ -17,9 +17,7 @@ spec:
     resource:
       memory: "2048m"
       cpu: 1
-  job:
-    args: ["--rowsPerSec", "10"]
-    jarURI: local:///opt/flink/usrlib/flink-kubernetes-tutorial.jar
-    parallelism: 4
-    state: running
-    upgradeMode: stateless
+  podTemplate:
+    spec:
+      imagePullSecrets:
+        - name: docker-pull-secret
