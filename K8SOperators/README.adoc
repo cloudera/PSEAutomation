@@ -32,6 +32,10 @@ The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operato
 
 == Installation
 
+[NOTE]
+====
+📝 All `**yaml**` files used for deploying various resources can be found in the link:./overrides[`**overrides**`] folder.
+====
 . Get the latest updates
 +
 [source, bash]
