@@ -145,6 +145,20 @@ sudo install minikube-linux-amd64 /usr/local/bin/minikube
 rm minikube-linux-amd64  # Cleanup
 ----
 
+.. Start minikube
++
+[source, bash]
+----
+minikube start --cpus 8 --memory 30000
+----
+
+.. Verify minikube status
++
+[source, bash]
+----
+minikube status
+----
+
 . Deploy OpenLDAP in Kubernetes
 +
 [source, bash]
