@@ -6,12 +6,12 @@ spec:
   replicas: 1
   image:
     repository: container.repository.cloudera.com/cloudera/cfm-nifi-k8s
-    tag: 2.9.0-b96-nifi_1.27.0.2.3.14.0-14
+    tag: 2.10.0-b134-nifi_1.28.1.2.3.15.0-29
     pullSecret: docker-pull-secret
     pullPolicy: IfNotPresent
   tiniImage:
     repository: container.repository.cloudera.com/cloudera/cfm-tini
-    tag: 2.9.0-b96
+    tag: 2.10.0-b134
     pullSecret: docker-pull-secret
     pullPolicy: IfNotPresent
   hostName: demonifi.dimoperators.clouderapartners.click
