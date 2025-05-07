@@ -22,7 +22,7 @@ The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operato
 
 == Minimum Pre-Requisites
 
-. Ubuntu version 24 and above 
+. Ubuntu version 22.04 and above 
 .. Recommended Ubuntu 24.04.2 LTS
 . 16 GB RAM
 . 100GB HD
@@ -36,6 +36,29 @@ The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operato
 ====
 📝 All `**yaml**` files used for deploying various resources can be found in the link:./overrides[`**overrides**`] folder.
 ====
+
+=== Base Setup
+. Create a directory `**k8soperators**` and place `cloudera_license` file, `overrides` directory under it.
++
+[source, bash]
+----
+mkdir ~/k8soperators
+git clone --depth 1 --branch feature/k8soperators https://github.com/cloudera/cloudera-partners.git /tmp/repo && \
+    cp -r /tmp/repo/K8SOperators/overrides ~/k8soperators/ && \
+    rm -rf /tmp/repo
+
+#Similarly copy the cloudera_license file to this directory.
+# Verify the content
+ls -la ~/k8soperators/
+total 16
+drwxrwxr-x  3 ubuntu ubuntu 4096 May  7 10:05 .
+drwxr-x--- 10 ubuntu ubuntu 4096 May  7 10:05 ..
+-rw-rw-r--  1 ubuntu docker 1142 May  7 08:23 cloudera_license.txt
+drwxrwxr-x  2 ubuntu docker 4096 May  7 10:05 overrides
+
+# Run all commands from below location.
+cd ~/k8soperators/
+----
 . Get the latest updates
 +
 [source, bash]
@@ -161,10 +184,20 @@ minikube status
 
 . Deploy OpenLDAP in Kubernetes
 +
+[NOTE]
+====
+Make sure all the instances of `<admin_password>` in `overrides/openldap-values.yaml` are updated with a secure password of your choice.  
+This same password will be used to:
+- Create OpenLDAP secrets
+- Access NiFi and NiFi Registry UIs
+====
+
+.. Deploy OpenLDAP after updating `openldap-values.yaml` file
++
 [source, bash]
 ----
 helm repo add helm-openldap https://jp-gouin.github.io/helm-openldap/
-helm install openldap helm-openldap/openldap-stack-ha --create-namespace --namespace openldap -f openldap-values.yaml
+helm install openldap helm-openldap/openldap-stack-ha --create-namespace --namespace openldap -f overrides/openldap-values.yaml
 ----
 
 . Install cert-manager (for automatic SSL/TLS certificate management in Kubernetes)
@@ -194,56 +227,81 @@ EOF
 kubectl apply -f clusterissuer.yaml
 ----
 
-. Deploy CFM Operator
-.. Create namespace
+=== Deploy CFM Operator
+. Create namespace
 +
 [source, bash]
 ----
 kubectl create namespace cfm-operator-system
 ----
 
-.. Create Docker registry secret
+. Set environment variables for Cloudera username and password
++ 
+[source,bash]
+----
+# Update the [***cloudera_username***] and [***cloudera_password***] with your cloudera credentials.
+export cloudera_username="[***cloudera_username***]"
+export cloudera_password="[***cloudera_password***]"
+----
+
+. Create Docker registry secret
 +
 [source, bash]
 ----
 kubectl create secret docker-registry docker-pull-secret \
   --namespace cfm-operator-system \
   --docker-server container.repository.cloudera.com \
-  --docker-username ${Cloudera_username} \
-  --docker-password ${Cloudera_password}
+  --docker-username $cloudera_username \
+  --docker-password $cloudera_password
 ----
 
-.. Create license secret
+. Create license secret
 +
 [source, bash]
 ----
+#In below command `cloudera_license.txt` is the Cloudera license file. Make sure the license file exists in k8soperators folder.
 kubectl create secret generic cfm-operator-license \
   --from-file=license.txt=./cloudera_license.txt \
   -n cfm-operator-system
-# where cloudera_license.txt is the Cloudera license file.
+
 ----
 
-.. Download and extract the CFM Operator package
+. Download the cfmctl binary
++
+[NOTE]
+====
+📝 Download `cfmctl` binary as per your OS architecture. Available binary options list [`cfmctl-darwin-amd64`, `cfmctl-darwin-arm64`, `cfmctl-linux-amd64`, `cfmctl-linux-arm64`, `cfmctl-windows-amd64`, `cfmctl-windows-arm64`]
+====
+
+. Below command downloads `cfmctl-linux-amd64`
 +
 [source, bash]
 ----
-curl -u "${Cloudera_username}:${Cloudera_password}" \
-  -O https://archive.cloudera.com/p/cfm-operator/cfm-operator-${cfm_operator_version}.tgz
-
-tar -xvzf cfm-operator-${cfm_operator_version}.tgz
+curl -u "${cloudera_username}:${cloudera_password}" \
+  -O https://archive.cloudera.com/p/cfm-operator/cfmctl-linux-amd64
+chmod +x cfmctl-linux-amd64
+mv cfmctl-linux-amd64 cfmctl
 ----
 
-.. Install the CFM Operator using Helm
+. Install the CFM Operator using cfmctl
 +
 [source, bash]
 ----
-helm install cfm-operator ./cfm-operator \
-  --create-namespace \
-  --namespace cfm-operator-system \
-  --set installCRDs=true \
-  --set image.repository=container.repository.cloudera.com/cloudera/cfm-operator \
-  --set image.tag=${cfm_operator_version} \
-  --set licenseSecret=cfm-operator-license
+./cfmctl install --license [***LICENSE***] \
+--image-repository "[***IMAGE REPOSITORY***]" \
+--image-tag "[***OPERATOR VERSION***]" \
+–values [***VALUES.YAML***] \
+--namespace [***OPERATOR NAMESPACE***]
+----
+
+.. Example Usage:
++
+[source, bash]
+----
+./cfmctl install --license ./cloudera_license.txt \
+--image-repository container.repository.cloudera.com/cloudera/cfm-operator \
+--image-tag 2.10.0-b134 \
+--namespace cfm-operator-system
 ----
 
 . Deploy NiFi
@@ -261,16 +319,17 @@ kubectl create namespace demo-nifi
 kubectl create secret docker-registry docker-pull-secret \
   --namespace demo-nifi \
   --docker-server container.repository.cloudera.com \
-  --docker-username ${Cloudera_username} \
-  --docker-password ${Cloudera_password}
+  --docker-username ${cloudera_username} \
+  --docker-password ${cloudera_password}
 ----
 
 .. Create OpenLDAP secret (if using LDAP)
 +
 [source, bash]
 ----
+# Make sure to use the same <admin_password> mentioned in `openldap-values.yaml` while deploying openldap chart.
 kubectl create secret generic openldap-creds \
-  --from-literal=managerPassword=${ldapadmin_password} \
+  --from-literal=managerPassword=[***admin_passpord***] \
   -n demo-nifi
 ----
 
@@ -278,8 +337,7 @@ kubectl create secret generic openldap-creds \
 +
 [source, bash]
 ----
-# Make sure you're in the same directory where nifi_overrides.yaml exists.
-kubectl apply -f nifi_overrides.yaml -n demo-nifi
+kubectl apply -f overrides/nifi_overrides.yaml -n demo-nifi
 ----
 
 .. Expose the NiFi UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2 instance)
@@ -329,16 +387,17 @@ kubectl create namespace demo-nifi-registry
 kubectl create secret docker-registry docker-pull-secret \
   --namespace demo-nifi-registry \
   --docker-server container.repository.cloudera.com \
-  --docker-username ${Cloudera_username} \
-  --docker-password ${Cloudera_password}
+  --docker-username ${cloudera_username} \
+  --docker-password ${cloudera_password}
 ----
 
 .. Create OpenLDAP secret (if using LDAP)
 +
 [source,bash]
 ----
+# Make sure to use the same <admin_password> mentioned in `openldap-values.yaml` while deploying openldap chart.
 kubectl create secret generic openldap-creds \
-  --from-literal=managerPassword=${managerPassword} \
+  --from-literal=managerPassword=[***admin_passpord***] \
   -n demo-nifi-registry
 ----
 
@@ -346,8 +405,7 @@ kubectl create secret generic openldap-creds \
 +
 [source,bash]
 ----
-# Make sure you're in the same directory where nifiregistry.yaml exists.
-kubectl apply -f nifiregistry.yaml --namespace demo-nifi-registry
+kubectl apply -f overrides/nifiregistry.yaml --namespace demo-nifi-registry
 ----
 
 .. Expose the NiFi Registry UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2 instance)
@@ -375,43 +433,56 @@ ssh -f -N -i <PEM_FILE_LOCATION> \
   -L 18443:192.168.49.2:<NodePort> ubuntu@<ec2PublicIp>
 ----
 
-. Deploy CSA operator
-.. Create namespace
+=== Deploy CSA operator
+. Create namespace
 + 
 [source,bash]
 ----
 kubectl create namespace csa-operator-system
 ----
 
-.. Create Docker registry secret for CSA
+. Set environment variables for Cloudera username and password
++ 
+[source,bash]
+----
+# Update the [***cloudera_username***] and [***cloudera_password***] with your cloudera credentials.
+export cloudera_username="[***cloudera_username***]"
+export cloudera_password="[***cloudera_password***]"
+----
+
+. Create Docker registry secret for CSA
 + 
 [source,bash]
 ----
 kubectl create secret docker-registry docker-pull-secret \
   --namespace csa-operator-system \
   --docker-server container.repository.cloudera.com \
-  --docker-username ${Cloudera_username} \
-  --docker-password ${Cloudera_password}
+  --docker-username ${cloudera_username} \
+  --docker-password ${cloudera_password}
 ----
 
-.. Set environment variables for Cloudera username and password
+. Log in to Cloudera registry using Helm
 + 
 [source,bash]
 ----
-export Cloudera_username="${Cloudera_username}"
-export Cloudera_password="${Cloudera_password}"
-----
-
-.. Log in to Cloudera registry using Helm
-+ 
-[source,bash]
-----
-echo "${Cloudera_password}" | helm registry login container.repository.cloudera.com \
-    --username "$Cloudera_username" \
+echo "${cloudera_password}" | helm registry login container.repository.cloudera.com \
+    --username "$cloudera_username" \
     --password-stdin
 ----
 
-.. Install CSA operator using Helm
+. Install CSA operator using Helm
++ 
+[source,bash]
+----
+helm install csa-operator --namespace [***NAMESPACE***] \
+    --set 'flink-kubernetes-operator.imagePullSecrets[0].name=[***SECRET NAME***]' \
+    --set 'ssb.sse.image.imagePullSecrets[0].name=[***SECRET NAME***]' \
+    --set 'ssb.sqlRunner.image.imagePullSecrets[0].name=[***SECRET NAME***]' \
+    --set-file flink-kubernetes-operator.clouderaLicense.fileContent=[***PATH TO LICENSE FILE***] \
+oci://container.repository.cloudera.com/cloudera-helm/csa-operator/csa-operator --version [***csa_operator_version***]
+----
+
+.. Example Usage:
 + 
 [source,bash]
 ----
@@ -420,13 +491,14 @@ helm install csa-operator --namespace csa-operator-system \
     --set 'ssb.sse.image.imagePullSecrets[0].name=docker-pull-secret' \
     --set 'ssb.sqlRunner.image.imagePullSecrets[0].name=docker-pull-secret' \
     --set-file flink-kubernetes-operator.clouderaLicense.fileContent=./cloudera_license.txt \
-oci://container.repository.cloudera.com/cloudera-helm/csa-operator/csa-operator --version ${csa_operator_version}
+oci://container.repository.cloudera.com/cloudera-helm/csa-operator/csa-operator --version 1.2.0-b27
 ----
 
-.. Verify CSA operator installation
+. Verify CSA operator installation
 + 
 [source,bash]
 ----
+# Make sure all the pods are in ready state before moving to the next step.
 kubectl get pods -n csa-operator-system
 ----
 
@@ -435,11 +507,19 @@ kubectl get pods -n csa-operator-system
 + 
 [source,bash]
 ----
-kubectl -n csa-operator-system apply -f flink-deployment.yaml
+kubectl -n csa-operator-system apply -f overrides/flink-deployment.yaml
 ----
 
-.. Below is how you can deploy Flink job [Optional]
+.. Below is how you can deploy a Flink job [Optional]
 + 
+[NOTE]
+====
+When creating the YAML for job deployment, set `deploymentName` to match the name used in your Flink application deployment defined in `flink-deployment.yaml`.  
+If unchanged, the default name is `demo-flink`.
+====
+
+... Generate values.yaml and deploy the flink job
++
 [source,bash]
 ----
 cat <<EOF > flink_job_session.yaml
@@ -448,13 +528,12 @@ kind: FlinkSessionJob
 metadata:
   name: basic-session-job-example
 spec:
-  deploymentName: <FLINK_DEMPLOYMENT_NAME>
+  deploymentName: [***FLINK_DEPLOYMENT_NAME***]
   job:
     jarURI: https://repo1.maven.org/maven2/org/apache/flink/flink-examples-streaming_2.12/1.16.1/flink-examples-streaming_2.12-1.16.1-TopSpeedWindowing.jar
     parallelism: 4
     upgradeMode: stateless
 EOF
-#For deploymentName: please use the name you chose for your flink application deployment in the previous step (e.g., deploymentName: demo-flink)
 
 kubectl apply -f flink_job_session.yaml
 ----
@@ -510,43 +589,57 @@ kubectl get svc <service-name> -n <namespace> -o jsonpath='{.spec.ports[*].nodeP
 ssh -f -N -i <PEM_FILE_LOCATION> -L 18121:192.168.49.2:<NodePort> ubuntu@<ec2PublicIp>
 ----
 
-. Deploy CSM Operator
-.. Create namespace for CSM Operator
+=== Deploy CSM Operator
+. Create namespace for CSM Operator
 + 
 [source,bash]
 ----
 kubectl create namespace csm-operator-system
 ----
 
-.. Create Docker registry secret for CSM Operator
+. Set environment variables for Cloudera username and password
++ 
+[source,bash]
+----
+# Update the [***cloudera_username***] and [***cloudera_password***] with your cloudera credentials.
+export cloudera_username="[***cloudera_username***]"
+export cloudera_password="[***cloudera_password***]"
+----
+
+. Create Docker registry secret for CSM Operator
 + 
 [source,bash]
 ----
 kubectl create secret docker-registry docker-pull-secret \
   --namespace csm-operator-system \
   --docker-server container.repository.cloudera.com \
-  --docker-username ${Cloudera_username} \
-  --docker-password ${Cloudera_password}
+  --docker-username ${cloudera_username} \
+  --docker-password ${cloudera_password}
 ----
 
-.. Set environment variables for Cloudera username and password
+. Log in to Cloudera registry using Helm
 + 
 [source,bash]
 ----
-export Cloudera_username="${Cloudera_username}"
-export Cloudera_password="${Cloudera_password}"
-----
-
-.. Log in to Cloudera registry using Helm
-+ 
-[source,bash]
-----
-echo "${Cloudera_password}" | helm registry login container.repository.cloudera.com \
-    --username "$Cloudera_username" \
+echo "${cloudera_password}" | helm registry login container.repository.cloudera.com \
+    --username "$cloudera_username" \
     --password-stdin
 ----
 
-.. Install Strimzi Kafka Operator using Helm
+. Install Strimzi Kafka Operator using Helm
++ 
+[source,bash]
+----
+helm install strimzi-cluster-operator \
+  --namespace [***NAMESPACE***] \
+  --set 'image.imagePullSecrets[0].name=[***SECRET NAME***]' \
+  --set-file clouderaLicense.fileContent=[***PATH TO LICENSE FILE***] \
+  --set watchAnyNamespace=true \
+  oci://container.repository.cloudera.com/cloudera-helm/csm-operator/strimzi-kafka-operator \
+  --version [***strimzi-kafka-operator-version***]
+----
+
+.. Example Usage:
 + 
 [source,bash]
 ----
@@ -556,13 +649,14 @@ helm install strimzi-cluster-operator \
   --set-file clouderaLicense.fileContent=./cloudera_license.txt \
   --set watchAnyNamespace=true \
   oci://container.repository.cloudera.com/cloudera-helm/csm-operator/strimzi-kafka-operator \
-  --version ${strimzi-kafka-operator}
+  --version 1.3.0-b52
 ----
 
-.. Verify CSM Operator installation
+. Verify CSM Operator installation
 + 
 [source,bash]
 ----
+# Make sure the deployment and pod is in ready state before moving to next step.
 kubectl get deployments --namespace csm-operator-system
 kubectl get pods --namespace csm-operator-system
 ----
@@ -582,19 +676,25 @@ kubectl create namespace cloudera-kafka-demo
 kubectl create secret docker-registry docker-pull-secret \
   --namespace cloudera-kafka-demo \
   --docker-server container.repository.cloudera.com \
-  --docker-username ${Cloudera_username} \
-  --docker-password ${Cloudera_password}
+  --docker-username ${cloudera_username} \
+  --docker-password ${cloudera_password}
 ----
 
 .. Apply Kafka configurations
 + 
 [source,bash]
 ----
-# Make sure all the values.yaml exist in the same directory.
-kubectl apply --filename kafka.yaml,nodepool-broker.yaml,nodepool-controller.yaml -n cloudera-kafka-demo
+kubectl apply --filename overrides/kafka.yaml,overrides/nodepool-broker.yaml,overrides/nodepool-controller.yaml -n cloudera-kafka-demo
 ----
 
-. Validating a Kafka cluster
+.. Validating a Kafka cluster
++
+[source,bash]
+----
+#Wait until all the pods in cloudera-kafka-demo namespace are in ready state before moving to the next step.
+kubectl get pods -n cloudera-kafka-demo
+----
+
 .. Create topic using Kafka Admin
 + 
 [source,bash]
@@ -623,6 +723,8 @@ kubectl run kafka-producer -it \
   --command -- /opt/kafka/bin/kafka-console-producer.sh \
     --bootstrap-server kafka-cluster-kafka-bootstrap:9092 \
     --topic my-topic
+
+# It'll open an interactive shell. Type the messages and then press <ctrl+c> to exit.
 ----
 
 .. Consume messages from Kafka topic using Kafka console consumer
@@ -638,8 +740,6 @@ kubectl run kafka-consumer -it \
     --bootstrap-server kafka-cluster-kafka-bootstrap:9092 \
     --topic my-topic \
     --from-beginning
+
+# It'll show the produced messages. Press <ctrl+c> to exit.
 ----
-
-
-
-
