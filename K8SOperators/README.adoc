@@ -10,11 +10,6 @@ v0.1, 2025-04-10: Draft
 :hide-uri-scheme:
 :homepage: https://github.com/cloudera/cloudera-partners
 
-[WARNING]
-====
-📝 **DRAFT** — This document is WIP and Not Final.
-====
-
 == Overview
 
 This document walks through the installation and setup of Cloudera's Data In Motion Kubernetes Operators on a local instance for development and testing.
@@ -666,8 +661,8 @@ minikube service demonifi-web --url -n demo-nifi
 +
 [source,bash]
 ----
-😿  service demo-nifi/demonifi-web has no node port
-❗  Services [demo-nifi/demonifi-web] have type "ClusterIP" not meant to be exposed, however for local development minikube allows you to access this !
+  service demo-nifi/demonifi-web has no node port
+  Services [demo-nifi/demonifi-web] have type "ClusterIP" not meant to be exposed, however for local development minikube allows you to access this !
 http://127.0.0.1:53759
 ----
 
@@ -678,7 +673,7 @@ http://127.0.0.1:53759
 https://127.0.0.1:53759/nifi/
 ----
 
-. Expose the NiFi UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2 instance)
+. Expose the NiFi UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2/remote instance)
 
 .. Change NiFi service type to NodePort
 +
@@ -722,8 +717,8 @@ minikube service demonifiregistry-web --url -n demo-nifi-registry
 +
 [source,bash]
 ----
-😿  service demo-nifi-registry/demonifiregistry-web has no node port
-❗  Services [demo-nifi-registry/demonifiregistry-web] have type "ClusterIP" not meant to be exposed, however for local development minikube allows you to access this !
+  service demo-nifi-registry/demonifiregistry-web has no node port
+  Services [demo-nifi-registry/demonifiregistry-web] have type "ClusterIP" not meant to be exposed, however for local development minikube allows you to access this !
 http://127.0.0.1:52866
 ----
 
@@ -734,7 +729,7 @@ http://127.0.0.1:52866
 https://127.0.0.1:52866/nifi-registry/
 ----
 
-. Expose the NiFi Registry UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2 instance/remote host)
+. Expose the NiFi Registry UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2/remote instance)
 
 .. Change NiFi Registry service type to NodePort
 +
@@ -774,7 +769,7 @@ kubectl -n csa-operator-system port-forward service/demo-flink-rest <localport>:
 kubectl -n csa-operator-system port-forward service/ssb-sse 8081:8081
 ----
 
-. Expose the Flink UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2 instance)
+. Expose the Flink UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2/remote instance)
 .. Patch cluster IP service to NodePort
 + 
 [source,bash]
@@ -811,7 +806,7 @@ kubectl -n csa-operator-system port-forward service/ssb-sse <localport>:8081
 kubectl -n csa-operator-system port-forward service/ssb-sse 8081:8081
 ----
 
-. Expose the SSB UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2 instance)
+. Expose the SSB UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2/remote instance)
 .. Change SSB service type to NodePort
 + 
 [source,bash]
