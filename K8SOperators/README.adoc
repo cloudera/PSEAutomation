@@ -17,10 +17,10 @@ The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operato
 
 == Recommended Pre-Requisites
 
-. Ubuntu version 24.04 (Ubuntu version 22.04 and above are also supported)
+. Ubuntu 24.04
 . 8 vCPU
 . 32 GB RAM
-. 100GB storage
+. 100 GB storage
 
 . Cloudera license
 .. Request a https://github.com/cloudera/cloudera-partners/tree/main/PartnerResources#partner-developer-license-program[Free Partner Developer License]
@@ -29,7 +29,7 @@ The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operato
 
 [NOTE]
 ====
-📝 All `**yaml**` files used for deploying various resources can be found in the link:./overrides[`**overrides**`] folder.
+📝 All `**yaml**` files used for deploying various resources are located in the link:./overrides[`**overrides**`] folder.
 ====
 
 === Base Setup
@@ -188,7 +188,7 @@ minikube status
 [NOTE]
 ====
 Make sure all the instances of `<admin_password>` in `overrides/openldap-values.yaml` are updated with a secure password of your choice.  
-This same password will be used to:
+Use this same password to:
 - Create OpenLDAP secrets
 - Access NiFi and NiFi Registry UIs
 ====
@@ -228,7 +228,7 @@ EOF
 kubectl apply -f clusterissuer.yaml
 ----
 
-=== Deploy CFM Operator
+=== Deploy Cloudera Flow Management - Kubernetes Operator
 . Create namespace
 +
 [source, bash]
@@ -387,7 +387,7 @@ kubectl create secret generic openldap-creds \
 kubectl apply -f overrides/nifiregistry.yaml --namespace demo-nifi-registry
 ----
 
-=== Deploy CSA operator
+=== Deploy Cloudera Streaming Analytics - Kubernetes Operator
 . Create namespace
 + 
 [source,bash]
@@ -492,7 +492,7 @@ EOF
 kubectl apply -f flink_job_session.yaml
 ----
 
-=== Deploy CSM Operator
+=== Deploy Cloudera Streams Messaging - Kubernetes Operator
 . Create namespace for CSM Operator
 + 
 [source,bash]
@@ -657,7 +657,7 @@ kubectl run kafka-consumer -it \
 minikube service demonifi-web --url -n demo-nifi
 ----
 
-.. You will see an output like:
+.. You should see an output like:
 +
 [source,bash]
 ----
@@ -673,7 +673,7 @@ http://127.0.0.1:53759
 https://127.0.0.1:53759/nifi/
 ----
 
-. Expose the NiFi UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2/remote instance)
+. Expose the NiFi UI using NodePort and access via SSH tunneling—for example, when running Minikube on a remote or EC2 instance.
 
 .. Change NiFi service type to NodePort
 +
@@ -713,7 +713,7 @@ ssh -f -N -i <PEM_FILE_LOCATION> \
 minikube service demonifiregistry-web --url -n demo-nifi-registry
 ----
 
-.. You will see an output like:
+.. You should see an output like:
 +
 [source,bash]
 ----
@@ -729,7 +729,7 @@ http://127.0.0.1:52866
 https://127.0.0.1:52866/nifi-registry/
 ----
 
-. Expose the NiFi Registry UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2/remote instance)
+. Expose the NiFi Registry UI using NodePort and access via SSH tunneling—for example, when running Minikube on a remote or EC2 instance.
 
 .. Change NiFi Registry service type to NodePort
 +
@@ -769,7 +769,7 @@ kubectl -n csa-operator-system port-forward service/demo-flink-rest <localport>:
 kubectl -n csa-operator-system port-forward service/ssb-sse 8081:8081
 ----
 
-. Expose the Flink UI using NodePort and access via SSH tunneling (e.g. when running minikube on an EC2/remote instance)
+. Expose the Flink UI using NodePort and access via SSH tunneling—for example, when running Minikube on a remote or EC2 instance.
 .. Patch cluster IP service to NodePort
 + 
 [source,bash]
@@ -791,8 +791,8 @@ kubectl get svc <service-name> -n <namespace> -o jsonpath='{.spec.ports[*].nodeP
 ssh -f -N -i <PEM_FILE_LOCATION> -L 8081:192.168.49.2:<NodePort> ubuntu@<ec2PublicIp>
 ----
 
-=== SSB
-. Access SSB UI when running on local laptop
+=== Cloudera SQL Stream Builder 
+. Access SQL Stream Builder, or SSB UI when running on local laptop
 + 
 [source,bash]
 ----
@@ -806,7 +806,7 @@ kubectl -n csa-operator-system port-forward service/ssb-sse <localport>:8081
 kubectl -n csa-operator-system port-forward service/ssb-sse 8081:8081
 ----
 
-. Expose the SSB UI using NodePort and access via SSH tunneling(e.g When running minikube in an ec2/remote instance)
+. Expose the SSB UI using NodePort and access via SSH tunneling—for example, when running Minikube on a remote or EC2 instance.
 .. Change SSB service type to NodePort
 + 
 [source,bash]
