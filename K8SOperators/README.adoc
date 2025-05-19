@@ -38,7 +38,7 @@ The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operato
 [source, bash]
 ----
 mkdir ~/k8soperators
-git clone --depth 1 --branch feature/k8soperators https://github.com/cloudera/cloudera-partners.git /tmp/repo && \
+git clone --depth 1 --branch main https://github.com/cloudera/cloudera-partners.git /tmp/repo && \
     cp -r /tmp/repo/K8SOperators/overrides ~/k8soperators/ && \
     rm -rf /tmp/repo
 
@@ -228,14 +228,6 @@ EOF
 kubectl apply -f clusterissuer.yaml
 ----
 
-=== Deploy Cloudera Flow Management - Kubernetes Operator
-. Create namespace
-+
-[source, bash]
-----
-kubectl create namespace cfm-operator-system
-----
-
 . Set environment variables for Cloudera username and password
 + 
 [source,bash]
@@ -243,6 +235,14 @@ kubectl create namespace cfm-operator-system
 # Update the [***cloudera_username***] and [***cloudera_password***] with your cloudera license paywall credentials.
 export cloudera_username="[***cloudera_username***]"
 export cloudera_password="[***cloudera_password***]"
+----
+
+=== Deploy Cloudera Flow Management - Kubernetes Operator
+. Create namespace
++
+[source, bash]
+----
+kubectl create namespace cfm-operator-system
 ----
 
 . Create Docker registry secret
@@ -395,15 +395,6 @@ kubectl apply -f overrides/nifiregistry.yaml --namespace demo-nifi-registry
 kubectl create namespace csa-operator-system
 ----
 
-. Set environment variables for Cloudera username and password
-+ 
-[source,bash]
-----
-# Update the [***cloudera_username***] and [***cloudera_password***] with your cloudera license paywall credentials.
-export cloudera_username="[***cloudera_username***]"
-export cloudera_password="[***cloudera_password***]"
-----
-
 . Create Docker registry secret for CSA
 + 
 [source,bash]
@@ -498,15 +489,6 @@ kubectl apply -f flink_job_session.yaml
 [source,bash]
 ----
 kubectl create namespace csm-operator-system
-----
-
-. Set environment variables for Cloudera username and password
-+ 
-[source,bash]
-----
-# Update the [***cloudera_username***] and [***cloudera_password***] with your cloudera license paywall credentials.
-export cloudera_username="[***cloudera_username***]"
-export cloudera_password="[***cloudera_password***]"
 ----
 
 . Create Docker registry secret for CSM Operator
