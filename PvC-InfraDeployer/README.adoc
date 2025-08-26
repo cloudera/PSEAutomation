@@ -1,0 +1,383 @@
+// # pvc-automation
+
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+
+= Cloudera On-Premise Installation Automation
+
+Author: Kuldeep Sahu
+
+Version: 1.0
+
+:toc:
+
+This automation simplifies the setup and configuration of Cloudera on-premise environments using Ansible. It ensures dependencies, SSH access, and Cloudera services are properly installed and configured.
+
+== Prerequisites
+
+Before running this automation, ensure:
+
+1. A Linux machine with:
+   - `bash`
+   - `sudo` privileges
+   - Internet access for package downloads
+
+2. The system does **not** need pre-installed software. The script installs:
+   - `git`, `python3`, `pip3`, `ansible-core`
+   - Network tools: `wget`, `telnet`, `net-tools`, `bind-utils`, `dnsutils`, `iproute`, `traceroute`, `nc`
+
+3. SSH private key (`.pem` or `id_rsa`) is required:
+   - The script checks for an existing key in the current directory.
+   - If not found, it looks in `~/.ssh/id_rsa`.
+   - If still missing, it generates a new SSH key.
+
+4. SSH authentication settings are updated:
+   - `PasswordAuthentication` is set to `yes`
+   - `PermitRootLogin` is set to `yes`
+   - SSH service is restarted.
+
+== Setup Steps
+
+=== 1. Clone the Repository
+
+```bash
+
+git clone https://github.com/kuldeepsahu1105/pvc-automation.git
+
+cd pvc-automation
+
+```
+
+
+
+// == CDP Private Cloud Setup on Virtualized Infrastructure
+// toc::[]
+
+// == Prerequisites
+
+// *Entitlements*
+
+// Your License key must have the PvC DS entitlement. A current key without the entitlement will block access to ECS bits. Please raise a ticket or reach out to the Cloudera POC to get the necessary entitlements.
+
+// === Summary
+// The below table contains the names assigned to the Virtual Machines and to some other required components. Going forward in this document we will refer to them by these names.
+
+
+// *Note:* The domain name and the hostnames mentioned here are just for reference. You may choose to have the hostnames as per your requirements. 
+
+// [frame=all, grid=all]
+// |===
+// |Name                              | Description 
+
+// |pvcbasemaster                     | CDP Private Cloud Base Master
+// |pvcbaseworker1 to pvcbaseworker3  | CDP Base Cluster Worker Nodes(3)
+// |ipaserver                         | FreeIPA Server
+// |pvcecsmaster                      | ECS Master Node
+// |pvcecsworker1 to pvcecsworker5    | ECS Worker Nodes
+// |cdppvcpoc.com                     | Dummy Domain For POC Purpose
+
+// |===
+
+// Once all the virtual machines are available with CentOS 7.9 of the specifications mentioned above, create LVMs for the ECS nodes with 1.4T size. Then create the mount points with the size mentioned in the <<CDP_ECS_Cluster>> table. After that you can start with the Preliminary work for the CDP Base setup. 
+
+// == Preliminary Work [[Preliminary_Work]]
+
+// === Master node
+
+// * SSH into the pvcbasemaster node, switch to root user, and run the below commands. 
+
+// [,shell]
+// ----
+// sudo su - root
+// yum install git -y
+// mkdir -p /tmp/CDP_PvC/Logs
+// git clone https://github.com/pannagk/Cloudera_Partner_CDP_PvC_Setup.git /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup
+// ----
+
+// * Navigate to the /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup folder and open the file *parameters.sh* for editing. 
+
+// ** Update the private IP addresses of all the hosts. 
+
+// ** Update the username and password from the CDP Developer license file that you received. 
+
+// [,shell]
+// ----
+// cd /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup
+// vi parameters.sh
+// ----
+
+// * Once you added all the details (IPs and CDP credentials) , run the next set of commands as shwon below. 
+
+// [,shell]
+// ----
+// chmod +x *.sh
+// nohup sh 0_base_master_pre_setup.sh > /tmp/CDP_PvC/Logs/0_base_master_pre_setup.log &
+// ----
+
+// * After running the *nohup* command, check the logs with the below command. You should see the output as *Pre-Setup completed*. 
+
+// [,shell]
+// ----
+// tail -f -n +1 /tmp/CDP_PvC/Logs/0_base_master_pre_setup.log
+// ----
+
+// * Once you see the Pre-setup completion message, you can exit from the log tailing. Press *ctrl+c* or *ctrl+z*. 
+
+// === FreeIPA server
+
+// * SSH into the FreeIPA server node and run the below commands. 
+
+// [,shell]
+// ----
+// yum install git -y
+// mkdir -p /tmp/CDP_PvC/Logs
+// git clone https://github.com/pannagk/Cloudera_Partner_CDP_PvC_Setup.git /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup
+// cd /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup
+// chmod +x *.sh
+// nohup sh 1_base_worker_pre_setup.sh > /tmp/CDP_PvC/Logs/1_base_worker_pre_setup.log &
+// ----
+
+// * Check the log file and ensure that the script has run successfully. Run the below command to check the log file contents. 
+// [,shell]
+// ----
+// cat /tmp/CDP_PvC/Logs/1_base_worker_pre_setup.log
+// ----
+
+// === Worker nodes
+
+// * SSH into the each *worker node* and run the below commands. 
+// [,shell]
+// ----
+// sudo su - root
+// yum install git -y
+// mkdir -p /tmp/CDP_PvC/Logs
+// git clone https://github.com/pannagk/Cloudera_Partner_CDP_PvC_Setup.git /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup
+// cd /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup
+// chmod +x *.sh
+// nohup sh 1_base_worker_pre_setup.sh > /tmp/CDP_PvC/Logs/1_base_worker_pre_setup.log &
+// ----
+
+// * Check the log file and ensure that the script has run successfully. Run the below command to check the log file contents. 
+// [,shell]
+// ----
+// cat /tmp/CDP_PvC/Logs/1_base_worker_pre_setup.log
+// ----
+
+// *Repeat the above steps on the other worker nodes as well.*
+
+// Once this is complete, we will proceed with completing the prerequisites for the base cluster like password less ssh, disabling SELinux etc..,
+
+// == CDP Base Prerequisites [[CDP_Base_Prerequisites]]
+
+// Login to the base master node and switch to the root user. 
+
+// === Updating the Ansible Hosts file
+
+// * The previous script has updated the ansible hosts file with all the IP addresses as mentioned in the *parameters.sh* file. Verify if the entried made are proper. View the */tmp/CDP_PvC/ansible/hosts* file and it should have contents similar to the below. 
+
+// [,shell]
+// ----
+// cat /tmp/CDP_PvC/ansible/hosts
+// ----
+
+// [,shell]
+// ----
+// [master]
+// 172.31.13.220 --> pvcbasemaster IPv4
+
+// [master:vars]
+// ansible_ssh_extra_args='-o StrictHostKeyChecking=no'
+// ansible_user="cdpuser"
+// ansible_password="cloudera@123"
+// ansible_sudo_pass="cloudera@123"
+
+// [workers]
+// 172.31.12.48 --> pvcbaseworker1 IPv4
+// 172.31.12.49 --> pvcbaseworker2 IPv4
+// 172.31.12.50 --> pvcbaseworker3 IPv4
+
+// [workers:vars]
+// ansible_ssh_extra_args='-o StrictHostKeyChecking=no'
+// ansible_user="cdpuser"
+// ansible_password="cloudera@123"
+// ansible_sudo_pass="cloudera@123"
+
+// [cluster]
+// 172.31.13.220
+// 172.31.12.48
+// 172.31.12.49
+// 172.31.12.50
+
+// [ipaserver]
+// 172.31.1.143 --> freeipa server IPv4
+
+// [ipaserver:vars]
+// ansible_ssh_extra_args='-o StrictHostKeyChecking=no'
+// ansible_user="cdpuser"
+// ansible_password="cloudera@123"
+// ansible_sudo_pass="cloudera@123"
+// ----
+
+// === CDP Base OS Prerequisites
+
+// * In this step, we will run through the CDP Base OS Prerequisites such as password less ssh from the master, disabling SELinux, disabling IPv6 etc.., 
+
+// * Login to the *master* node, switch to the root user, and navigate to the directory */tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup*, and the script *2_CDP_base_prereq.sh*. 
+
+// [,shell]
+// ----
+// sudo su - root
+// cd /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup
+// nohup sh 2_CDP_base_prereq.sh > /tmp/CDP_PvC/Logs/CDP_base_prereq.log &
+// ----
+
+// * After running the above *nohup* command, check the logs with the below command. 
+
+// [,shell]
+// ----
+// tail -f -n +1 /tmp/CDP_PvC/Logs/CDP_base_prereq.log
+// ----
+
+// * Since the last command in the previous script reboots all the worker nodes and the freeipa server, you will get the message in the log as *Failed to connect to the host via ssh*. This is not an issue and it is expected. 
+
+// * In order to disable SELinux, the master too needs to be rebooted. Run the below command on the master. 
+// [,shell]
+// ----
+// reboot
+// ----
+
+// * Wait for 1 or 2 minutes, and then log back into the base master. Switch to root user and run the verify_CDP_base_prereq.sh script. 
+// [,shell]
+// ----
+// sudo su - root
+// cd /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup
+// nohup sh 3_verify_CDP_base_prereq.sh > /tmp/CDP_PvC/Logs/verify_CDP_base_prereq.log &
+// ----
+
+// * Check the output of this script by running the command below. 
+// [,shell]
+// ----
+// tail -f -n +1 /tmp/CDP_PvC/Logs/verify_CDP_base_prereq.log
+// ----
+
+// * You should see the values for different parameters as below. 
+// [,shell]
+// ----
+// "ansible_facts.selinux.status": "disabled"
+
+// "swappiness_status.stdout_lines": [
+//     "vm.swappiness = 1"]
+
+// "enabled_hugepage_value.stdout_lines": [
+//     "always madvise [never]"]
+
+// "defrag_hugepage_value.stdout_lines": [
+//     "always madvise [never]"]
+
+// "ntpd_status.status.ActiveState": "active"
+
+// "ntpd_enabled_status.stdout_lines": [
+//     "enabled"]
+
+// "firewalld_status.status.ActiveState": "inactive"   
+
+// "rc_local_status.stdout_lines": [
+//     "#!/bin/bash",
+//     "# THIS FILE IS ADDED FOR COMPATIBILITY PURPOSES",
+//     "#",
+//     "# It is highly advisable to create own systemd services or udev rules",
+//     "# to run scripts during boot instead of using this file.",
+//     "#",
+//     "# In contrast to previous versions due to parallel execution during boot",
+//     "# this script will NOT be run after all other services.",
+//     "#",
+//     "# Please note that you must run 'chmod +x /etc/rc.d/rc.local' to ensure",
+//     "# that this script will be executed during boot.",
+//     "",
+//     "touch /var/lock/subsys/local",
+//     "echo never > /sys/kernel/mm/transparent_hugepage/enabled",
+//     "echo never > /sys/kernel/mm/transparent_hugepage/defrag",
+//     "sysctl -w net.ipv6.conf.all.disable_ipv6=1",
+//     "sysctl -w net.ipv6.conf.default.disable_ipv6=1",
+//     "sysctl -w net.ipv6.conf.lo.disable_ipv6=0"]
+
+// ----
+ 
+// * Once you see the CDP Base Prequisites completion message, you can exit from the log tailing. Press *ctrl+c* or *ctrl+z*. 
+
+
+// WARNING: If there are any failures in the output, please connect with your Cloudera POC and get that resolved. Continuing with the installation with any issues in the prerequisites will lead to installation failures later, which requires more debugging. That is why it is better to get all the prerequisites done properly. 
+
+// == FreeIPA Server Setup
+
+// * Log in to the *base master* node and navigate to the setup directory. 
+// [,shell]
+// ----
+// sudo su - root
+// cd /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup
+// nohup sh 4_freeipa_install.sh > /tmp/CDP_PvC/Logs/freeipa_install.log &
+// ----
+
+// * Check the output of this script by running the command below. 
+// [,shell]
+// ----
+// tail -f -n +1 /tmp/CDP_PvC/Logs/freeipa_install.log
+// ----
+
+// * The ansible tasks for packages installation should be successful. 
+
+// * Once this is done, login to the *FreeIPA host* and navigate to the directory /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup. Run the script *setup_dns.sh*.
+// [,shell]
+// ----
+// sudo su - root
+// cd /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup
+// nohup sh 5_setup_dns.sh > /tmp/CDP_PvC/Logs/dns_setup.log &
+// ----
+
+// * Check the output of this script by running the command below. 
+// [,shell]
+// ----
+// tail -f -n +1 /tmp/CDP_PvC/Logs/dns_setup.log
+// ----
+
+// * You should get the *Setup Complete* message in the log file. 
+
+
+// == Cloudera Manager Installation
+
+// * Login to the *master* node, switch to the root user, and run the script that downloads the Cloudera Manager installer file. 
+
+// [,shell]
+// ----
+// sudo su - root
+// cd /tmp/CDP_PvC/Cloudera_Partner_CDP_PvC_Setup/Cloud_Agnostic/setup
+// ./6_download_installer.sh
+// ----
+
+// * Run the below command. This will install Cloudera-Manager with embedded SCM-database. 
+// [,shell]
+// ----
+// ./cloudera-manager-installer.bin
+// ----
+
+// NOTE: A GUI pops up during the installation. Keep clicking *Next* during the process and *Accept the license*. 
+
+// * The installation will take about 5-10 mins. Once done, you will get a message stating that the installation is successful. 
+
+// IMPORTANT: If the installation is interrupted, run the following command on the Cloudera Manager Server host before you retry the installation. 
+// [,shell]
+// ----
+// bash /opt/cloudera/installer/uninstall-cloudera-manager.sh
+// ----
+// * The log files for the installer are stored in /var/log/cloudera-manager-installer/.
+
+
+To run the terraform automation, you need to have the following prerequisites:
+Download or create .tfvars.env file and clone_and_run_terraform.sh file from the repository.
+Update the .tfvars.env file with your configuration variables.
+Make sure you have the necessary permissions to run the script.
+Make sure you are logged in to the AWS account where you want to create the resources.
+Run the clone_and_run_terraform.sh script to clone the repository and run the terraform automation.

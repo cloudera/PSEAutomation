@@ -1,0 +1,134 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_REGISTRY = 'docker.io'
+        IMAGE_NAME = 'clouderapartners/cdp-public-cloud-hol-provisioner'
+        DOCKER_CREDENTIALS_ID = 'dockerhub-cloudera-partners'
+        DOCKERFILE_DIR = 'ClouderaSetup/OnCloud/AWS/build'
+        BUILDER_NAME = 'mybuilder'
+        RECIPIENTS = 'ksahu@cloudera.com,aktiwari@cloudera.com,ygulati@cloudera.com'
+    }
+
+    parameters {
+        string(name: 'PRIMARY_TAG', defaultValue: 'testmain', description: 'Primary tag (e.g. 2.4.1 or latest) for the Docker image')
+        booleanParam(name: 'PUSH_SECONDARY_TAG', defaultValue: true, description: 'Push secondary tag for this Docker Image?')
+        string(name: 'SECONDARY_TAG', defaultValue: new Date().format('yyyyMMdd') + '-${BUILD_NUMBER}', description: 'Secondary tag for the Docker image')
+        choice(name: 'DELETE_WORKDIR', choices: ['false', 'true'], description: 'Delete the Work directory at the end of the job.')
+        booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
+        booleanParam(name: 'MULTI_PLATFORM_BUILD', defaultValue: false, description: 'Enable multi-platform build and push?')
+        string(name: 'TF_QS_VER', defaultValue: 'main', description: 'CDP-TF-QUICKSTART tag version (e.g. v0.8.5 or main) to use for building Docker image')
+        string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Branch to checkout')       
+    }
+
+    options {
+        timeout(time: 6, unit: 'HOURS')
+        timestamps()
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    echo "Stage :: Checkout ${params.BUILD_BRANCH} Branch."
+                    checkout([$class: 'GitSCM', userRemoteConfigs: [[url: 'https://github.com/cloudera/cloudera-partners.git']], branches: [[name: "refs/heads/${params.BUILD_BRANCH}"]]])
+                }
+            }
+        }
+
+        stage('DRY RUN: Reload Jenkinsfile') {
+            when { expression { return params.REFRESH_JENKINSFILE ==~ /(?i)(Y|YES|T|TRUE|ON|RUN)/ } }
+            steps {
+                sh 'echo "Stage :: DRY RUN: Reload Jenkinsfile into Jenkins Project: Job ${JOB_NAME} [${BUILD_NUMBER}] (${BUILD_URL})"'
+                script {
+                    currentBuild.result = 'ABORTED'
+                    error('DRY RUN COMPLETED. JOB PARAMETERIZED.')
+                }
+            }
+        }
+
+        stage('Buildx Setup') {
+            when { expression { return params.MULTI_PLATFORM_BUILD } }
+            steps {
+                script {
+                    echo "Stage :: Buildx Setup"
+                    def builderExists = sh(script: "docker buildx ls | grep ${env.BUILDER_NAME} || true", returnStatus: true)
+                    if (builderExists != 0) {
+                        sh "docker buildx create --name ${env.BUILDER_NAME} --use"
+                    }
+                    sh 'docker buildx inspect --bootstrap'
+                }
+            }
+        }
+
+        stage('Build and Push Docker Image') {
+            steps {
+                script {
+                    echo "Stage :: Build and Push Docker Image"
+                    def primaryTag = params.PRIMARY_TAG
+                    def buildDate = new Date().format('yyyyMMdd')
+                    def buildNumber = env.BUILD_NUMBER
+                    def defaultSecondaryTag = "${buildDate}-${buildNumber}"
+                    def secondaryTag = params.SECONDARY_TAG?.trim() ? params.SECONDARY_TAG : defaultSecondaryTag
+
+                    if (params.MULTI_PLATFORM_BUILD) {
+                        echo "Multi-platform build enabled."
+                        dir(env.DOCKERFILE_DIR) {
+                            sh "docker buildx build --platform linux/amd64,linux/arm64  --no-cache --build-arg TF_QUICKSTART_VERSION=${params.TF_QS_VER} -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${primaryTag} --push ."
+                            if (params.PUSH_SECONDARY_TAG) {
+                                sh "docker buildx build --platform linux/amd64,linux/arm64  --no-cache --build-arg TF_QUICKSTART_VERSION=${params.TF_QS_VER} -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${secondaryTag} --push ."
+                            }
+                        }
+                    } else {
+                        echo "Regular build and push."
+                        dir(env.DOCKERFILE_DIR) {
+                            sh "docker build --no-cache --build-arg TF_QUICKSTART_VERSION=${params.TF_QS_VER} -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${primaryTag} ."
+                        }
+                        withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+                            sh 'docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD'
+                            sh "docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${primaryTag}"
+                            if (params.PUSH_SECONDARY_TAG) {
+                                sh "docker tag ${DOCKER_REGISTRY}/${IMAGE_NAME}:${primaryTag} ${DOCKER_REGISTRY}/${IMAGE_NAME}:${secondaryTag}"
+                                sh "docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${secondaryTag}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            emailext (
+                to: "${env.RECIPIENTS}",
+                subject: "✅ Build Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """
+                <div style='font-family: Arial, sans-serif; padding: 20px; border: 2px solid #d4edda; background-color: #d4edda; color: #155724;'>
+                    <h2>✅ Build Completed Successfully!</h2>
+                    <p>The build has succeeded.</p>
+                    <p>Primary Tag: ${params.PRIMARY_TAG}</p>
+                    <p>Secondary Tag: ${params.PUSH_SECONDARY_TAG ? params.SECONDARY_TAG : 'N/A'}</p>
+                    <p><a href='${env.BUILD_URL}'>View Build Details</a></p>
+                </div>
+                """,
+                mimeType: 'text/html', from: 'psejenkins@cloudera.com'
+            )
+        }
+        failure {
+            emailext (
+                to: "${env.RECIPIENTS}",
+                subject: "❌ Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """
+                <div style='font-family: Arial, sans-serif; padding: 20px; border: 2px solid #f8d7da; background-color: #f8d7da; color: #721c24;'>
+                    <h2>❌ Build Failed</h2>
+                    <p>The build has failed.</p>
+                    <p><a href='${env.BUILD_URL}'>View Build Details</a></p>
+                </div>
+                """,
+                mimeType: 'text/html', from: 'psejenkins@cloudera.com'
+            )
+        }
+    }
+}

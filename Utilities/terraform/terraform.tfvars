@@ -1,0 +1,6 @@
+aws_region = "ap-southeast-1"
+#key_name   = "akt-keypair"
+local_ip   = "208.127.31.110/32"
+instance_type = "m5.4xlarge"
+instance_name = "DimOperatorsdemo"
+#aws_profile = "default"
