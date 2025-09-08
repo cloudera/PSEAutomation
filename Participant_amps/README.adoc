@@ -5,7 +5,7 @@
 :sectnums:
 :source-highlighter: rouge
 :icons: font
-:imagesdir: ./images
+:imagesdir: ./img
 :hide-uri-scheme:
 :homepage: https://github.com/cloudera/cloudera-partners
 
@@ -23,14 +23,14 @@ You can find your chrome version by going into `Settings -> About Chrome` of you
 
 > **Note:** The ChromeDriver version must match your current Chrome browser version. If you don't see your version listed for your platform (Linux, Mac, or Windows) on the website, try replacing the version in the download link with your browser's version number.
 
-image::../../img/Chromedriver.png[Chromedriver.png]
+image::Chromedriver.png[Chromedriver.png]
 
 A Mac may prevent you from running the executable chromedriver, so you'll need to add it in your Privacy & Security settings to trusted apps. 
 
 Next, perform the following steps to set everything up and run a simple test:
 
-.. Clone this repo `git clone https://github.com/Avanish268/ai-agents-hol-setup.git/[https://github.com/Avanish268/ai-agents-hol-setup.git]`
-.. Navigate to amplifier folder ```cd ai-agents-hol-setup/4_participant_amps/amplifier```
+.. Clone this repo `git clone https://github.com/cloudera/PSEAutomation.git[https://github.com/cloudera/PSEAutomation.git]`
+.. Navigate to amplifier folder ```cd Participant_amps/amplifier```
 .. Place **chromedriver** executable you've downloaded into this directory
 .. Create and activate a virtualenvironment ```python3 -m venv .; source ./bin/activate``` (Assuming you have Python3 installed locally)
 .. Install selenium package ```pip3 install selenium``` and install pandas ```pip3 install pandas```
@@ -52,7 +52,7 @@ To add the AMP catalog follow these steps:
 * Click on the "Add Source" button to upload the catalog
 * Verify that the catalog is successfully added by checking the list of available AMPs in the workbench. You should see the AMP named `Hands on Lab with RAG Agents` in the list.
 
-image::../../img/Add_Amp.png[AMP-catalog.png]
+image::Add_Amp.png[AMP-catalog.png]
 
 == Disable "Reset Password on First Login" in Keycloak
 To ensure Selenium automation works smoothly, disable the `reset_password_on_first_login` option in Keycloak for all participants. This prevents the automation script from being interrupted by password reset prompts.
@@ -63,7 +63,7 @@ To ensure Selenium automation works smoothly, disable the `reset_password_on_fir
 * Click on the `Required Actions` tab
 * Toggle off the `Update Password` option
 
-image::../../img/Disable_Reset_Password.png[Disable Reset Password on First Login]
+image::Disable_Reset_Password.png[Disable Reset Password on First Login]
 
 == Run Bulk AMP creation
 In this step you will run an automation script that launches an AMP for each paricipant. First, a few configuration steps:

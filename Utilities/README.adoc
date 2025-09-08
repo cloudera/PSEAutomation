@@ -1,5 +1,6 @@
 = Cloudera K8soperators Hands-on Labs Provisioner
 v0.1, 2025-06-01: Draft
+:imagesdir: https://github.com/cloudera/ClouderaSetup/blob/main/images
 :description: Automated Deployment instructions for Cloudera Kubernetes Operators
 :toc: left
 :toclevels: 2
@@ -192,7 +193,7 @@ aws iam list-attached-role-policies --role-name EC2AdminRole
 
 == How To Use
 
-image::../images/HowToUse.png[HowToUse,600,400]
+image::HowToUse.png[HowToUse,600,400]
 
 === Get the Docker Image
 The `Docker` image is available at `Docker Hub`. Once the `Docker` is installed and ready to use, pull the **k8soperator_deployment:latest ** image by executing below command.

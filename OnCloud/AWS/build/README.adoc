@@ -1,4 +1,5 @@
 = AutoClouderaDeploy (Hands On Labs Infrastructure Provisioner)
+:imagesdir: https://github.com/cloudera/ClouderaSetup/blob/main/images
 :toc:
 
 Author: **Kuldeep Sahu**
@@ -17,7 +18,7 @@ Email: **aktiwari@cloudera.com**
 
 
 
-image::images/keycloak_login.png[Keycloak_login,600,400]
+image::keycloak_login.png[Keycloak_login,600,400]
 
 == Overview
 
@@ -173,5 +174,5 @@ link:https://docs.docker.com/build/building/multi-platform/[**Link to Official D
 
 For more information on how to use this HoL provisioner Docker image, see the main README file:
 
-link:../README.adoc[**Link to Usage Documentation**]
+link:https://github.com/cloudera/ClouderaSetup/tree/main/OnCloud/AWS[**Link to Usage Documentation**]
 
