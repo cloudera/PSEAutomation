@@ -5,48 +5,44 @@
 :sectnums:
 
 == Overview
-The `PSEAutomation` repository contains a curated collection of automation tools, deployment assets, and utilities designed to accelerate **Cloudera PSE (Professional Services Engineering)** use cases.  
+The `PSEAutomation` repository contains a curated collection of automation tools, deployment assets, and utilities designed to accelerate **Cloudera PSE (Partner Solutions Engineering)** use cases.  
 
-This repository is structured into distinct modules that provide building blocks for infrastructure provisioning, Kubernetes operators, participant onboarding, and cloud deployments.  
+This repository is structured into distinct modules that provide building blocks for infrastructure provisioning, Kubernetes operators, participant onboarding using AMPs, and Cloudera on-cloud deployments.  
 
 == Repository Structure
 
 === K8SOperators
 This folder contains Kubernetes Operators and supporting manifests to streamline the deployment and management of Cloudera services on Kubernetes.  
 
-Key capabilities:
+**Key capabilities:**
+
 - Operator deployment examples for Cloudera components.  
-- Automated lifecycle management (install, upgrade, scale, delete).  
+- Automated lifecycle management (install, scale, delete).  
 - Configurations to integrate Cloudera services with Kubernetes-native features.  
 
 === OnCloud/AWS/build
 This folder contains automation scripts, templates, and configurations for deploying Cloudera components on **AWS cloud environments**.  
 
-Key capabilities:
+**Key capabilities:**
+
 - AWS infrastructure provisioning using Infrastructure-as-Code.  
 - Build scripts for reproducible deployments.  
-- Templates to accelerate hybrid and multi-cloud PSE use cases.  
 
 === Participant_amps
-This folder contains **AMPs (Applied Machine Patterns)** tailored for workshop participants.  
-
-Key capabilities:
-- Pre-built examples and starter projects.  
-- Templates for quick experimentation and learning.  
-- Hands-on labs that showcase real-world Cloudera use cases.  
+This folder contains **Selenium based automation** tailored for CAI project creation and deploying AMPs for workshop participants.  
 
 === PvC-InfraDeployer
 This folder contains automation modules for provisioning **PVC-based infrastructure deployments**.  
 
-Key capabilities:
+**Key capabilities:**
+
 - Automated PVC infrastructure bootstrap.  
-- Scaling and lifecycle operations for core services.  
-- Configurable deployment workflows for faster PSE project setup.  
 
 === Utilities
 This folder contains general-purpose scripts, helper tools, and reusable automation modules that support the other components in the repository.  
 
-Key capabilities:
+**Key capabilities:**
+
 - Common functions and shared code snippets.  
 - Helper utilities for monitoring, debugging, and maintenance.  
 - Time-saving tools for repetitive tasks.  
