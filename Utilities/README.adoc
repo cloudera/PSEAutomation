@@ -7,7 +7,6 @@ v0.1, 2025-06-01: Draft
 :sectnums:
 :source-highlighter: rouge
 :icons: font
-:imagesdir: ./images
 :hide-uri-scheme:
 :homepage: https://github.com/cloudera/cloudera-partners
 
