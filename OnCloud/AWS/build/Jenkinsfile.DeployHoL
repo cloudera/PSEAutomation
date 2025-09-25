@@ -60,7 +60,7 @@
         HOL_AUTO_EXEC_DIR = "/home/holautosa/HOL_AUTO_EXEC_DIR"
         CONFIG_DIR = "${HOL_AUTO_EXEC_DIR}/userconfig"
         CONFIG_FILE = "${CONFIG_DIR}/configfile"
-        REPO_URL = "https://github.com/cloudera/cloudera-partners.git"
+        REPO_URL = "https://github.com/cloudera/PSEAutomation.git"
         //BRANCH_NAME = ""
         REPO_DIR = "${HOL_AUTO_EXEC_DIR}/hol-automation"
     }
