@@ -1,0 +1,459 @@
+= Kubernetes Operator Demos
+:toc:
+
+== CSM Operator
+
+=== Preparation
+
+Although not necessary, using `k9s` during the demo helps showing what's happening in the Kubernetes cluster. Install k9s and get familiar with it. Otherwise, use kubectl to query the cluster state.
+
+Before you run the demo, execute the following script to ensure the environment is clean:
+[source,shell]
+----
+./demo-kafka-cleanup.sh
+----
+
+=== Installing the CSM Operator
+
+. Update the link:defaults.sh[] file with details for your demo environment, and then source the file in your shell with the command below:
++
+[source,shell]
+----
+source defaults.sh
+----
+
+. Create a namespace for using with Kafka resources. The CSM Operator will be deployed in this namespace, as well as the clusters we will create.
++
+[source,shell]
+----
+kubectl create namespace "$CSM_OP_NS"
+----
+
+. Create a Kubernetes secret to store the credentials to the Cloudera's container registry. This secret will be used by the CSM Operator to fetch the necessary container images from the registry.
++
+The credentials used in the command below are paywall credentials, which are associated with the license key being used.
++
+.Source: link:demo-kafka-create-paywall-secret.sh[]
+[source,shell]
+----
+include::demo-kafka-create-paywall-secret.sh[]
+----
+
+. Use the same credentials above to authenticate with helm. This is needed in order for Helm to fetch the Helm chart from the container repository.
++
+.Source: link:demo-helm-login.sh[]
+[source,shell]
+----
+include::demo-helm-login.sh[]
+----
+
+. Install the CSM Operator Helm chart.
++
+.Source: link:demo-kafka-install-operator.sh[]
+[source,shell]
+----
+include::demo-kafka-install-operator.sh[]
+----
+
+. In k9s, show the `strimzi-cluster-operator` deployment and wait for it to be ready (`1/1`).
+Use the `:deploy kafka` command in k9s to switch to the right screen.
++
+Alternatively use the command below:
++
+[source,shell]
+----
+kubectl -n "$CSM_OP_NS" get deployments
+----
+
+=== Creating a Kafka cluster
+
+. Create a YAML file with the configuration of the desired cluster:
++
+.Source: link:demo-kafka.yaml[]
+[source,yaml]
+----
+include::demo-kafka.yaml[]
+----
+
+. Apply the configuration to the Kubernetes cluster:
++
+[source,shell]
+----
+kubectl -n "$CSM_OP_NS" apply -f demo-kafka.yaml
+----
+
+. In k9s, check the progress of the cluster deployment by monitoring the pods in the `kafka` namespace.
++
+Or use the following command:
++
+[source,shell]
+----
+kubectl -n "$CSM_OP_NS" get pods --watch
+----
++
+You'll see the Kafka Brokers and KRaft controlers, Entity operator and Cruise Control pods being spawned. The whole process should take a couple of minutes.
+
+. In k9s, go to `:service <CSM_OP_NAMESPACE>` to check the service names for the cluster bootstrap that are automatically created for the cluster.
++
+In this example, the cluster was created with two listeners:
++
+--
+* `internal`: used for other Kubernetes applications to connect to the Kafka cluster. Uses ClusterIP.
+* `nodeport`: used for external application to connect to the Kafka cluster. Uses NodePort.
+--
++
+Alternatively, use the following commands to get the service name and port:
++
+[source,shell]
+----
+# Bootstrap services
+kubectl get service -n "$CSM_OP_NS" | egrep "NAME|bootstrap"
+
+# internal service port
+kubectl get service -n "$CSM_OP_NS" demo-kafka-kafka-bootstrap -o=jsonpath='{.spec.ports[?(.name=="tcp-internal")].port}{"\n"}'
+
+# nodeport service port
+kubectl get service -n "$CSM_OP_NS" demo-kafka-kafka-nodeport-bootstrap -o=jsonpath='{.spec.ports[0].nodePort}{"\n"}'
+----
+
+. Wait until all pods are ready and running before continuing to the next steps.
+
+=== Managing Topics
+
+Topics can be managed through 2 different methods:
+
+* Using the Kafka AdminClient API, as it's done for all Kafka clusters; or
+* Using the Topic operator
+
+The operator can work in "bidirectional" mode, meaning that changes made through one methods are visible by the other method.
+The "bidirectional" mode **__will be deprecated__** in the future and we recommend *not* to use it.
+Instead, choose one of the methods above and stick to it.
+
+==== Topic operator
+
+. To create a topic using the operator, create a configuration file specifying the topic properties:
++
+.Source: link:demo-kafka-topic.yaml[]
+[source,yaml]
+----
+include::demo-kafka-topic.yaml[]
+----
+
+. Apply the topic configuration to the cluster to create the topic:
++
+[source,shell]
+----
+kubectl -n "$CSM_OP_NS" apply -f demo-kafka-topic.yaml
+----
++
+NOTE: Some operations like the ones listed below are not allowed by the Topic operator:
+
+* Decrease the number of partitions
+* Change the number of replicas for a topic
+
+. To change a topic property, modify the configuration file above and run the apply command again.
++
+For example, change the `retention.ms` value to `7200000` (2 hours) in the demo-kafka-topic.yaml file:
++
+[source,yaml]
+----
+    ...
+    retention.ms: 7200000
+----
+
+. Run the apply command again to make the change effective:
++
+[source,shell]
+----
+kubectl -n "$CSM_OP_NS" apply -f demo-kafka-topic.yaml
+----
+
+. To list all the topics known to the operator in the `kafka` namespace, execute:
++
+[source,shell]
+----
+kubectl -n "$CSM_OP_NS" get kafkatopic
+----
+
+. To inspect a topic's details, run:
++
+[source,shell]
+----
+kubectl -n "$CSM_OP_NS" describe kafkatopic demo-topic
+----
+
+. To delete a topic:
++
+[source,shell]
+----
+kubectl -n "$CSM_OP_NS" delete kafkatopic demo-topic
+----
+
+==== Kafka AdminClient
+
+If you choose the Kafka AdminClient to manage your topics you can do it from any external Kafka client that you may have installed on your laptop or another machine.
+You can also run a pod in Kubernetes with an image containing the Kafka client to run a few commands if needed.
+
+. Download `kafka_shell.sh` from the Cloudera archive. This only needs to be done once.
++
+[source,shell]
+----
+# For Linux
+curl -u "$PAYWALL_USERNAME:$PAYWALL_PASSWORD" "https://archive.cloudera.com/p/csm-operator/1.3.0/tools/kafka_shell.sh" > kafka_shell.sh
+chmod +x kafka_shell.sh
+
+# For Mac - the additional sed command is only necessary until CSMDS-1175 is resolved
+curl -u "$PAYWALL_USERNAME:$PAYWALL_PASSWORD" "https://archive.cloudera.com/p/csm-operator/1.3.0/tools/kafka_shell.sh" | sed -E '/(Darwin|BASH_VERSINFO)/,/fi/s/^/#/g' > kafka_shell.sh
+chmod +x kafka_shell.sh
+----
+
+. We can then use `kafka_shell.sh` to execute Kafka commands, like the `kafka-topics.sh` command:
++
+[source,shell]
+----
+./kafka_shell.sh --namespace="$CSM_OP_NS" --cluster="demo-kafka"
+----
+
+==== Add a node to the cluster
+
+. Change `demo-kafka.yaml` to increase the number of replicas of the `broker` KafkaNodePool to 4.
+. Re-apply the file above.
+. Wait for the new pod to the ready.
+. Run the command below to generate a rebalance proposal
++
+[source,shell]
+----
+kubectl apply -f demo-kafka-upscale.yaml -n "$CSM_OP_NS"
+----
+
+. Review the proposal:
++
+[source,shell]
+----
+kubectl describe kafkarebalance my-rebalance -n "$CSM_OP_NS"
+----
+
+. If the proposal is not good, you can regenerate/refresh it:
++
+[source,shell]
+----
+kubectl annotate kafkarebalance my-rebalance strimzi.io/rebalance=refresh -n "$CSM_OP_NS"
+----
+
+. Once you're happy with the proposal, approve it:
++
+[source,shell]
+----
+kubectl annotate kafkarebalance my-rebalance strimzi.io/rebalance=approve -n "$CSM_OP_NS"
+----
+
+. Check the rebalance for completion:
++
+[source,shell]
+----
+kubectl describe kafkarebalance my-rebalance -n "$CSM_OP_NS"
+----
+
+==== Remove a node to the cluster
+
+. Run the command below to generate a rebalance proposal
++
+[source,shell]
+----
+kubectl apply -f demo-kafka-downscale.yaml -n "$CSM_OP_NS"
+----
+
+. Review the proposal:
++
+[source,shell]
+----
+kubectl describe kafkarebalance my-downscale -n "$CSM_OP_NS"
+----
+
+. Once you're happy with the proposal, approve it:
++
+[source,shell]
+----
+kubectl annotate kafkarebalance my-downscale strimzi.io/rebalance=approve -n "$CSM_OP_NS"
+----
+
+. Check the rebalance for completion:
++
+[source,shell]
+----
+kubectl describe kafkarebalance my-downscale -n "$CSM_OP_NS"
+----
+
+. Change `demo-kafka.yaml` to decrease the number of `broker` replicas back to 3.
+. Re-apply the file above.
+. Wait for the pod to be removed.
+
+---
+
+= CSA Operator
+
+== Preparation
+
+. Install cert-manager
++
+[source,shell]
+----
+kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v1.8.2/cert-manager.yaml
+
+kubectl wait -n cert-manager --for=condition=Available deployment --all
+----
+
+. We will need to upload the JAR generated above to a file/web server so that the Flink job can download it locally.
+The commands below creates a web server to host the JAR files and upload the JAR file to it:
++
+[source,shell]
+----
+kubectl apply -f demo-webserver.yaml
+----
+
+== Install the CSA Operator
+
+. Create a namespace for using with CSA resources. The CSA Operator will be deployed in this namespace, as well as the clusters we will create.
++
+[source,shell]
+----
+kubectl create namespace "$CSA_OP_NS"
+----
+
+. Create a Kubernetes secret to store the credentials to the Cloudera's container registry. This secret will be used by the CSM Operator to fetch the necessary container images from the registry.
++
+The credentials used in the command below are paywall credentials, which are associated with the license key being used.
++
+.Source: link:demo-flink-create-paywall-secret.sh[]
+[source,shell]
+----
+include::./demo-flink-create-paywall-secret.sh[]
+----
+
+. Use the same credentials above to authenticate with helm. This is needed in order for Helm to fetch the Helm chart from the container repository.
++
+.Source: link:demo-helm-login.sh[]
+[source,shell]
+----
+include::demo-helm-login.sh[]
+----
+
+. Install the CSA Operator Helm chart.
++
+[source,shell]
+----
+helm install csa-operator \
+  --namespace "$CSA_OP_NS" \
+  --set "flink-kubernetes-operator.imagePullSecrets[0].name=csa-secret" \
+  --set "ssb.sse.image.imagePullSecrets[0].name=csa-secret" \
+  --set "ssb.sqlRunner.image.imagePullSecrets[0].name=csa-secret" \
+  --set-file flink-kubernetes-operator.clouderaLicense.fileContent="$LICENSE_FILE" \
+  "oci://${CONTAINER_REGISTRY}/cloudera-helm/csa-operator/csa-operator" \
+  --version "$CSA_OP_VERSION"
+----
++
+Alternative: Installing from a private repo:
++
+[source,shell]
+----
+helm install csa-operator \
+  --namespace flink \
+  --create-namespace \
+  --set 'flink-kubernetes-operator.image.imagePullSecrets[0].name=gcf-creds' \
+  --set 'flink-kubernetes-operator.image.repository=us-east1-docker.pkg.dev/gcp-se/gcf-artifacts/cloudera/flink-kubernetes-operator' \
+  --set 'flink-kubernetes-operator.image.tag=1.7.0-csaop0.8.0-b10' \
+  oci://us-east1-docker.pkg.dev/gcp-se/gcf-artifacts/cloudera-helm/csa-operator/csa-operator \
+  --version 0.8.0-b10
+
+# CSA 1.1.2 ONLY: Patch security bug with SSB on OpenShift:
+kubectl -n "$CSA_OP_NS" patch deployment ssb-postgresql --patch '{"spec":{"template":{"spec":{"securityContext":null}}}}'
+
+# CSA 1.2.0 ONLY: Patch security bug with SSB on RKE2:
+kubectl -n "$CSA_OP_NS" patch deployment ssb-postgresql --patch '{"spec":{"template":{"spec":{"securityContext":{"fsGroup":9999}}}}}'
+----
+
+. In k9s, show the `strimzi-cluster-operator` deployment and wait for it to be ready (`1/1`). Use the `:deploy kafka` command in k9s to switch to the right screen. Alternatively use the command below:
++
+[source,shell]
+----
+kubectl -n "$CSA_OP_NS" get deployments
+----
+
+== Build the demo app
+
+. Clone the Flink Tutorials repo and build it:
++
+NOTE: This repo is a work in progress and things may change. Mate Czagany has recently added new Kubernetes related material to this repo and André Araújo include a few changes for the SKO demos.
++
+[source,shell]
+----
+# Must be on VPN
+git clone https://github.infra.cloudera.com/araujo/flink-tutorials.git
+cd flink-tutorials
+git checkout sko-demos
+cd flink-kubernetes-tutorial
+mvn clean package -DskipTests
+cd ../..
+----
+
+. Upload the JAR file to the web server created previously:
++
+[source,shell]
+----
+./upload-to-file-server.sh flink-tutorials/flink-kubernetes-tutorial/target/flink-kubernetes-tutorial-1.18.0-csaop1.0.0-SNAPSHOT.jar
+----
+
+== Run a Kafka Data Generator Job in Flink
+
+The job below generates some random JSON data and writes it to a Kafka topic.
+
+. Create a configuration file with the details of the job:
++
+.Source: link:demo-flink-gen.yaml[]
+[source,yaml]
+----
+include::demo-flink-gen.yaml[]
+----
+
+. Submit the job:
++
+[source,shell]
+----
+kubectl -n "$CSA_OP_NS" apply -f demo-flink-gen.yaml
+----
+
+. In k9s, switch to `:pod <CSA_OP_NS>` and wait until the JM and TM are ready and running.
+
+. Check the `demo-topic` topic for produced data.
+
+== Run a Flink SQL job to transform data from Kafka
+
+The job below run a SQL query using the Flink Table API to filter and transform data coming from a Kafka topic and writes the results to another topic:
+
+. Create a new topic for the job to write data to:
++
+[source,shell]
+----
+./kafka_shell.sh --namespace="$CSM_OP_NS" --cluster="demo-kafka"
+bin/kafka-topics.sh --consumer.config /tmp/client.properties --bootstrap-server $BOOTSTRAP_SERVERS --topic demo-sql --create
+----
+
+. Create a configuration file with the details of the job:
++
+.Source: link:demo-flink-sql.yaml[]
+[source,yaml]
+----
+include::demo-flink-sql.yaml[]
+----
+
+. Submit the job:
++
+[source,shell]
+----
+kubectl -n "$CSA_OP_NS" apply -f demo-flink-sql.yaml
+----
+
+. In k9s, switch to `:pod <CSA_OP_NS>` and wait until the JM and TM are ready and running.
+
+. Check the `demo-sql` topic for produced data.
+
