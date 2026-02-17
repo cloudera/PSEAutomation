@@ -1,0 +1,58 @@
+---
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: demo-flink
+spec:
+  image: container.repository.cloudera.com/cloudera/flink:1.19.2-csaop1.2.0-b27
+  flinkVersion: v1_19
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "4"
+  serviceAccount: flink
+  mode: native
+  jobManager:
+    resource:
+      memory: 1024Mi
+      cpu: 0.4
+  taskManager:
+    resource:
+      memory: 1024Mi
+      cpu: 0.4
+  job:
+    entryClass: com.cloudera.streaming.examples.flink.KafkaDataGeneratorJob
+    args: ["--rowsPerSec", "10", "--bootstrapServer", "demo-kafka-kafka-bootstrap.csm-op.svc.cluster.local:9092", "--topic", "demo-topic"]
+    jarURI: local:///jarfiles/job.jar
+    parallelism: 4
+    state: running
+    upgradeMode: stateless
+
+  podTemplate:
+    spec:
+      imagePullSecrets:
+        - name: csa-secret
+      initContainers:
+        - name: init-jar-downloader
+          image: appropriate/curl
+          args:
+            - "-o"
+            - "/jarfiles/job.jar"
+            - "http://demo-nginx-service.default.svc.cluster.local:31080/files/flink-kubernetes-tutorial-1.18.0-csaop1.0.0-SNAPSHOT.jar"
+          volumeMounts:
+            - name: jar-files
+              mountPath: /jarfiles
+      containers:
+        - name: flink-main-container
+          volumeMounts:
+            - name: jar-files
+              mountPath: /jarfiles
+      volumes:
+        - name: jar-files
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+
