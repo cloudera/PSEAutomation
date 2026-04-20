@@ -1,11 +1,73 @@
-terraform.tfstate
-terraform.tfstate.backup
+# ----------------------------
+# Terraform
+# ----------------------------
 .terraform/
+*.tfstate
+*.tfstate.*
 .terraform.lock.hcl
-.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+terraform.tfvars
+terraform.tfvars.json
+
+# Terraform plan files
+*.tfplan
+
+# ----------------------------
+# Sensitive files
+# ----------------------------
 *.pem
-*license.txt
+*.key
+*.crt
+*.pfx
+*.p12
+*license*.txt
+*.env
+*.env.*
+
+# ----------------------------
+# Logs & temp files
+# ----------------------------
 *.log
+*.tmp
+*.temp
+
+# ----------------------------
+# OS-specific files
+# ----------------------------
 .DS_Store
+Thumbs.db
+
+# ----------------------------
+# IDE / Editor
+# ----------------------------
 .vscode/
-.idea
+.idea/
+*.swp
+*.swo
+
+# ----------------------------
+# Python (if using Ansible, scripts, etc.)
+# ----------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# ----------------------------
+# Ansible
+# ----------------------------
+*.retry
+
+# ----------------------------
+# Misc
+# ----------------------------
+*.bak
+*.backup
+*.old
