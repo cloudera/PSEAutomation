@@ -1,0 +1,143 @@
+= cluster-tests
+:toc: preamble
+:icons: font
+
+Ephemeral, container-based smoke testing for Cloudera clusters.
+
+Two composable OCI containers:
+
+* **link:launcher/README.adoc[`launcher/`]** — stands up a short-lived EC2
+  runner inside a caller-supplied VPC and emits a JSON _handoff_ describing
+  everything it created. Never touches Cloudera Manager.
+* **link:smoke-tests/README.adoc[`smoke-tests/`]** — consumes that handoff,
+  ships the probe to the runner via SSM, collects results, writes
+  Nagios/Prometheus/JSON/HTML reports, and tears the runner down.
+
+The handoff JSON is the only contract between the two; either container can
+be replaced independently as long as the handoff shape is preserved.
+
+== Pipeline
+
+----
+launcher ──▶ handoff.json ──▶ smoke-tests ──▶ Nagios line on stdout
+                                           └─▶ reports in ./output/
+                                           └─▶ teardown of AWS resources
+----
+
+== Quick start
+
+Both containers build and run through their own `run.sh`. Typical end-to-end
+invocation from the repo root:
+
+[source,bash]
+----
+# 1. provision an ephemeral EC2 runner inside the cluster's VPC
+./launcher/run.sh -c ./launcher/.launcher.env > /tmp/handoff.json
+
+# 2. probe Cloudera Manager via SSM, write reports, tear the runner down
+./smoke-tests/run.sh -c ./smoke-tests/.smoke.env --handoff /tmp/handoff.json
+----
+
+Or piped, if you prefer not to materialize the handoff:
+
+[source,bash]
+----
+./launcher/run.sh -c ./launcher/.launcher.env \
+  | ./smoke-tests/run.sh -c ./smoke-tests/.smoke.env
+----
+
+Individual Builds should be run before running the above commands. See the per-container READMEs for build flags, config precedence, secret handling, and output details.
+
+== Lifecycle and re-run semantics
+
+The launcher and smoke-tests are paired by design — the handoff JSON is the
+hand-off between them, and `smoke-tests/run.sh` always tears the runner down
+when it finishes (success *or* failure).
+
+* `launcher/run.sh` is **not** idempotent. Each invocation provisions a new
+  EC2 instance + IAM role/profile + ephemeral SG. There is no local "state
+  file"; if you run it twice you get two runners and pay for both until
+  `smoke-tests/run.sh` (or `aws ec2 terminate-instances`) cleans them up.
+* `smoke-tests/run.sh` requires a handoff. Re-running it standalone after a
+  prior smoke-test pass will fail because the runner referenced by the old
+  handoff has already been torn down — you need a fresh `launcher/run.sh`.
+* If a launcher run fails partway through, it rolls back its own partial
+  resources before exiting non-zero, so there is nothing for you to clean up.
+
+== Cluster SSH key (optional)
+
+To populate the per-host *Disk Utilization* section of the report, the
+ephemeral runner needs to SSH into each cluster host and run `df -hT`. Point
+`SSH_KEY_FILE` at the *existing* keypair you already use to log into your
+cluster nodes:
+
+[source,bash]
+----
+# in ./smoke-tests/.smoke.env
+SSH_KEY_FILE=/home/you/dev/CLDR/keys/AWS/your-cluster-keypair.pem
+SSH_USER=ec2-user
+----
+
+Notes:
+
+* The launcher does **not** generate or manage this key. It must already exist
+  and be valid for SSH into the Cloudera hosts in the same VPC.
+* The file must be `chmod 600` (or 400). `run.sh` mounts it read-only into
+  the smoke-tests container; `smoke.py` forwards the bytes to the ephemeral
+  runner via SSM and SSH'es to each host's private IP.
+* Without it, the report still renders — the *Disk Utilization* section is
+  just marked `SKIP` with a hint to set `SSH_KEY_FILE`.
+
+== Layout
+
+----
+launcher/       # ephemeral EC2 runner provisioner
+smoke-tests/    # probe driver, report writer, teardown
+----
+
+== Prerequisites
+
+* `podman` or `docker` on the host (autodetected by each `run.sh`)
+* A valid AWS SSO session (`aws sso login --profile …`) — `run.sh` mounts
+  `~/.aws` read-only into each container
+* IAM permissions: EC2 launch/terminate, IAM role/instance-profile
+  create/delete, SSM `SendCommand` + `GetCommandInvocation`
+
+== Exit codes
+
+The `smoke-tests` container exits with standard Nagios codes (0/1/2/3). The
+`launcher` exits 0 on successful handoff emission, non-zero on any failure
+(resources are rolled back automatically).
+
+== Troubleshooting:
+=== Launcher waits indefinitely for SSM or the runner never comes online
+
+The launcher provisions an ephemeral EC2 instance and uses AWS Systems Manager (SSM) to execute the smoke-test probe. If the runner never comes online, verify that the instance has network connectivity to AWS SSM endpoints.
+
+A common cause is launching the runner into a subnet that does not automatically assign public IP addresses.
+
+.Verify the subnet configuration:
+[source,bash]
+----
+aws ec2 describe-subnets \
+ --subnet-ids subnet-0230b77c41315b19f \
+ --region ap-southeast-1 \
+ --query "Subnets[0].[SubnetId,MapPublicIpOnLaunch]" \
+ --output table
+----
+
+If `MapPublicIpOnLaunch` is `False`, enable it:
+
+[source,bash]
+----
+aws ec2 modify-subnet-attribute \
+ --subnet-id subnet-0230b77c41315b19f \
+ --map-public-ip-on-launch \
+ --region ap-southeast-1
+----
+
+After updating the subnet configuration, terminate the failed runner instance and rerun the launcher.
+
+You can verify again that the runner received a public IP address:
+
+NOTE: A public IP address is not strictly required. The runner may also be deployed in a private subnet, provided it has connectivity to AWS SSM endpoints through a NAT Gateway or appropriate VPC endpoints.

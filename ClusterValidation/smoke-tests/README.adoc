@@ -1,0 +1,181 @@
+= cloudera-smoke-tests
+:toc: preamble
+:icons: font
+
+OCI-compliant container that consumes a launcher _handoff_ JSON (describing a
+running EC2 runner inside a Cloudera VPC), ships the probe to that runner via
+SSM, collects results, writes *Nagios + Prometheus + JSON + HTML* reports,
+and tears the runner's AWS resources down.
+
+Teardown always runs, even on failure, using the identifiers in the handoff.
+
+== Build
+
+[source,bash]
+----
+./smoke-tests/run.sh --build
+# or:
+podman build -t cloudera-smoke-tests:latest container/
+----
+
+== Run 
+
+=== Correct invocations
+
+Pick one:
+
+[TIP]
+.Preferred: one-shot — build and run in a single command
+====
+[source,bash]
+----
+./smoke-tests/run.sh -c ./smoke-tests/.smoke.env --build --handoff /tmp/handoff.json
+----
+====
+
+Composed with the launcher
+[source,bash]
+----
+# Typical pipeline: launcher emits handoff JSON → smoke-tests consumes it.
+./launcher/run.sh | ./smoke-tests/run.sh --cluster BaseCluster1 --cm-host 172.31.31.73 -q
+
+# Or via a file:
+./launcher/run.sh > /tmp/handoff.json
+./smoke-tests/run.sh --handoff /tmp/handoff.json
+----
+
+== Where are the logs?
+
+All progress output goes to *stderr* so that stdout can stay clean for the
+single-line Nagios result (and so the container can be piped). Nothing is
+silent; if you think nothing is happening, see the checks below.
+
+[cols="1,3"]
+|===
+| Stream | What you get
+
+| stdout | The final Nagios one-liner (`OK - ...`, `CRITICAL - ...`, etc.)
+| stderr | Timestamped progress logs: phase banners, SSM command id, status transitions (Pending → InProgress → Success), and a heartbeat every 60 s while the probe is running, plus teardown messages.
+| `/output/smoke-<env>-<ts>.{nagios,prom,json,html}` | Report artifacts
+|===
+
+Typical stderr during a run:
+
+----
+[10:42:03] === Remote probe via SSM ===
+[10:42:05] command 1f2a... sent; polling every 10s (heartbeat every 60s)
+[10:42:15] probe status: Pending
+[10:42:25] probe status: InProgress
+[10:43:25] probe still InProgress (t+80s)
+[10:44:25] probe still InProgress (t+140s)
+[10:44:55] probe status: Success
+[10:44:55] === Teardown ===
+[10:45:22] terminated i-0abc...
+...
+----
+
+If your invocation appears to hang before any of the above lines appear,
+check that you actually piped a handoff in. `./run.sh` with no stdin and no
+`--handoff FILE` will exit immediately with a clear error.
+
+== Secret handling
+
+`CM_PASS` must never appear on the command line. Accepted sources, in order:
+
+. `CM_PASS` env var
+. `--cm-pass-file PATH`  (refuses files whose mode isn't 600/400 when they contain `CM_PASS=`)
+. `--cm-pass-stdin`
+. Interactive prompt
+
+`run.sh` passes the password into the container via a mode-600 temp env-file
+that is removed on exit. `entrypoint.sh` also accepts `/run/cm_pass` as a
+read-only mount.
+
+== Cluster SSH key (optional)
+
+`SSH_KEY_FILE` points at the **pre-existing** SSH keypair you already use to
+log into your Cloudera hosts. The launcher does *not* generate it. When set,
+the *Disk Utilization* section of the report runs `df -hT` on each host:
+
+[source,bash]
+----
+# .smoke.env
+SSH_KEY_FILE=/home/you/dev/CLDR/keys/AWS/your-cluster-keypair.pem
+SSH_USER=ec2-user                 # default: ec2-user
+
+# or on the CLI:
+./smoke-tests/run.sh --ssh-key-file ~/.ssh/cluster.pem --ssh-user ec2-user ...
+----
+
+Mechanics:
+
+* `run.sh` requires the file to be `chmod 600`/`400` and mounts it read-only
+  into the container.
+* `smoke.py` forwards the key bytes (base64) to the ephemeral runner via SSM
+  and SSHes from the runner to each cluster host's *private* IP.
+* If `SSH_KEY_FILE` is unset, the report still renders — *Disk Utilization*
+  is marked `SKIP` with a hint and the run logs:
++
+----
+>> SSH:     no key configured — Disk Utilization will SKIP (set SSH_KEY_FILE in .smoke.env)
+----
+
+== Outputs (written to `./output/` by default)
+
+[cols="1,3"]
+|===
+| File | Purpose
+
+| `smoke-<env>-<ts>.nagios` | Single-line Nagios plugin output (same as stdout)
+| `smoke-<env>-<ts>.prom`   | Prometheus text exposition format
+| `smoke-<env>-<ts>.json`   | Full structured results
+| `smoke-<env>-<ts>.html`   | Standalone HTML report (no external deps)
+|===
+
+Stdout is always the Nagios line; exit code follows Nagios convention:
+
+[cols=">1,3"]
+|===
+| Code | Meaning
+
+| 0 | OK — all services healthy
+| 1 | WARNING — at least one CONCERNING / utilization > 85%
+| 2 | CRITICAL — any FAIL, service down, utilization > 95%
+| 3 | UNKNOWN — driver couldn't complete (auth, network, API, etc.)
+|===
+
+== Handoff contract
+
+The container expects a JSON document shaped like this (produced by
+`ephemeral-ec2-launcher`):
+
+[source,json]
+----
+{
+  "handoff_version": 1,
+  "kind": "ephemeral-ec2-runner",
+  "ts": "20260419-103000",
+  "env_name": "partnerdemo",
+  "aws": {"region": "...", "account": "..."},
+  "instance": {"id": "i-...", "type": "...", "ami_id": "...", "vpc_id": "...", "subnet_id": "..."},
+  "iam": {"role": "...", "instance_profile": "...", "managed_policy_arn": "..."},
+  "security_groups": {"ephemeral": "sg-...", "cloudera": ["sg-..."]}
+}
+----
+
+`handoff_version` is the compatibility marker; the container refuses any
+version it wasn't built against.
+
+== Files
+
+----
+container/
+  Dockerfile         # multi-stage, non-root, dumb-init, OCI labels
+  smoke.py           # SSM probe driver + report writer + teardown
+  remote_probe.py    # runs on the ephemeral EC2
+  report.py          # nagios / prometheus / json / html builders
+  entrypoint.sh
+  requirements.txt   # boto3, requests, urllib3
+run.sh               # host-side runner with 5-tier config precedence
+.smoke.env.example
+----
