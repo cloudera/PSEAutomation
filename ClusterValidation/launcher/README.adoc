@@ -1,0 +1,141 @@
+= ephemeral-ec2-launcher
+:toc: preamble
+:icons: font
+
+OCI-compliant container that stands up a short-lived EC2 runner inside a
+caller-supplied VPC/subnet and emits a JSON _handoff_ describing everything
+it created.
+
+The launcher is deliberately narrow: it needs only AWS credentials, a VPC,
+a subnet, and the Cloudera Manager private IP (used once, to discover which
+security groups the cluster is using). It does *not* touch Cloudera Manager
+itself — no CM credentials ever flow through this container.
+
+Teardown of a _successfully_ created runner is the downstream consumer's
+responsibility; the handoff contains every identifier required to tear the
+runner down safely. If creation itself fails midway, the launcher rolls
+back its own partial resources and exits non-zero.
+
+== Build
+
+Run from the repo root (paths are written that way throughout this README so
+each snippet is copy-pasteable):
+
+[source,bash]
+----
+./launcher/run.sh --build         # autodetects podman/docker
+# or:
+podman build -t ephemeral-ec2-launcher:latest launcher/container/
+----
+
+== Run
+
+Before running, ensure your AWS SSO session is valid on the host:
+
+[source,bash]
+----
+aws sso login --profile my-sso
+----
+
+`run.sh` mounts `~/.aws` read-only so the container can reuse the cached token.
+
+=== Correct invocations
+
+Pick one:
+
+[TIP]
+.Preferred: one-shot — build and run in a single command
+====
+Build output streams on stderr and only the handoff JSON reaches
+stdout, redirecting stdout gives you a clean JSON file while logs stay on
+your terminal.
+
+[source,bash]
+----
+./launcher/run.sh -c ./launcher/.launcher.env --build > /tmp/handoff.json
+
+# Watch the terminal: build + launch logs stream on stderr;
+# /tmp/handoff.json ends up with just the JSON object.
+----
+====
+
+Separate the build from the run (cleanest for repeated invocations):
+
+[source,bash]
+----
+./launcher/run.sh -c ./launcher/.launcher.env --build -q 2>/dev/null || true   # just build
+./launcher/run.sh -c ./launcher/.launcher.env > /tmp/handoff.json              # run, capture JSON
+----
+
+Minimal / interactive:
+
+[source,bash]
+----
+./launcher/run.sh > /tmp/handoff.json      # prompts for anything unset
+./launcher/run.sh -c ./launcher/.launcher.env   # source a config file
+----
+
+=== Verify the handoff
+
+After a successful run:
+
+[source,bash]
+----
+jq . /tmp/handoff.json    # should pretty-print the handoff object
+----
+
+If the file is empty, the launcher died on argv parsing or AWS; check your
+terminal's stderr.
+
+== Output
+
+A single JSON object on stdout. Example:
+
+[source,json]
+----
+{
+  "handoff_version": 1,
+  "kind": "ephemeral-ec2-runner",
+  "ts": "20260419-103000",
+  "env_name": "partnerdemo",
+  "aws": {"region": "ap-southeast-1", "account": "037356316600"},
+  "instance": {
+    "id": "i-0abc123...",
+    "type": "t3.micro",
+    "ami_id": "ami-0...",
+    "vpc_id": "vpc-9d9385fa",
+    "subnet_id": "subnet-affc06c9"
+  },
+  "iam": {
+    "role": "smoke-runner-partnerdemo-20260419-103000",
+    "instance_profile": "smoke-runner-partnerdemo-20260419-103000",
+    "managed_policy_arn": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  },
+  "security_groups": {
+    "ephemeral": "sg-0...",
+    "cloudera": ["sg-..."]
+  }
+}
+----
+
+Logs go to stderr; stdout is JSON-only so you can pipe it directly downstream:
+
+== Composition
+
+The launcher is one composable unit of work. Typical pipeline:
+
+----
+launcher ──▶ handoff.json ──▶ smoke-tests (consumes handoff, tears runner down)
+----
+
+== Files
+
+----
+container/
+  Dockerfile        # multi-stage, non-root, dumb-init, OCI labels
+  launcher.py       # preflight + launch + rollback, writes handoff to stdout
+  entrypoint.sh
+  requirements.txt  # boto3
+run.sh              # host-side runner with 5-tier config precedence
+.launcher.env.example
+----
