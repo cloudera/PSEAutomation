@@ -11,6 +11,18 @@ This repository is structured into distinct modules that provide building blocks
 
 == Repository Structure
 
+=== ClusterValidation
+
+This folder contains automation for validating Cloudera environments through end-to-end smoke testing. It provisions a temporary validation runner, executes health and service checks, and generates reports to verify cluster readiness and operational status.
+
+**Key capabilities:**
+
+- Automated smoke testing of Cloudera environments.
+- Validation of Cloudera Manager connectivity and cluster services.
+- Collection of health, storage, and service status information.
+- Report generation in JSON, HTML, Prometheus, and Nagios-compatible formats.
+- Ephemeral AWS-based validation runners with automated cleanup.
+
 === K8SOperators
 This folder contains Kubernetes Operators and supporting manifests to streamline the deployment and management of Cloudera services on Kubernetes.  
 
