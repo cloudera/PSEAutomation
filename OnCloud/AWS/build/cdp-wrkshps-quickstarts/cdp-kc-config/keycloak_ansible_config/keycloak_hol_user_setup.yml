@@ -65,7 +65,6 @@
         name: keycloak_data
         tasks_from: setup_user
       vars:
-        keycloak__user_temporary_password: "{{ reset_password_on_first_login | default(True) }}"
         keycloak__user_to_create:
           realm_name: "{{ item.realm_name }}"
           username: "{{ item.userName }}"

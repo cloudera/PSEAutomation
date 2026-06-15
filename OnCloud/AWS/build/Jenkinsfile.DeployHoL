@@ -21,6 +21,7 @@
             // defaultValue: 'NONE',
             multiSelectDelimiter: ','
         )
+        string(name: 'OWNER', defaultValue: '', description: '❗❗❗(MANDATORY) Resource tag: owner (e.g. provide your name or email)')
         string(name: 'CDP_SAML_PROVIDER_LIMIT', defaultValue: '10', description: 'Maximum number of SAML providers allowed')
         string(name: 'CDP_USER_LIMIT', defaultValue: '3000', description: 'Maximum number of CDP users allowed')
         string(name: 'CDP_GROUP_LIMIT', defaultValue: '50', description: 'Maximum number of CDP groups allowed')
@@ -63,6 +64,7 @@
         REPO_URL = "https://github.com/cloudera/PSEAutomation.git"
         //BRANCH_NAME = ""
         REPO_DIR = "${HOL_AUTO_EXEC_DIR}/hol-automation"
+        AWS_APN_ID = credentials('AWS_APN_ID')
     }
 
     stages {
@@ -136,6 +138,9 @@
                     }
                     if (!params.LOCAL_MACHINE_IP?.trim()) {
                         printError("LOCAL_MACHINE_IP is mandatory! Please provide a value.")
+                    }
+                    if (!params.OWNER?.trim()) {
+                        printError("OWNER is mandatory! Please provide a value.")
                     }
 
                     // Domain and Hosted Zone validity checks with updated regex
@@ -212,14 +217,20 @@
                     
                     // Print the formatted list
                     echo "Selected services: ${formattedServices}"
+
+                     // Build ENV_TAGS — owner mandatory, apn-id always included
+                    def envTags = "{owner=${params.OWNER.trim()},apn-id=${env.AWS_APN_ID}}"
                     
+                    // Combine LOCAL_MACHINE_IP and VPN_CIDRS
+                    def allCidrs = "${params.LOCAL_MACHINE_IP.trim()},${env.VPN_CIDRS.trim()}"
+
                     // Create or overwrite the config file
                     writeFile file: env.CONFIG_FILE, text: """PROVISION_KEYCLOAK:${params.PROVISION_KEYCLOAK}
 KEYCLOAK_ADMIN_PASSWORD:${params.KEYCLOAK_ADMIN_PASSWORD}
 PROVISION_CAII:${params.PROVISION_CAII}
 AWS_REGION:${params.AWS_REGION}
 CDP_DEPLOYMENT_TYPE:${params.CDP_DEPLOYMENT_TYPE}
-LOCAL_MACHINE_IP:${params.LOCAL_MACHINE_IP}
+LOCAL_MACHINE_IP:${allCidrs}
 WORKSHOP_NAME:${params.WORKSHOP_NAME}
 NUMBER_OF_WORKSHOP_USERS:${params.NUMBER_OF_WORKSHOP_USERS}
 WORKSHOP_USER_PREFIX:${params.WORKSHOP_USER_PREFIX}
@@ -251,6 +262,7 @@ DATALAKE_VERSION:${params.DATALAKE_VERSION}
 
 DOMAIN:${params.DOMAIN}
 HOSTEDZONEID:${params.HOSTEDZONEID}
+ENV_TAGS:${envTags}
 """
                     sh """
                         pwd

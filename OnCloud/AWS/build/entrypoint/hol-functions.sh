@@ -324,6 +324,18 @@ validating_variables() {
       fi
    done <"$USER_CONFIG_FILE"
 
+   while IFS= read -r line; do
+      [[ -z "$line" || "$line" =~ ^# ]] && continue
+      key="${line%%:*}"
+      key=$(echo "$key" | tr -d '[:space:]\r')
+      if [[ "$key" == "ENV_TAGS" ]]; then
+         env_tags="${line#*:}"
+         env_tags=$(echo "$env_tags" | tr -d '[:space:]\r')
+         export env_tags
+         break
+      fi
+   done < "$USER_CONFIG_FILE"
+
    # Call the function with the user-provided config file as an argument
    check_config "$USER_CONFIG_FILE"
    echo
@@ -667,9 +679,12 @@ setup_keycloak_ec2() {
    fi
 
    terraform init
+   # Extract only the first IP for Keycloak (admin access only)
+   kc_ip=$(echo "$local_ip" | cut -d',' -f1)
+
    terraform apply -auto-approve \
       -var "workshop_name=$workshop_name" \
-      -var "local_ip=$local_ip" \
+      -var "local_ip=$kc_ip" \
       -var "instance_keypair=$aws_key_pair" \
       -var "aws_region=$aws_region" \
       -var "domain=$domain" \
@@ -742,9 +757,12 @@ destroy_keycloak() {
         }]
     }'
    echo "DNS record deleted: $SUBDOMAIN -> $KEYCLOAK_SERVER_IP"
+
+   # Extract only the first IP for Keycloak (admin access only)
+   kc_ip=$(echo "$local_ip" | cut -d',' -f1)
    terraform destroy -auto-approve \
       -var "workshop_name=$workshop_name" \
-      -var "local_ip=$local_ip" \
+      -var "local_ip=$kc_ip" \
       -var "instance_keypair=$aws_key_pair" \
       -var "aws_region=$aws_region" \
       -var "kc_security_group=$sg_name" \
@@ -772,7 +790,11 @@ provision_cdp() {
    git sparse-checkout set aws
    git checkout @ &>/dev/null
    cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws
-   cdp_cidr="\"$local_ip\""
+
+   # Convert comma-separated IPs into properly quoted Terraform list elements
+   cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
+   cdp_cidr="\"${cdp_cidr}\""
+
    #Adding outputs in quickstart outputs.tf
    file="outputs.tf"
 
@@ -811,13 +833,40 @@ output "log_storage_bucket_name" {
 EOF
    fi
    terraform init
+
+   # Default to empty map if ENV_TAGS not provided in configfile
+   env_tags="${env_tags:-{}}"
+
+   TFVARS_FILE="/tmp/env_tags_${workshop_name}.tfvars"
+
+   if [[ "$env_tags" == "{}" ]]; then
+      echo 'env_tags = {}' > "$TFVARS_FILE"
+   else
+      # Strip outer braces — use tr to remove ALL { and } then rebuild cleanly
+      inner=$(echo "$env_tags" | tr -d '\r\n{}')
+      # Build tfvars map
+      echo 'env_tags = {' > "$TFVARS_FILE"
+      IFS=',' read -ra pairs <<< "$inner"
+      for pair in "${pairs[@]}"; do
+         tag_key="${pair%%=*}"
+         tag_val="${pair#*=}"
+         echo "  \"${tag_key}\" = \"${tag_val}\"" >> "$TFVARS_FILE"
+      done
+      echo '}' >> "$TFVARS_FILE"
+   fi
+
+   echo "=== Generated tfvars for env_tags ==="
+   cat "$TFVARS_FILE"
+
    terraform apply --auto-approve \
       -var "env_prefix=${workshop_name}" \
       -var "aws_region=${aws_region}" \
       -var "aws_key_pair=${aws_key_pair}" \
       -var "deployment_template=${deployment_template}" \
-      -var "ingress_extra_cidrs_and_ports={cidrs = ["${cdp_cidr}"],ports = [443, 22]}" \
-      -var "datalake_version=${datalake_version}"
+      -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}" \
+      -var "datalake_version=${datalake_version}" \
+      -var-file="${TFVARS_FILE}"
+
    cdp_provision_status=$?
    if [ $cdp_provision_status -eq 0 ]; then
       export ENV_PUBLIC_SUBNETS=$(terraform output -json aws_public_subnet_ids)
@@ -1099,15 +1148,17 @@ destroy_cdp() {
    USER_NAMESPACE=$workshop_name
    echo -e "\n               ==============================Destroying CDP Environment Infrastructure========================================"
    cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws
-   cdp_cidr="\"$local_ip\""
+   # Convert comma-separated IPs into properly quoted Terraform list elements
+   cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
+   cdp_cidr="\"${cdp_cidr}\""
+
    terraform init
    terraform destroy --auto-approve \
       -var "env_prefix=${workshop_name}" \
       -var "aws_region=${aws_region}" \
       -var "aws_key_pair=${aws_key_pair}" \
       -var "deployment_template=${deployment_template}" \
-      -var "ingress_extra_cidrs_and_ports={cidrs = ["${cdp_cidr}"],ports = [443, 22]}"
-   cdp_destroy_status=$?
+      -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
    if [ $cdp_destroy_status -eq 0 ]; then
       rm -rf /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/
       return 0

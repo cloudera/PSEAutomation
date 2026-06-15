@@ -19,7 +19,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "log_lifecycle_policy" {
   bucket = var.log_bucket_name
 
   rule {
-    id     = "delete_logs_after_15_days"
+    id     = "delete_logs_after_3_days"
     status = "Enabled"
 
     filter {
@@ -27,14 +27,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "log_lifecycle_policy" {
     }
 
     expiration {
-      days = 15
+      days = 3
     }
     noncurrent_version_expiration {
-      noncurrent_days = 15
+      noncurrent_days = 3
     }
 
     abort_incomplete_multipart_upload {
-      days_after_initiation = 7
+      days_after_initiation = 3
     }
   }
   # Rule 2: Remove expired delete markers (helps in bucket deletion)
