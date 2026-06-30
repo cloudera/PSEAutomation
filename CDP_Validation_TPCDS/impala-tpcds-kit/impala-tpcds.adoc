@@ -1,0 +1,156 @@
+= Impala TPC-DS Benchmark — Setup & Execution Guide
+:toc: macro
+:toc-title: Table of Contents
+:icons: font
+:source-highlighter: rouge
+:sectnums:
+
+[NOTE]
+====
+*Data Reuse:* If you have already generated TPC-DS data as part of the Hive benchmark, the same data can be reused for Impala. Simply point Impala to the existing HDFS location (e.g., `/tmp/TPC-DS/Hive/100`).
+====
+
+toc::[]
+
+== Global Configuration
+Define these variables once at the start of your session. They are used across multiple steps in this guide.
+
+[source,bash]
+----
+# Data Scale (Defaulting to 10G)
+SCALE_FACTOR="10"
+# Generata a timestamp
+LOG_TIME=$(date +%Y%m%d_%H%M%S)
+#Impala on Base Cluster
+IMPALA_HOST="pvcbase-worker2.cldrsetup.local"
+----
+
+== Prerequisites
+
+Authenticate with Kerberos before running any Impala commands.
+
+* **Base Cluster:** `kinit` as the Hive or service user.
+* **Impala Virtual Warehouse:** `kinit` using your personal username.
+
+[source,bash]
+----
+kinit your_username@YOUR.REALM
+----
+
+== Create External Tables
+This step creates Impala external tables that point to the already-generated TPC-DS data residing on HDFS.
+
+[source,bash]
+----
+impala-shell -V -k --ssl \
+  -i ${IMPALA_HOST}:21050 \
+  --var=scale=${SCALE_FACTOR} \
+  --var=location=/tmp/TPC-DS/Hive/${SCALE_FACTOR} \
+  -f scripts/impala-external.sql
+----
+
+== Create Parquet Tables
+Define the optimized Parquet-format tables within the Impala catalog:
+
+[source,bash]
+----
+impala-shell -V -k --ssl \
+  -i ${IMPALA_HOST}:21050 \
+  --var=scale=${SCALE_FACTOR} \
+  -f scripts/impala-parquet.sql
+----
+
+== Insert Data into Parquet Tables
+Populate the optimized Parquet tables by selecting data from the external tables created in the previous step:
+
+[source,bash]
+----
+impala-shell -V -k --ssl \
+  -i ${IMPALA_HOST}:21050 \
+  --var=scale=${SCALE_FACTOR} \
+  -f scripts/impala-insert.sql
+----
+
+== Compute Statistics
+This step is **critical** for performance. It computes table and column statistics used by the Impala query planner.
+
+[source,bash]
+----
+impala-shell -V -k --ssl \
+  -i ${IMPALA_HOST}:21050 \
+  --var=scale=${SCALE_FACTOR} \
+  -f scripts/compute-stats.sql
+----
+
+== Configure the Internal Query Runner
+Update `util_internalRunQuery_impala.sh` with the correct Impala coordinator endpoint.
+
+=== Option A — CDP Base Cluster
+[source,bash]
+----
+sed -i "s/-i [^ ]*/-i ${IMPALA_HOST}:21050/" util_internalRunQuery_impala.sh
+----
+
+=== Option B — Impala Virtual Warehouse (Data Services)
+[source,bash]
+----
+IMPALA_COORD="coordinator-ntnx-impala-vw.apps.cldrsetup.local"
+ECS_ENV="cdp-env-1"
+
+sed -i "s|impala-shell .*|impala-shell --protocol=hs2-http --ssl -i ${IMPALA_COORD}:443 -s hive -k --kerberos_host_fqdn=dwx-env-${ECS_ENV}.cdp.local -d \${INTERNAL_DATABASE} -f \"\${INTERNAL_QUERYPATH}\" \&>> \"\${INTERNAL_LOG_PATH}\"|" util_internalRunQuery_impala.sh
+----
+
+== Run TPC-DS Queries
+Execute the full suite of TPC-DS queries using the `query_runner.sh` script:
+
+[source,bash]
+----
+# Generate a timestamp (e.g., 20240520_143005)
+LOG_TIME=$(date +%Y%m%d_%H%M%S)
+
+# Execute with timestamped log file
+nohup sh query_runner.sh ${SCALE_FACTOR} parquet > "tpc_run_query_${SCALE_FACTOR}.log.${LOG_TIME}" 2>&1 &
+
+# Follow the log
+tail -f "tpc_run_query_${SCALE_FACTOR}.log.${LOG_TIME}"
+----
+
+== View Query Execution Results
+After the benchmark completes, the results are captured in a CSV file titled `time_elapsed_tpcds<timestamp>.csv`.
+
+=== Display Results
+Use `cat` to view the raw execution times and success status:
+
+[source,bash]
+----
+cat time_elapsed_tpcds*.csv
+----
+
+=== Sort and Format Results
+To view the results in numerical order with the header intact:
+
+[source,bash]
+----
+(head -1 time_elapsed_tpcds*.csv; tail -n +2 time_elapsed_tpcds*.csv | sort -V)
+----
+
+.Example Output
+[cols="1,2,1", options="header"]
+|===
+| query # | secs elapsed | status
+| 1 | 4.241723340 | SUCCESS
+| 2 | 9.319121864 | SUCCESS
+| 3 | 12.10293412 | SUCCESS
+|===
+
+== Quick Reference Summary
+[cols="1,2,3", options="header"]
+|===
+| Step | Script / Command | Purpose
+| 1 | `impala-external.sql` | Map HDFS data to external tables
+| 2 | `impala-parquet.sql` | Define optimized schema
+| 3 | `impala-insert.sql` | Convert data to Parquet format
+| 4 | `compute-stats.sql` | Enable efficient query planning
+| 5 | `sed` on utility script | Set coordinator connection string
+| 6 | `query_runner.sh` | Execute benchmark queries
+|===

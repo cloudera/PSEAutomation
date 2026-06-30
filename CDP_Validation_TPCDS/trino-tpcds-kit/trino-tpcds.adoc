@@ -1,0 +1,102 @@
+= Trino TPC-DS Benchmark — Setup & Execution Guide
+:toc: macro
+:toc-title: Table of Contents
+:icons: font
+:source-highlighter: rouge
+:sectnums:
+
+[NOTE]
+====
+*Data Reuse:* If you have already generated TPC-DS data as part of the Hive TPC-DS benchmark, the same data can be reused for Trino. Trino queries will run directly against the existing ORC data on HDFS or Cloud Storage.
+====
+
+toc::[]
+
+== Prerequisites
+
+Unlike Hive or Impala on the base cluster, Trino Virtual Warehouses typically use **LDAP authentication**.
+
+* No `kinit` is required for the Trino connection.
+* Ensure you have your LDAP credentials (username and password) ready.
+* Ensure the Trino CLI is installed on the edge node where you are running the scripts.
+
+== Configure the Trino Endpoint
+Update the `query_runner_trino.sh` script with the specific Trino Virtual Warehouse coordinator URL.
+
+[source,bash]
+----
+TRINO_HOST="ntnx-trino-vw.apps.cldrsetup.local"
+
+sed -i "s|^[[:space:]]*TRINO_URL=\".*\"|    TRINO_URL=\"https://${TRINO_HOST}:443\"|" query_runner_trino.sh
+----
+
+== Set the LDAP Password
+The query runner is designed to pick up your password from an environment variable to avoid storing sensitive credentials in plain text files.
+
+[source,bash]
+----
+export TRINO_PASSWORD='<your_LDAP_password>'
+----
+
+[WARNING]
+====
+**Security Note:** Exporting the password this way sets it for the **current session only**. Avoid hardcoding passwords in any script files that might be committed to version control.
+====
+
+== Run TPC-DS Queries
+Start the benchmark execution. This script will iterate through the TPC-DS query set and execute them against the specified Trino catalog and schema.
+
+[source,bash]
+----
+# Generate a timestamp (e.g., 20240520_143005)
+LOG_TIME=$(date +%Y%m%d_%H%M%S)
+
+# Execute with timestamped log file
+nohup sh query_runner_trino.sh 100 orc > "tpc_run_query_100_${LOG_TIME}.log" 2>&1 &
+
+# Follow the log
+tail -f "tpc_run_query_100_${LOG_TIME}.log
+----
+
+== View Query Execution Results
+After the benchmark completes, the results are captured in a CSV file titled `time_elapsed_tpcds<timestamp>.csv`.
+
+=== Display Results
+Use `cat` to view the raw execution times and success status:
+
+[source,bash]
+----
+cat time_elapsed_tpcds*.csv
+----
+
+=== Sort and Format Results
+To view the results in numerical order with the header intact:
+
+[source,bash]
+----
+(head -1 time_elapsed_tpcds*.csv; tail -n +2 time_elapsed_tpcds*.csv | sort -V)
+----
+
+.Example Output
+[cols="1,2,1", options="header"]
+|===
+| query # | secs elapsed | status
+| 1 | 4.241723340 | SUCCESS
+| 2 | 9.319121864 | SUCCESS
+| 3 | 12.10293412 | SUCCESS
+|===
+
+== Troubleshooting: Connection Issues
+
+* **SSL Verification:** If you encounter SSL handshake errors, ensure your Java truststore contains the CA certificate for the Trino endpoint (similar to the Hive troubleshooting steps).
+* **Catalog/Schema:** Ensure the `trino` catalog is correctly mapped to the Hive Metastore where the TPC-DS tables were created.
+* **LDAP Lockout:** Repeated failed attempts may lock your LDAP account; verify credentials using a simple `trino --server <URL> --user <USER> --password` command first.
+
+== Quick Reference Summary
+[cols="1,2,3", options="header"]
+|===
+| Step | Action | Purpose
+| 1 | Edit `query_runner_trino.sh` | Point to the Trino Coordinator URL
+| 2 | `export TRINO_PASSWORD` | Provide credentials for LDAP authentication
+| 3 | `query_runner_trino.sh` | Execute the 100 TPC-DS benchmark queries
+|===

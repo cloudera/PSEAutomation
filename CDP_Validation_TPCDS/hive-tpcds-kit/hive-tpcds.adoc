@@ -1,0 +1,216 @@
+= Hive TPC-DS Benchmark — Setup & Execution Guide
+:toc: macro
+:toc-title: Table of Contents
+:icons: font
+:source-highlighter: rouge
+:sectnums:
+
+[NOTE]
+====
+*Environment:* Cloudera Data Platform (CDP) — Base Cluster & Hive Virtual Warehouse (Data Services)
+====
+
+toc::[]
+
+== Global Configuration
+Define these variables once at the start of your session. They are used across multiple steps in this guide.
+
+[source,bash]
+----
+# Data Scale (Defaulting to 10G)
+SCALE_FACTOR="10"
+# Generata a timestamp
+LOG_TIME=$(date +%Y%m%d_%H%M%S)
+----
+
+== Prerequisites
+
+=== Kerberos Authentication
+Authenticate as the Hive service user using its keytab:
+
+[source,bash]
+----
+kinit -kt /path/to/hive.keytab hive@YOUR.REALM
+----
+
+=== Install Required Packages
+[source,bash]
+----
+dnf install -y git wget bison bc patch flex gcc maven zip unzip
+----
+
+Create the `yacc` symlink required by the TPC-DS build process:
+
+[source,bash]
+----
+sudo ln -s /usr/bin/bison /usr/bin/yacc
+----
+
+== Clone the Repository
+[source,bash]
+----
+git clone https://github.com/kuldeepsahu1105/cdp-validation.git
+cd cdp-validation/hive-tpcds-kit/
+----
+
+== Build TPC-DS Tools
+
+[IMPORTANT]
+.Critical Build Fix
+====
+The `Makefile` content resets on every run. You **must** apply the `sed` fix below before each build to handle 64-bit offsets and C common variables.
+====
+
+=== Fix the Makefile (Run before every build)
+[source,bash]
+----
+sed -i \
+  -e 's|^BASE_CFLAGS.*|BASE_CFLAGS = -m64 -fcommon -DHUGE_TYPE="long long" -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -DYYDEBUG|' \
+  -e 's|^LINUX_CFLAGS.*|LINUX_CFLAGS = -g -Wall -fcommon|' \
+  tpcds-gen/target/tools/makefile
+----
+
+=== Clean and Build
+[source,bash]
+----
+cd tpcds-gen/target/tools/
+rm -rf tpcds-gen/patches/
+make clean
+make
+cd ../../../
+----
+
+=== Generate Parser Files & Run Build Script
+[source,bash]
+----
+bison -y -d -v ./tpcds-gen/target/tools/qgen.y
+./tpcds-build.sh
+----
+
+== Configure the Hive Connection
+Choose the connection option that matches your environment.
+
+=== Option A — CDP Base Cluster (ZooKeeper Discovery)
+[source,bash]
+----
+HIVE='beeline -u "jdbc:hive2://pvcbase-master.cldrsetup.local:2181,pvcbase-worker1.cldrsetup.local:2181,pvcbase-worker2.cldrsetup.local:2181/;serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=hiveserver2;principal=hive/_HOST@CLDRSETUP.LOCAL;ssl=true;trustStoreType=jks;sslTrustStore=/var/lib/cloudera-scm-agent/agent-cert/cm-auto-global_truststore.jks;trustStorePassword=valUhGjVTwXS8mT4CacimMoznXcOCB3AsRWQA6u9vK8"'
+----
+
+=== Option B — Hive Virtual Warehouse (Data Services / HTTP)
+[source,bash]
+----
+HIVE='beeline -u "jdbc:hive2://hs2-ntnx-hive-vw.apps.cldrsetup.local:443/default;transportMode=http;httpPath=cliservice;socketTimeout=60;ssl=true;sslTrustStore=/var/lib/cloudera-scm-agent/agent-cert/cm-auto-global_truststore.jks;trustStorePassword=320eXtvxZzbMBU61NmqQuPBsBpGr60eBXJP7AJw0TMx;trustStoreType=jks;retries=3;kerberosEnableCanonicalHostnameCheck=false;principal=hive/dwx-env-cdp-env-1.cdp.local@cldrsetup.local"'
+----
+
+=== Apply Connection to Scripts
+[source,bash]
+----
+sed -i "s|^HIVE=.*|HIVE='$HIVE'|" tpcds-setup.sh tpcds-gen.sh
+----
+
+== Generate TPC-DS Data
+[source,bash]
+----
+# Execute with timestamped log file
+nohup sh tpcds-gen.sh --scale ${SCALE_FACTOR} --dir /tmp/TPC-DS/Hive > tpcds-gen-log-${SCALE_FACTOR}.${LOG_TIME} &
+
+# Follow the log
+tail -f tpcds-gen-log-${SCALE_FACTOR}.${LOG_TIME}
+----
+
+== Load Data into Hive (Setup)
+[source,bash]
+----
+nohup sh tpcds-setup.sh --scale ${SCALE_FACTOR} --dir /tmp/TPC-DS/Hive > tpcds-setup-${SCALE_FACTOR}-log.${LOG_TIME} &
+tail -f tpcds-setup-${SCALE_FACTOR}-log.${LOG_TIME}
+----
+
+[CAUTION]
+.YARN/Hive Configuration Requirements
+====
+Ensure the following settings are applied in Cloudera Manager:
+
+* `yarn.scheduler.maximum-allocation-mb` = 4096
+* `hive.tez.container.size` = 4096
+* `yarn.nodemanager.resource.memory-mb` = 4096
+====
+
+== Configure Internal Query Runner
+Update `util_internalRunQuery.sh` with the connection variables.
+
+=== Update Configuration for CDP Base (If running TPC-DS on the Base Cluster)
+[source,bash]
+----
+ZK_HOSTS="pvcbase-master.cldrsetup.local:2181,pvcbase-worker1.cldrsetup.local:2181,pvcbase-cldrsetup.cldrsetup.local:2181"
+REALM="CLDRSETUP.LOCAL"
+TRUSTSTORE_PASS="valUhGjVTwXS8mT4CacimMoznXcOCB3AsRWQA6u9vK8"
+
+sed -i "s|^HIVE=.*|HIVE=\"jdbc:hive2://${ZK_HOSTS}/\${INTERNAL_DATABASE};serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=hiveserver2;principal=hive/_HOST@${REALM};ssl=true;trustStoreType=jks;sslTrustStore=/var/lib/cloudera-scm-agent/agent-cert/cm-auto-global_truststore.jks;trustStorePassword=${TRUSTSTORE_PASS}\"|" util_internalRunQuery.sh
+----
+
+=== Update Configuration for Virtual Warehouse (If running TPC-DS on Data Services)
+[source,bash]
+----
+VW_HOST="hs2-ntnx-hive-vw.apps.cldrsetup.local"
+REALM="CLDRSETUP.LOCAL"
+TRUSTSTORE_PASS="320eXtvxZzbMBU61NmqQuPBsBpGr60eBXJP7AJw0TMx"
+
+sed -i "s|^HIVE=.*|HIVE=\"jdbc:hive2://${VW_HOST}:443/\${INTERNAL_DATABASE};transportMode=http;httpPath=cliservice;socketTimeout=60;ssl=true;trustStoreType=jks;sslTrustStore=/var/lib/cloudera-scm-agent/agent-cert/cm-auto-global_truststore.jks;trustStorePassword=${TRUSTSTORE_PASS};retries=3;kerberosEnableCanonicalHostnameCheck=false;principal=hive/dwx-env-cdp-env-1.cdp.local@${REALM}\"|" util_internalRunQuery.sh
+----
+
+== Run TPC-DS Queries
+[source,bash]
+----
+# Execute with timestamped log file
+nohup sh query_runner.sh ${SCALE_FACTOR} orc > "tpc_run_query_${SCALE_FACTOR}.log.${LOG_TIME}" 2>&1 &
+
+# Follow the log
+tail -f "tpc_run_query_${SCALE_FACTOR}.log.${LOG_TIME}"
+----
+
+== View Query Execution Results
+After the benchmark completes, the results are captured in a CSV file titled `time_elapsed_tpcds<timestamp>.csv`.
+
+=== Display Results
+Use `cat` to view the raw execution times and success status:
+
+[source,bash]
+----
+cat time_elapsed_tpcds*.csv
+----
+
+=== Sort and Format Results
+To view the results in numerical order with the header intact:
+
+[source,bash]
+----
+(head -1 time_elapsed_tpcds*.csv; tail -n +2 time_elapsed_tpcds*.csv | sort -V)
+----
+
+.Example Output
+[cols="1,2,1", options="header"]
+|===
+| query # | secs elapsed | status
+| 1 | 4.241723340 | SUCCESS
+| 2 | 9.319121864 | SUCCESS
+| 3 | 12.10293412 | SUCCESS
+|===
+
+== Troubleshooting: SSL Errors
+If Beeline fails with `PKIX path building failed`:
+
+. **Extract:** `openssl s_client -connect hs2-ntnx-hive-vw.apps.cldrsetup.local:443 -showcerts </dev/null 2>/dev/null | openssl x509 -outform PEM > /tmp/cdw-vw.crt`
+. **Import:** `keytool -importcert -alias cdw-vw-cert -file /tmp/cdw-vw.crt -keystore /etc/alternatives/jre_17_openjdk/lib/security/cacerts -storepass changeit -noprompt`
+
+== Quick Reference Summary
+[cols="1,2,3", options="header"]
+|===
+| Step | Command | Purpose
+| 1 | `kinit` | Authenticate
+| 2 | `tpcds-build.sh` | Compile tools
+| 3 | `sed` on `tpcds-setup.sh` | Inject connection
+| 4 | `tpcds-gen.sh` | Generate data
+| 5 | `tpcds-setup.sh` | Load data
+| 6 | `sed` on `util_internalRunQuery.sh` | Setup runner
+| 7 | `query_runner.sh` | Run benchmarks
+|===

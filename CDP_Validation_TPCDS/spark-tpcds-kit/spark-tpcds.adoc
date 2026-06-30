@@ -1,0 +1,319 @@
+= Spark TPC-DS Benchmark — Setup & Execution Guide
+:toc: macro
+:toc-title: Table of Contents
+:icons: font
+:source-highlighter: rouge
+:sectnums:
+
+[NOTE]
+====
+*Data Generation:* Spark TPC-DS uses its own data generation pipeline (`spark-tpcds-datagen`). Unlike Impala and Trino, which can reuse Hive-generated data, Spark generates data independently into HDFS via a dedicated Spark job.
+====
+
+Reference: https://community.cloudera.com/t5/Community-Articles/TPC-DS-on-Cloudera/ta-p/403635
+
+toc::[]
+
+== Global Configuration
+Define these variables once at the start of your session. They are used across multiple steps in this guide.
+
+[source,bash]
+----
+# Cluster and Versioning
+export NAMENODE_HOST="pvcbase-master.cldrsetup.local"
+export SPARK_DATAGEN_VERSION="3.2.0.2.12"
+export QUERY_EXEC_VERSION="3.4.1-1.0"
+
+# Data Scale (Defaulting to 10G)
+export SCALE_FACTOR="10"
+----
+
+== Prerequisites
+
+=== Kerberos Authentication
+Authenticate as the `hdfs` user to create core directories and manage HDFS permissions:
+
+[source,bash]
+----
+kinit hdfs@YOUR.REALM
+----
+
+=== Create Required HDFS Directories
+[source,bash]
+----
+hdfs dfs -mkdir -p /user/systest/spark-sql-perf
+hdfs dfs -mkdir -p /data/tpcds
+hdfs dfs -mkdir -p /datasets/tpcds/queries
+hdfs dfs -mkdir -p /tmp/metrics
+hdfs dfs -chmod 777 /data/tpcds
+----
+
+== Upload Artifacts to HDFS
+
+=== Upload JARs and Configurations
+[source,bash]
+----
+cd spark-tpcds
+# Path to hive-site.xml on CDP Base:
+# /etc/hive/conf.cloudera.hive_on_tez/hive-site.xml
+
+hdfs dfs -put /etc/hive/conf.cloudera.hive_on_tez/hive-site.xml /user/systest/spark-sql-perf/
+hdfs dfs -put spark-tpcds-datagen*.jar /user/systest/spark-sql-perf/
+hdfs dfs -put spark-query-executor*.jar /user/systest/spark-sql-perf/
+----
+
+=== Upload TPC-DS Query Files
+[source,bash]
+----
+hdfs dfs -put queries/*.sql /datasets/tpcds/queries/
+----
+
+== Distribute TPC-DS Tools to All Worker Nodes
+The `dsdgen` binary must be present on every worker node because Spark executors perform data generation locally.
+
+[source,bash]
+----
+cp -r tools /tmp/
+chmod -R 777 /tmp/tools
+
+for host in pvcbase-worker1 pvcbase-worker2 pvcbase-worker3; do
+  echo "=== $host ==="
+  scp -r /root/tpc/tpcds-cloudera/tools/tools $host:/tmp/
+  ssh $host "chmod -R 777 /tmp/tools"
+done
+----
+
+== Generate TPC-DS Data via Spark
+`kinit` as the `hive` user before submitting the Spark job.
+
+[source,bash]
+----
+kinit hive@YOUR.REALM
+
+spark3-submit \
+  --master yarn \
+  --deploy-mode cluster \
+  --files hdfs://${NAMENODE_HOST}:8020/user/systest/spark-sql-perf/hive-site.xml \
+  --num-executors 5 \
+  --executor-cores 2 \
+  --executor-memory 3G \
+  --driver-memory 3G \
+  --driver-cores 2 \
+  --queue default \
+  --class com.databricks.spark.sql.perf.TPCDSDataGen \
+  --conf spark.locality.wait=0s \
+  hdfs://${NAMENODE_HOST}:8020/user/systest/spark-sql-perf/spark-tpcds-datagen-${SPARK_DATAGEN_VERSION}.jar \
+  --path "/data/tpcds" \
+  -s ${SCALE_FACTOR} \
+  --skipDatagen false \
+  --toolsDir /tmp/tools
+----
+
+== Run TPC-DS Queries
+
+=== Option A — Run a Subset of Queries (Testing)
+[source,bash]
+----
+# Step-specific variable
+DB_NAME="dex_tpcds_sf10_withdecimal_withdate_withnulls"
+
+spark3-submit \
+  --master yarn \
+  --deploy-mode cluster \
+  --num-executors 5 \
+  --executor-cores 2 \
+  --executor-memory 3G \
+  --driver-memory 3G \
+  --driver-cores 1 \
+  --queue default \
+  --class org.hw.qe.hcube.BatchSparkSQLExecutor \
+  --files hdfs://${NAMENODE_HOST}:8020/user/systest/spark-sql-perf/hive-site.xml \
+  --conf spark.dynamicAllocation.enabled=false \
+  --conf spark.dynamicAllocation.shuffleTracking.enabled=false \
+  --conf spark.locality.wait=0s \
+  --conf spark.kerberos.access.hadoopFileSystems=hdfs://${NAMENODE_HOST}:8020/ \
+  --conf spark.sql.optimizer.dynamicPartitionPruning.enabled=true \
+  --conf spark.driver.memoryOverhead=512m \
+  --conf spark.executor.memoryOverhead=512m \
+  hdfs://${NAMENODE_HOST}:8020/user/systest/spark-sql-perf/spark-query-executor-${QUERY_EXEC_VERSION}.jar \
+  --hdfs hdfs://${NAMENODE_HOST}:8020/tmp \
+  --path hdfs://${NAMENODE_HOST}:8020/datasets/tpcds/queries \
+  --metricsPath hdfs://${NAMENODE_HOST}:8020/tmp/metrics/ \
+  --metricsFs HDFS \
+  --database ${DB_NAME} \
+  --sequential \
+  --iterations 1 \
+  --warmupIterations 0 \
+  -q query32 -q query79 -q query90
+----
+
+=== Option B — Run All 99 TPC-DS Queries
+[source,bash]
+----
+# Step-specific variable
+DB_NAME="dex_tpcds_sf10_withdecimal_withdate_withnulls"
+
+spark3-submit \
+  --master yarn \
+  --deploy-mode cluster \
+  --num-executors 5 \
+  --executor-cores 2 \
+  --executor-memory 3G \
+  --driver-memory 3G \
+  --driver-cores 1 \
+  --queue default \
+  --class org.hw.qe.hcube.BatchSparkSQLExecutor \
+  --files hdfs://${NAMENODE_HOST}:8020/user/systest/spark-sql-perf/hive-site.xml \
+  --conf spark.dynamicAllocation.enabled=false \
+  --conf spark.dynamicAllocation.shuffleTracking.enabled=false \
+  --conf spark.locality.wait=0s \
+  --conf spark.kerberos.access.hadoopFileSystems=hdfs://${NAMENODE_HOST}:8020/ \
+  --conf spark.sql.optimizer.dynamicPartitionPruning.enabled=true \
+  --conf spark.driver.memoryOverhead=512m \
+  --conf spark.executor.memoryOverhead=512m \
+  hdfs://${NAMENODE_HOST}:8020/user/systest/spark-sql-perf/spark-query-executor-${QUERY_EXEC_VERSION}.jar \
+  --hdfs hdfs://${NAMENODE_HOST}:8020/tmp \
+  --path hdfs://${NAMENODE_HOST}:8020/datasets/tpcds/queries \
+  --metricsPath hdfs://${NAMENODE_HOST}:8020/tmp/metrics/ \
+  --metricsFs HDFS \
+  --database ${DB_NAME} \
+  --sequential \
+  --iterations 1 \
+  --warmupIterations 0 \
+  -q query1 -q query2 -q query3 -q query4 -q query5 \
+  -q query6 -q query7 -q query8 -q query9 -q query10 \
+  -q query11 -q query12 -q query13 -q query14a -q query14b \
+  -q query15 -q query16 -q query17 -q query18 -q query19 \
+  -q query20 -q query21 -q query22 -q query23a -q query23b \
+  -q query24a -q query24b -q query25 -q query26 -q query27 \
+  -q query28 -q query29 -q query30 -q query31 -q query32 \
+  -q query33 -q query34 -q query35 -q query36 -q query37 \
+  -q query38 -q query39a -q query39b -q query40 -q query41 \
+  -q query42 -q query43 -q query44 -q query45 -q query46 \
+  -q query47 -q query48 -q query49 -q query50 -q query51 \
+  -q query52 -q query53 -q query54 -q query55 -q query56 \
+  -q query57 -q query58 -q query59 -q query60 -q query61 \
+  -q query62 -q query63 -q query64 -q query65 -q query66 \
+  -q query67 -q query68 -q query69 -q query70 -q query71 \
+  -q query72 -q query73 -q query74 -q query75 -q query76 \
+  -q query77 -q query78 -q query79 -q query80 -q query81 \
+  -q query82 -q query83 -q query84 -q query85 -q query86 \
+  -q query87 -q query88 -q query89 -q query90 -q query91 \
+  -q query92 -q query93 -q query94 -q query95 -q query96 \
+  -q query97 -q query98 -q query99
+----
+
+== Collect and View Query Metrics
+
+=== Download and Parse Metrics
+[source,bash]
+----
+hdfs dfs -get /tmp/metrics /tmp/metrics
+cd /tmp/metrics/
+chmod +x collect_query_exec_time.py
+python3 collect_query_exec_time.py /tmp/metrics/ /tmp/metrics/output/
+----
+
+=== View Sorted Results
+[source,bash]
+----
+cd /tmp/metrics/output/
+(head -1 default.csv; tail -n +2 default.csv | grep -v "Query_Name" | sort -V)
+----
+
+== [Optional] CDE CLI Setup
+This section is required only if you plan to run and execute Spark TPC-DS queries via Cloudera Data Engineering (CDE).
+
+=== Download and Install CDE CLI
+1. Log in to the **CDP Console** and navigate to **Cloudera Data Engineering**.
+2. Select your **Virtual Cluster** and open **Cluster Details**.
+3. Click **Actions** -> **Download CLI Tool** for your specific OS.
+4. Make the binary executable:
+[source,bash]
+----
+chmod +x cde
+# Move it to your path if desired, or run from current directory
+./cde --help
+----
+
+=== Configure CLI Connectivity
+Create a `config.yaml` file to define your user and cluster endpoint.
+
+[source,bash]
+----
+vi config.yaml
+----
+
+Add the following configuration:
+[source,yaml]
+----
+user: <CDP_username>
+vcluster-endpoint: <CDE_Jobs_API_URL>
+----
+
+[TIP]
+====
+Find the **Jobs API URL** in the CDE Virtual Cluster Details page. It usually looks like `https://xxxxxx.cde-xxxxx.cloudera.site/dex/api/v1`.
+====
+
+=== Validate Configuration
+[source,bash]
+----
+./cde job list --tls-insecure
+----
+_Enter your Kerberos password when prompted._
+
+== Run via CDE (Cloudera Data Engineering)
+
+== Run for CDE (Cloudera Data Engineering) Virtual Cluster - Optional(for DS Cluster)
+[source,bash]
+----
+./cde job create \
+  --name tpcds-benchmark-run \
+  --type spark \
+  --tls-insecure \
+  --application-file hdfs://${NAMENODE_HOST}:8020/user/systest/spark-sql-perf/spark-query-executor-${QUERY_EXEC_VERSION}.jar \
+  --class org.hw.qe.hcube.BatchSparkSQLExecutor \
+  --executor-cores 4 \
+  --executor-memory 12G \
+  --num-executors 8 \
+  --driver-memory 8G \
+  --driver-cores 2 \
+  --conf spark.kerberos.access.hadoopFileSystems=hdfs://${NAMENODE_HOST}:8020/ \
+  --files hdfs://${NAMENODE_HOST}:8020/user/systest/spark-sql-perf/hive-site.xml
+----
+
+=== Run All Queries via CDE (Shell Expansion)
+[source,bash]
+----
+# Step-specific variable
+DB_NAME="dex_tpcds_sf100_withdecimal_withdate_withnulls"
+
+./cde job run --name tpcds-benchmark-run --tls-insecure \
+  --arg "--hdfs" --arg "hdfs://${NAMENODE_HOST}:8020/tmp" \
+  --arg "--path" --arg "hdfs://${NAMENODE_HOST}:8020/datasets/tpcds/queries" \
+  --arg "--database" --arg "${DB_NAME}" \
+  --arg "--metricsPath" --arg "hdfs://${NAMENODE_HOST}:8020/tmp/metrics/" \
+  --arg "--metricsFs" --arg "HDFS" \
+  --arg "--sequential" \
+  --arg "--iterations" --arg "1" \
+  --arg "--warmupIterations" --arg "0" \
+  $(for i in $(seq 1 99); do
+    case $i in
+      14|23|24|39) echo --arg "-q=query${i}a" --arg "-q=query${i}b" ;;
+      *)           echo --arg "-q=query$i" ;;
+    esac
+  done)
+----
+
+== Quick Reference Summary
+[cols="1,2,3", options="header"]
+|===
+| Step | Action | Purpose
+| 1 | `hdfs dfs -put` | Stage JARs and queries in HDFS
+| 2 | `scp tools` | Distribute binaries to worker nodes
+| 3 | `spark3-submit` (DataGen) | Generate raw data in HDFS
+| 4 | `spark3-submit` (Executor) | Run benchmark queries
+| 5 | `python3 collect...` | Aggregate execution times
+| 6 | `cde job run` | (Optional) Execute via CDE CLI
+|===
