@@ -1,0 +1,165 @@
+= Terasuite Benchmark — Setup & Execution Guide
+:toc: macro
+:toc-title: Table of Contents
+:icons: font
+:source-highlighter: rouge
+
+[NOTE]
+====
+*Suite:* TeraGen → TeraSort → TeraValidate (MapReduce) +
+*Purpose:* Validates HDFS I/O throughput and MapReduce execution on the CDP Base Cluster.
+====
+
+toc::[]
+
+== Prerequisites
+
+=== 1. Clone the Repository
+[source,bash]
+----
+git clone https://github.com/kuldeepsahu1105/cdp-validation
+cd cdp-validation/Terasuite/Terasuite_1T_Vol/
+----
+
+=== 2. Authenticate as HDFS User
+List the available keytab principals first, then perform `kinit`:
+
+[source,bash]
+----
+klist -kt /run/cloudera-scm-agent/process/1546339607-hdfs-NAMENODE/hdfs.keytab
+kinit -kt /run/cloudera-scm-agent/process/1546339607-hdfs-NAMENODE/hdfs.keytab hdfs/pvcbase-master.cldrsetup.local@cldrsetup.local
+klist
+----
+
+=== 3. Set HDFS Permissions
+[source,bash]
+----
+hdfs dfs -chmod -R 777 /tmp/
+----
+
+=== 4. Authenticate as Hive User
+[source,bash]
+----
+klist -kt /run/cloudera-scm-agent/process/1546339838-hive-HIVEMETASTORE/hive.keytab
+kinit -kt /run/cloudera-scm-agent/process/1546339838-hive-HIVEMETASTORE/hive.keytab hive/pvcbase-master.cldrsetup.local@cldrsetup.local
+klist
+----
+
+[IMPORTANT]
+.Dynamic Paths
+====
+The process directory numbers (e.g., `1546339607`) are dynamic and will differ across environments and restarts. Use the following to find the correct path:
+
+[source,bash]
+----
+ls /run/cloudera-scm-agent/process/ | grep hdfs-NAMENODE
+ls /run/cloudera-scm-agent/process/ | grep hive-HIVEMETASTORE
+----
+====
+
+== Step 1: Configure Test Parameters
+Edit `parameters.sh` to set the scale and resource parameters for your run:
+
+[source,bash]
+----
+vi parameters.sh
+----
+
+Set the following values based on your cluster capacity:
+
+[source,bash]
+----
+REPLICATION=3
+MAP_MEMORY=2048
+REDUCE_MEMORY=2048
+NUM_MAPPERS=32
+NUM_REDUCERS=16
+DATA_VOL=100000000    # 10G (each unit = 100 bytes)
+DIR_PREFIX=10G
+----
+
+.Data Volume Reference Table
+[cols="1,1", options="header"]
+|===
+| DATA_VOL value | Actual Data Size
+| 1,000,000 | 100 MB
+| 10,000,000 | 1 GB
+| 100,000,000 | 10 GB
+| 1,000,000,000 | 100 GB
+| 10,000,000,000 | 1 TB
+|===
+
+== Step 2: Run the Terasuite
+[source,bash]
+----
+nohup sh terasuite.sh > terasuite_100G_Log &
+tail -f terasuite_100G_Log
+----
+
+The suite executes three sequential MapReduce jobs: *TeraGen* → *TeraSort* → *TeraValidate*.
+
+== Step 3: Clean Up Previous Run Data
+If a re-run is required, clear the previous HDFS output:
+
+[source,bash]
+----
+hdfs dfs -rm -r -skipTrash /tmp/CDP_Validate
+----
+
+== Step 4: Verify Results
+Parse the log to confirm all three phases completed successfully:
+
+[source,bash]
+----
+grep -A3 successfully terasuite_100G_Log
+----
+
+.Expected Terminal Output
+[example]
+====
+Teragen ran successfully. +
+____________________________________ +
+Total runtime for teragen test:- +
+0hr 5mins 6secs
+====
+
+== Sample Results
+
+=== 10 GB Run
+[cols="1,2,1,2", options="header"]
+|===
+| Phase | Job ID | Status | Runtime
+| TeraGen | job_1776354055553_0043 | ✅ Success | 0hr 5mins 6secs
+| TeraSort | job_1776354055553_0044 | ✅ Success | 0hr 18mins 22secs
+| TeraValidate | job_1776354055553_0045 | ✅ Success | 0hr 20mins 9secs
+|===
+
+=== 1 GB Run
+[cols="1,2,1,2", options="header"]
+|===
+| Phase | Job ID | Status | Runtime
+| TeraGen | job_1776354055553_0046 | ✅ Success | 0hr 1mins 10secs
+| TeraSort | job_1776354055553_0047 | ✅ Success | 0hr 1mins 43secs
+| TeraValidate | job_1776354055553_0048 | ✅ Success | 0hr 1mins 8secs
+|===
+
+== Component Definitions
+
+[horizontal]
+TeraGen:: Generates random data. Stresses **HDFS write throughput**.
+TeraSort:: Distributed sorting of data. Stresses **CPU, HDFS Read/Write, and Network**.
+TeraValidate:: Verifies sort correctness. Confirms **Data Integrity** across blocks.
+
+---
+
+== Quick Reference Summary
+[cols="1,2,3", options="header"]
+|===
+| Step | Action | Purpose
+| 1 | `kinit` | Authenticate for HDFS and MR access
+| 2 | `chmod 777` | Allow MapReduce output writes
+| 3 | Edit `parameters.sh` | Configure data volume/resources
+| 4 | `terasuite.sh` | Execute full benchmark suite
+| 5 | `grep` logs | Verify success of all phases
+| 6 | `hdfs dfs -rm` | Clean up HDFS environment
+|===

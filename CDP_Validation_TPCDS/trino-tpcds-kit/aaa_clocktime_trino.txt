@@ -1,0 +1,6 @@
+Run queries for Trino TPC-DS orc at scale 100
+Mon Apr 27 06:54:50 AM PDT 2026
+
+Finished
+Mon Apr 27 07:15:11 AM PDT 2026
+
