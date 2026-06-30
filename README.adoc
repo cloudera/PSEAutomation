@@ -11,6 +11,17 @@ This repository is structured into distinct modules that provide building blocks
 
 == Repository Structure
 
+=== CDP_Validation_TPCDS
+
+This folder contains instructions to perform benchmarking of Cloudera Data Platform (CDP) environments through TPC-DS and Terasuite performance testing. It generates benchmark datasets at a chosen scale, executes engine-specific query suites, and produces result sheets to validate cluster performance and readiness for certification.
+
+**Key capabilities:**
+
+* TPC-DS benchmarking tests across Hive, Impala, Spark, and Trino.
+* Terasuite testing (Teragen, Terasort, Teravalidate) for baseline cluster I/O and sort performance.
+* Configurable scale factor for data generation, from small-scale runs to multi-TB workloads.
+* Engine-specific query execution and timing capture for each TPC-DS run.
+
 === ClusterValidation
 
 This folder contains automation for validating Cloudera environments through end-to-end smoke testing. It provisions a temporary validation runner, executes health and service checks, and generates reports to verify cluster readiness and operational status.
