@@ -1,0 +1,70 @@
+# ================================
+# Logs & runtime outputs
+# ================================
+*.log*
+*_log
+*_log*
+tpcds-*log*
+tpc_run_query_*
+terasuite_*_Log
+nohup.out
+*clocktime.txt
+
+# ================================
+# CSV outputs (generated metrics)
+# ================================
+time_elapsed*.csv
+*_summary*.csv
+llapio_summary*.csv
+llap_mintimes_summary*.csv
+
+# ================================
+# Generated TPC-DS artifacts
+# ================================
+hive-tpcds-kit/tpcds-gen-log
+hive-tpcds-kit/tpcds-*-log
+impala-tpcds-kit/tpcds_*_log
+trino-tpcds-kit/tpc_run_query_*
+
+# ================================
+# Generated .mk files
+# ================================
+hive-tpcds-kit/load_*.mk
+
+# ================================
+# Query outputs (all engines)
+# ================================
+*/tpc_run_query_*
+*/tpcds_*_log
+
+# ================================
+# Large data / generated dirs
+# ================================
+Terasuite/Terasuite_1T_Vol/
+Terasuite/terasuite_*_Log
+hive-vw-tpcds-kit/
+
+# ================================
+# Archives
+# ================================
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.bz2
+*.7z
+*.rar
+
+# ================================
+# Binaries / jars
+# ================================
+*.jar
+
+# ================================
+# Temp / system files
+# ================================
+*.out
+*.tmp
+*.pid
+.DS_Store
