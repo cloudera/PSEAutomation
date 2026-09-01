@@ -1159,6 +1159,8 @@ destroy_cdp() {
       -var "aws_key_pair=${aws_key_pair}" \
       -var "deployment_template=${deployment_template}" \
       -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
+      
+   cdp_destroy_status=$?
    if [ $cdp_destroy_status -eq 0 ]; then
       rm -rf /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/
       return 0
