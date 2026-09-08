@@ -6,49 +6,47 @@ USER_CONFIG_FILE="/userconfig/configfile"
 TERRAFORM_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/cdp-kc-config/keycloak_terraform_config
 DS_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/cdp-data-services
 USER_ACTION=$1
+hol_startup_banner
 # Handling the User Action ('provision' or 'destroy').
 case $USER_ACTION in
 provision)
+    hol_banner "HoL Provision Pipeline" "🚀"
     validating_variables
     if [[ -n "$aws_key_pair" ]]; then
         key_pair_file
     else
-        echo "No AWS Key Pair provided. Skipping SSH key file check."
+        hol_skip "No AWS key pair provided — skipping SSH key file check"
     fi
     #setup_aws_and_cdp_profile
+    hol_subsection "AWS pre-requisites" "☁️"
     aws_prereq
+    hol_subsection "CDP pre-requisites" "🔐"
     cdp_prereq
     check_key_pair
     if [ "$provision_keycloak" == "yes" ]; then
         # setup_keycloak_ec2 $keycloak_sg_name
         setup_keycloak_ec2
         if [ $? -ne 0 ]; then
-            echo "Keycloak Server Provisioning Failed. Rolling Back The Changes."
+            hol_warn "Keycloak provisioning failed — rolling back"
             destroy_keycloak
-            echo "Infrastructure Provisioning For $workshop_name Is Not Successful.
-                Please Try Again. Exiting....."
-            exit 1
+            hol_provision_failed "$workshop_name"
         else
-            echo -e "\n               =============================Keycloak Server Provisioned=============================="
-            echo
+            hol_ok "Keycloak server provisioned"
         fi
     else
-        echo -e "Keycloak Provisioning skipped, as instructed in configfile...\n"
+        hol_skip "Keycloak provisioning skipped (configfile)"
     fi
     sleep 10
     provision_cdp
     if [ $? -ne 0 ]; then
-        echo "CDP Environment Provisioning Failed. Rolling Back The Changes."
+        hol_warn "CDP environment provisioning failed — rolling back"
         destroy_cdp
         if [ "$provision_keycloak" == "yes" ]; then
             destroy_keycloak
         fi
-        echo "Infrastructure Provisioning For $workshop_name Is Not Successful.
-            Please Try Again. Exiting....."
-        exit 1
+        hol_provision_failed "$workshop_name"
     else
-        echo -e "\n               =============================CDP Environment Provisioned=============================="
-        echo
+        hol_ok "CDP environment provisioned"
     fi
     update_cdp_user_group
     if [ "$provision_keycloak" == "yes" ]; then
@@ -58,7 +56,7 @@ provision)
     parallel_pids=()
     if [ "$provision_caii" == "yes" ]; then
         sleep 30
-        echo -e "\n               =============================CAII Provisioning Started=============================="
+        hol_subsection "CAII provisioning" "🧠"
         provision_cai_inference &
         parallel_pids+=($!)
     fi
@@ -71,27 +69,29 @@ provision)
         wait "$pid" || parallel_failed=1
     done
     if [ "$parallel_failed" -ne 0 ]; then
-        echo "Infrastructure Provisioning For $workshop_name Is Not Successful.
-            Please Try Again. Exiting....."
-        exit 1
+        hol_provision_failed "$workshop_name"
     fi
 
-    echo -e "\n               ==============================Infrastructure Provisioned========================================="
+    hol_banner "Infrastructure provisioned successfully" "🎉"
+    hol_ok "Workshop '${workshop_name}' is ready"
     ;;
 destroy)
+    hol_banner "HoL Destroy Pipeline" "🗑️"
     validating_variables
     if [ "$provision_caii" == "yes" ]; then
-        echo -e "\n               =============================CAII deletion Started=============================="
-        destroy_cai_inference  
+        hol_subsection "CAII teardown" "🧠"
+        destroy_cai_inference
     fi
     disable_data_services
     if [ "$provision_keycloak" == "yes" ]; then
         cdp_idp_user_teardown
     fi
     destroy_hol_infra
+    hol_banner "Infrastructure destroyed" "✅"
+    hol_ok "Workshop '${workshop_name}' teardown completed"
     ;;
 *)
-    echo "Invalid Input. Valid values are 'provision' or 'destroy'"
+    hol_fail "Invalid action '${USER_ACTION}'. Valid values: provision, destroy"
     ;;
 
 esac
