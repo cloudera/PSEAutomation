@@ -1,0 +1,81 @@
+---
+- name: Disable CDF data service
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    cdf_async_timeout: 3600
+    cdf_async_retries: 120
+    cdf_async_delay: 30
+
+  tasks:
+    - name: Check and print variable status
+      ansible.builtin.debug:
+        msg: "cdp_env_name: {{ cdp_env_name }}, workshop_name: {{ workshop_name }}"
+
+    - name: Check if CDF service is enabled
+      cloudera.cloud.df_service_info:
+        name: "{{ cdp_env_name }}"
+      register: df_service_info
+      failed_when: false
+
+    - name: Set CDF service enabled flag
+      ansible.builtin.set_fact:
+        cdf_service_enabled: >-
+          {{
+            df_service_info is succeeded and
+            (df_service_info.services | default([]) | length > 0) and
+            (df_service_info.services[0].status.state | default('NOT_ENABLED')) not in ['NOT_ENABLED', 'DISABLED']
+          }}
+
+    - name: Skip CDF teardown when service is not enabled
+      ansible.builtin.debug:
+        msg: "CDF is not enabled for environment {{ cdp_env_name }}. Skipping disable."
+      when: not cdf_service_enabled
+
+    - name: Start CDF service disable async
+      cloudera.cloud.df_service:
+        name: "{{ cdp_env_name }}"
+        state: absent
+        terminate: true
+        persist: false
+        wait: true
+        timeout: "{{ cdf_async_timeout }}"
+      async: "{{ cdf_async_timeout }}"
+      poll: 0
+      register: cdf_disable_async
+      when: cdf_service_enabled
+      ignore_errors: true
+
+    - name: Wait for CDF disable async job
+      ansible.builtin.async_status:
+        jid: "{{ cdf_disable_async.ansible_job_id }}"
+      register: cdf_disable_async_result
+      until: cdf_disable_async_result.finished
+      retries: "{{ cdf_async_retries }}"
+      delay: "{{ cdf_async_delay }}"
+      when:
+        - cdf_service_enabled
+        - cdf_disable_async.ansible_job_id is defined
+
+    - name: Verify CDF service is disabled
+      cloudera.cloud.df_service_info:
+        name: "{{ cdp_env_name }}"
+      register: df_service_verify
+      until: >
+        df_service_verify is failed or
+        (df_service_verify.services | default([]) | length == 0) or
+        (df_service_verify.services[0].status.state | default('NOT_ENABLED')) in ['NOT_ENABLED', 'DISABLED']
+      retries: 50
+      delay: 30
+      ignore_errors: true
+      when: cdf_service_enabled
+
+    - name: Print CDF disable success message
+      ansible.builtin.debug:
+        msg: "Successfully disabled CDF for environment {{ cdp_env_name }}."
+      when: not cdf_service_enabled or (
+        df_service_verify is failed or
+        (df_service_verify.services | default([]) | length == 0) or
+        (df_service_verify.services[0].status.state | default('NOT_ENABLED')) in ['NOT_ENABLED', 'DISABLED']
+      )

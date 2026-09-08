@@ -3,6 +3,10 @@
   hosts: localhost
   connection: local
   gather_facts: yes
+  vars:
+    cde_async_timeout: 3600
+    cde_async_retries: 60
+    cde_async_delay: 30
   tasks:
     - name: List CDE virtual clusters
       cloudera.cloud.de_virtual_cluster_info:
@@ -20,17 +24,28 @@
       debug:
         msg: "{{ vc_ids }}"
 
-    - name: Delete CDE virtual clusters
+    - name: Start virtual cluster deletions async
       ansible.builtin.command: >
-        cdp de delete-vc \
-        --cluster-id "{{ item.clusterId }}" \
+        cdp de delete-vc
+        --cluster-id "{{ item.clusterId }}"
         --vc-id "{{ item.vcId }}"
       loop: "{{ vc_ids }}"
-      register: delete_vc
-      until: delete_vc.rc == 0
-      retries: 15
-      delay: 30
+      async: "{{ cde_async_timeout }}"
+      poll: 0
+      register: vc_delete_async
       ignore_errors: true
+      when: vc_ids | length > 0
+
+    - name: Wait for virtual cluster delete async jobs
+      ansible.builtin.async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: vc_delete_async_results
+      until: vc_delete_async_results.finished
+      retries: "{{ cde_async_retries }}"
+      delay: "{{ cde_async_delay }}"
+      loop: "{{ vc_delete_async.results | default([]) | selectattr('ansible_job_id', 'defined') | list }}"
+      ignore_errors: true
+      when: vc_ids | length > 0
 
     - name: Deactivate CDE service
       cloudera.cloud.de:
