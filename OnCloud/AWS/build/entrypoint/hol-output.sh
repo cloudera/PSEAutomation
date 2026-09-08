@@ -17,10 +17,10 @@ else
    HOL_BLUE='' HOL_MAGENTA='' HOL_CYAN='' HOL_WHITE=''
 fi
 
-# Section headers: left-aligned title between horizontal rules (15-space indent, 86-char width).
+# Section headers: full-width rules with centered title (15-space indent, 86-char width).
 HOL_SECTION_WIDTH=86
 HOL_SECTION_INDENT=15
-HOL_RULE_CHAR='─'
+HOL_RULE_CHAR='-'
 
 _hol_rule_line() {
    local width="${HOL_SECTION_WIDTH}"
@@ -30,7 +30,8 @@ _hol_rule_line() {
 hol_section() {
    local title="$1"
    local indent="${HOL_SECTION_INDENT}"
-   local rule
+   local width="${HOL_SECTION_WIDTH}"
+   local rule tlen pad left right
 
    rule="$(_hol_rule_line)"
 
@@ -39,12 +40,17 @@ hol_section() {
       return
    fi
 
-   if (( ${#title} > HOL_SECTION_WIDTH - 4 )); then
-      title="${title:0:$((HOL_SECTION_WIDTH - 7))}..."
+   if (( ${#title} > width - 4 )); then
+      title="${title:0:$((width - 7))}..."
    fi
 
+   tlen=${#title}
+   pad=$((width - tlen))
+   left=$((pad / 2))
+   right=$((pad - left))
+
    printf '\n%*s%s\n' "$indent" '' "$rule"
-   printf '%*s%s\n' "$indent" '' "$title"
+   printf '%*s%*s%s%*s\n' "$indent" '' "$left" '' "$title" "$right" ''
    printf '%*s%s\n' "$indent" '' "$rule"
 }
 

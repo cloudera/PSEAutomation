@@ -1304,15 +1304,29 @@ disable_cai() {
 }
 #--------------------------------------------------------------------------------------------------#
 deploy_cdf() {
-   ansible-playbook $DS_CONFIG_DIR/enable-cdf.yml --extra-vars \
-      "cdp_env_name=$workshop_name-cdp-env \
-      workshop_name=$workshop_name \
-      env_lb_public_subnet=$ENV_PUBLIC_SUBNETS \
-      env_wrkr_private_subnet=$ENV_PRIVATE_SUBNETS \
-      instance_type=$cdf_instance_type \
-      minimum_nodes=$cdf_min_nodes \
-      maximum_nodes=$cdf_max_nodes \
-      use_public_load_balancer=$cdf_use_public_lb"
+   local extra_vars_file="/tmp/cdf_extra_vars_${workshop_name}.json"
+
+   jq -n \
+      --arg cdp_env_name "${workshop_name}-cdp-env" \
+      --arg workshop_name "$workshop_name" \
+      --arg instance_type "${cdf_instance_type}" \
+      --argjson minimum_nodes "${cdf_min_nodes}" \
+      --argjson maximum_nodes "${cdf_max_nodes}" \
+      --arg use_public_load_balancer "${cdf_use_public_lb}" \
+      --argjson env_lb_public_subnet "${ENV_PUBLIC_SUBNETS}" \
+      --argjson env_wrkr_private_subnet "${ENV_PRIVATE_SUBNETS}" \
+      '{
+        cdp_env_name: $cdp_env_name,
+        workshop_name: $workshop_name,
+        instance_type: $instance_type,
+        minimum_nodes: $minimum_nodes,
+        maximum_nodes: $maximum_nodes,
+        use_public_load_balancer: ($use_public_load_balancer == "true" or $use_public_load_balancer == "yes"),
+        env_lb_public_subnet: $env_lb_public_subnet,
+        env_wrkr_private_subnet: $env_wrkr_private_subnet
+      }' > "$extra_vars_file"
+
+   ansible-playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}"
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cdf() {
@@ -1418,6 +1432,9 @@ wait_for_pids() {
 
 deploy_single_data_service() {
    local service="$1"
+   local status=0
+
+   export HOL_SERVICE_TAG="$(hol_service_short "$service")"
 
    case "$service" in
    cdw)
@@ -1430,9 +1447,11 @@ deploy_single_data_service() {
          "Virtual Warehouse Size" "$cdw_vrtl_warehouse_size" \
          "DataViz Size" "$cdw_dataviz_size"
       hol_deploy_service "cdw"
-      deploy_cdw
-      resource_roles=("DWAdmin" "DWUser")
-      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      deploy_cdw || status=1
+      if [[ $status -eq 0 ]]; then
+         resource_roles=("DWAdmin" "DWUser")
+         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      fi
       ;;
    cde)
       hol_init_service "cde"
@@ -1456,9 +1475,11 @@ deploy_single_data_service() {
          "Spark Version" "$cde_spark_version" \
          "Virtual Cluster Tier" "$cde_vc_tier"
       hol_deploy_service "cde"
-      deploy_cde
-      resource_roles=("DEUser")
-      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      deploy_cde || status=1
+      if [[ $status -eq 0 ]]; then
+         resource_roles=("DEUser")
+         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      fi
       ;;
    cai)
       hol_init_service "cai"
@@ -1485,9 +1506,11 @@ deploy_single_data_service() {
          "Min GPU Instances" "$cai_min_gpu_instances" \
          "Max GPU Instances" "$cai_max_gpu_instances"
       hol_deploy_service "cai"
-      deploy_cai
-      resource_roles=("MLUser")
-      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      deploy_cai || status=1
+      if [[ $status -eq 0 ]]; then
+         resource_roles=("MLUser")
+         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      fi
       ;;
    cdf)
       hol_init_service "cdf"
@@ -1505,30 +1528,41 @@ deploy_single_data_service() {
          "Max Nodes" "$cdf_max_nodes" \
          "Use Public Load Balancer" "$cdf_use_public_lb"
       hol_deploy_service "cdf"
-      deploy_cdf
-      resource_roles=("DFFlowUser" "DFFlowDeveloper")
-      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      deploy_cdf || status=1
+      if [[ $status -eq 0 ]]; then
+         resource_roles=("DFFlowUser" "DFFlowDeveloper")
+         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      fi
       ;;
    *)
       hol_warn "Unknown data service: $service"
-      return 1
+      status=1
       ;;
    esac
+
+   unset HOL_SERVICE_TAG
+   return $status
 }
 
 disable_single_data_service() {
    local service="$1"
+   local status=0
+
+   export HOL_SERVICE_TAG="$(hol_service_short "$service")"
 
    case "$service" in
-   cdw) disable_cdw ;;
-   cde) disable_cde ;;
-   cai) disable_cai ;;
-   cdf) disable_cdf ;;
+   cdw) disable_cdw || status=1 ;;
+   cde) disable_cde || status=1 ;;
+   cai) disable_cai || status=1 ;;
+   cdf) disable_cdf || status=1 ;;
    *)
       hol_warn "Unknown data service: $service"
-      return 1
+      status=1
       ;;
    esac
+
+   unset HOL_SERVICE_TAG
+   return $status
 }
 
 enable_data_services() {

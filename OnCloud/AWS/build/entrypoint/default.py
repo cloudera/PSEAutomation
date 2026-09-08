@@ -25,6 +25,7 @@ from ansible.playbook.task_include import TaskInclude
 from ansible.plugins.callback import CallbackBase
 from ansible.utils.color import colorize, hostcolor
 from ansible.utils.fqcn import add_internal_fqcns
+import os
 
 # These values use ansible.constants for historical reasons, mostly to allow
 # unmodified derivative plugins to work. However, newer options added to the
@@ -61,6 +62,15 @@ class CallbackModule(CallbackBase):
         self._last_task_name = None
         self._task_type_cache = {}
         super(CallbackModule, self).__init__()
+
+    def _hol_service_tag(self):
+        return os.environ.get('HOL_SERVICE_TAG', '').strip()
+
+    def _hol_tag_prefix(self, message):
+        tag = self._hol_service_tag()
+        if not tag:
+            return message
+        return u"[%s] %s" % (tag, message)
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
 
@@ -213,7 +223,7 @@ class CallbackModule(CallbackBase):
             checkmsg = " [CHECK MODE]"
         else:
             checkmsg = ""
-        self._display.banner(u"%s [%s%s]%s" % (prefix, task_name, args, checkmsg))
+        self._display.banner(self._hol_tag_prefix(u"%s [%s%s]%s" % (prefix, task_name, args, checkmsg)))
 
         if self._display.verbosity >= 2:
             self._print_task_path(task)
@@ -243,7 +253,7 @@ class CallbackModule(CallbackBase):
 
         self._play = play
 
-        self._display.banner(msg)
+        self._display.banner(self._hol_tag_prefix(msg))
 
     def v2_on_file_diff(self, result):
         if result._task.loop and 'results' in result._result:
@@ -323,7 +333,7 @@ class CallbackModule(CallbackBase):
         self._display.display(msg, color=C.COLOR_SKIP)
 
     def v2_playbook_on_stats(self, stats):
-        self._display.banner("PLAY RECAP")
+        self._display.banner(self._hol_tag_prefix("PLAY RECAP"))
 
         hosts = sorted(stats.processed.keys())
         for h in hosts:
@@ -411,7 +421,7 @@ class CallbackModule(CallbackBase):
         started = result._result.get('started')
         finished = result._result.get('finished')
         self._display.display(
-            'ASYNC POLL on %s: jid=%s started=%s finished=%s' % (host, jid, started, finished),
+            self._hol_tag_prefix('ASYNC POLL on %s: jid=%s started=%s finished=%s' % (host, jid, started, finished)),
             color=C.COLOR_DEBUG
         )
 
