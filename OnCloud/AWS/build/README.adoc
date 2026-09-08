@@ -30,11 +30,17 @@ Infrastructure components are important and play a vital role in achieving the g
 
 1. Cloudera Environment
 2. Datalake
-3. Data Service (Currently CAI, CDW & CDE)
+3. Data Service (Currently CAI, CDW, CDE & CDF)
 4. `Keycloak` Server
 5. Users
 
+=== Jenkins / configfile parameters
 
+* *OWNER* (resource tag `pse-owner`): default `pse-apac@cloudera.com`. Cannot use `owner` — CDP reserves it as a default tag.
+* *LOCAL_MACHINE_IP*: IP or CIDR to whitelist for environment access. Default `0.0.0.0/0` is allowed for most deployments.
+* *PROVISION_CAII*: when set to `YES`, `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`. Use your Jenkins agent IP or a Cloudera VPN address: `208.127.31.110/32` or `208.127.31.11/32`.
+
+The same CAII restriction is enforced in the Jenkins parameter validation stage and in the container `configfile` check at runtime.
 == Technology Stack
 **AutoClouderaDeploy** employs a robust toolchain consisting of:
 

@@ -4,10 +4,11 @@ pipeline {
     parameters {
         choice(name: 'ACTION', choices: ['provision', 'destroy'], description: 'Choose whether to provision or destroy the stack')
         choice(name: 'PROVISION_KEYCLOAK', choices: ['YES', 'NO'], description: 'Choose whether to provision Keycloak Instance (YES/NO)')
+        choice(name: 'PROVISION_CAII', choices: ['NO', 'YES'], description: 'Provision CAII (YES/NO). When YES, LOCAL_MACHINE_IP cannot be 0.0.0.0/0 — use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
         password(name: 'KEYCLOAK_ADMIN_PASSWORD', defaultValue: 'admin', description: '❗❗❗(MANDATORY) Admin User Password for Keycloak')
         choice(name: 'CDP_DEPLOYMENT_TYPE', choices: ['public', 'private', 'semi-private'], description: 'Choose the CDP Deployment Type (public/private/semi-private). Default: public')
         string(name: 'AWS_REGION', defaultValue: 'ap-southeast-1', description: 'AWS Region (e.g., ap-southeast-1). Please provide a valid AWS region format (e.g., ap-southeast-1).')
-        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'IP or network range to whitelist (e.g., 172.31.x.x/32 or a subnet range). Default: 0.0.0.0/0 allows open access for all.')
+        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'IP/CIDR to whitelist. Default 0.0.0.0/0 allows all. If PROVISION_CAII=YES, 0.0.0.0/0 is rejected — use Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
         string(name: 'WORKSHOP_NAME', defaultValue: 'pseworkshop', description: 'Workshop Name (5-12 characters long, no underscores allowed)')
         string(name: 'NUMBER_OF_WORKSHOP_USERS', defaultValue: '1', description: 'Number of Workshop Users')
         string(name: 'WORKSHOP_USER_PREFIX', defaultValue: 'pseworkshop', description: 'Prefix for Workshop Users')
@@ -20,6 +21,7 @@ pipeline {
             // defaultValue: 'NONE',
             multiSelectDelimiter: ','
         )
+        string(name: 'OWNER', defaultValue: 'pse-apac@cloudera.com', description: '❗❗❗(MANDATORY) Resource tag: pse-owner (email or name). Default: pse-apac@cloudera.com. Cannot use "owner" — CDP reserves it as a default tag.')
         string(name: 'CDP_SAML_PROVIDER_LIMIT', defaultValue: '10', description: 'Maximum number of SAML providers allowed')
         string(name: 'CDP_USER_LIMIT', defaultValue: '3000', description: 'Maximum number of CDP users allowed')
         string(name: 'CDP_GROUP_LIMIT', defaultValue: '50', description: 'Maximum number of CDP groups allowed')
@@ -110,6 +112,18 @@ pipeline {
                     if (!params.AWS_REGION?.trim()) {
                         printError("AWS_REGION is mandatory! Please provide a value.")
                     }
+                    if (params.LOCAL_MACHINE_IP?.trim() == "0.0.0.0/32") {
+                        printError("LOCAL_MACHINE_IP cannot be '0.0.0.0/32'. Please provide a valid IP.")
+                    }
+                    def caiiLocalIpError = "When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be '0.0.0.0/0'. Use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32."
+                    if (params.PROVISION_CAII?.trim().equalsIgnoreCase("YES")) {
+                        def ip = params.LOCAL_MACHINE_IP?.trim()
+                        if (!ip) {
+                            printError("When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be empty. ${caiiLocalIpError}")
+                        } else if (ip == "0.0.0.0/0") {
+                            printError(caiiLocalIpError)
+                        }
+                    }
                     if (!params.CDP_DEPLOYMENT_TYPE?.trim()) {
                         printError("CDP_DEPLOYMENT_TYPE is mandatory! Please select a deployment type.")
                     }
@@ -124,6 +138,9 @@ pipeline {
                     }
                     if (!params.LOCAL_MACHINE_IP?.trim()) {
                         printError("LOCAL_MACHINE_IP is mandatory! Please provide a value.")
+                    }
+                    if (!params.OWNER?.trim()) {
+                        printError("OWNER is mandatory! Please provide a value.")
                     }
 
                     // Domain and Hosted Zone validity checks with updated regex
@@ -207,6 +224,7 @@ pipeline {
                     // Create or overwrite the config file
                     writeFile file: env.CONFIG_FILE, text: """PROVISION_KEYCLOAK:${params.PROVISION_KEYCLOAK}
 KEYCLOAK_ADMIN_PASSWORD:${params.KEYCLOAK_ADMIN_PASSWORD}
+PROVISION_CAII:${params.PROVISION_CAII}
 AWS_REGION:${params.AWS_REGION}
 CDP_DEPLOYMENT_TYPE:${params.CDP_DEPLOYMENT_TYPE}
 LOCAL_MACHINE_IP:${params.LOCAL_MACHINE_IP}
@@ -230,7 +248,6 @@ CDE_MAX_INSTANCES:${params.CDE_MAX_INSTANCES}
 CDE_SPARK_VERSION:${params.CDE_SPARK_VERSION}
 CDE_VC_TIER:${params.CDE_VC_TIER}
 
-PROVISION_CAII:NO
 CAI_WS_INSTANCE_TYPE:${params.CAI_WS_INSTANCE_TYPE}
 CAI_MIN_INSTANCES:${params.CAI_MIN_INSTANCES}
 CAI_MAX_INSTANCES:${params.CAI_MAX_INSTANCES}
@@ -247,6 +264,7 @@ DATALAKE_VERSION:${params.DATALAKE_VERSION}
 
 DOMAIN:${params.DOMAIN}
 HOSTEDZONEID:${params.HOSTEDZONEID}
+ENV_TAGS:{pse-owner=${params.OWNER.trim()}}
 """
 sh """
     pwd
