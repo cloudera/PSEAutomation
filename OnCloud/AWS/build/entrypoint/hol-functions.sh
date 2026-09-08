@@ -283,26 +283,26 @@ validating_variables() {
          CDE_VC_TIER)
             cde_vc_tier=$value
             ;;
-         CML_WS_INSTANCE_TYPE)
-            cml_ws_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+         CAI_WS_INSTANCE_TYPE)
+            cai_ws_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
-         CML_MIN_INSTANCES)
-            cml_min_instances=$value
+         CAI_MIN_INSTANCES)
+            cai_min_instances=$value
             ;;
-         CML_MAX_INSTANCES)
-            cml_max_instances=$value
+         CAI_MAX_INSTANCES)
+            cai_max_instances=$value
             ;;
-         CML_ENABLE_GPU)
-            cml_enable_gpu=$(echo $value | tr '[:upper:]' '[:lower:]')
+         CAI_ENABLE_GPU)
+            cai_enable_gpu=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
-         CML_GPU_INSTANCE_TYPE)
-            cml_gpu_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+         CAI_GPU_INSTANCE_TYPE)
+            cai_gpu_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
-         CML_MIN_GPU_INSTANCES)
-            cml_min_gpu_instances=$value
+         CAI_MIN_GPU_INSTANCES)
+            cai_min_gpu_instances=$value
             ;;
-         CML_MAX_GPU_INSTANCES)
-            cml_max_gpu_instances=$value
+         CAI_MAX_GPU_INSTANCES)
+            cai_max_gpu_instances=$value
             ;;
          CDP_SAML_PROVIDER_LIMIT)
             cdp_saml_provider_limit=$value
@@ -1069,7 +1069,7 @@ provision_caii_service_app() {
 provision_cai_inference() {
    echo -e "\n   ========= Provisioning AI Inference with other dependencies e.g Compute cluster, workbench & Model registry ========="
 
-  local enable_data_services="cml"
+  local enable_data_services="cai"
   local env_name="${workshop_name}-cdp-env"
 
   # Step 1: Initialize compute cluster
@@ -1084,7 +1084,7 @@ provision_cai_inference() {
   pid_model=$!
 
   enable_data_services &
-  pid_cml=$!
+  pid_cai=$!
 
   # Step 4: Wait for all background tasks
   wait $pid_compute
@@ -1093,10 +1093,10 @@ provision_cai_inference() {
   wait $pid_model
   status_model=$?
 
-  wait $pid_cml
-  status_cml=$?
+  wait $pid_cai
+  status_cai=$?
 
-  if [[ $status_compute -ne 0 || $status_model -ne 0 || $status_cml -ne 0 ]]; then
+  if [[ $status_compute -ne 0 || $status_model -ne 0 || $status_cai -ne 0 ]]; then
     echo "❌ Error: One or more provisioning steps failed."
     return 1
   fi
@@ -1125,8 +1125,8 @@ destroy_cai_inference() {
    fi
    
    # Set the data service value for cleanup
-   local enable_data_services="cml"
-   disable_data_services &  # Call the function that disables CML
+   local enable_data_services="cai"
+   disable_data_services &  # Call the function that disables CAI
    pid_disable=$!
    sleep 30
    
@@ -1161,7 +1161,7 @@ destroy_cdp() {
       -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
       
    cdp_destroy_status=$?
-   if [ $cdp_destroy_status -eq 0 ]; then
+   if [ "${cdp_destroy_status:-1}" -eq 0 ]; then
       rm -rf /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/
       return 0
    else
@@ -1172,6 +1172,7 @@ destroy_cdp() {
 # Function to destroy Complete HOL Infrastructure.
 destroy_hol_infra() {
    USER_NAMESPACE=$workshop_name
+   keycloak_destroy_status=0
    destroy_cdp
    cdp_destroy_status=$?
    if [[ "$provision_keycloak" == "yes" && "$cdp_destroy_status" -eq 0 ]]; then
@@ -1179,7 +1180,7 @@ destroy_hol_infra() {
       keycloak_destroy_status=$?
    fi
 
-   if [[ "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]] || [[ "$cdp_destroy_status" -eq 0 && "$provision_keycloak" == "no" ]]; then
+   if [[ "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]]; then
       if [[ -f /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag && "$(cat /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag)" == "true" ]]; then
          destroy_keypair
       fi
@@ -1355,26 +1356,26 @@ disable_cde() {
 }
 #--------------------------------------------------------------------------------------------------#
 #--------------------------------------------------------------------------------------------------#
-deploy_cml() {
-   echo -e "\n               ==========================Deploying CML======================================\n"
+deploy_cai() {
+   echo -e "\n               ==========================Deploying CAI======================================\n"
    #number_vws_to_create=$(( ($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0) ))
-   ansible-playbook $DS_CONFIG_DIR/enable-cml.yml --extra-vars \
+   ansible-playbook $DS_CONFIG_DIR/enable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
-      ws_instance_type=$cml_ws_instance_type \
-      minimum_instances=$cml_min_instances \
-      maximum_instances=$cml_max_instances \
+      ws_instance_type=$cai_ws_instance_type \
+      minimum_instances=$cai_min_instances \
+      maximum_instances=$cai_max_instances \
       root_volume_size=256 \
-      enable_gpu=$cml_enable_gpu \
-      gpu_instance_type=$cml_gpu_instance_type \
-      minimum_gpu_instances=$cml_min_gpu_instances \
-      maximum_gpu_instances=$cml_max_gpu_instances"
+      enable_gpu=$cai_enable_gpu \
+      gpu_instance_type=$cai_gpu_instance_type \
+      minimum_gpu_instances=$cai_min_gpu_instances \
+      maximum_gpu_instances=$cai_max_gpu_instances"
    #number_vws_to_create=$number_vws_to_create"
 }
 #--------------------------------------------------------------------------------------------------#
-disable_cml() {
-   echo "               ==========================Disabling CML======================================"
-   ansible-playbook $DS_CONFIG_DIR/disable-cml.yml --extra-vars \
+disable_cai() {
+   echo "               ==========================Disabling CAI======================================"
+   ansible-playbook $DS_CONFIG_DIR/disable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name"
 }
@@ -1521,37 +1522,37 @@ enable_data_services() {
          resource_roles=("DEUser")
          set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
 
-      elif [[ "$service" == "cml" ]]; then
-         echo -e "\n               ==========================Initializing Parameter Values for CML======================================\n"
+      elif [[ "$service" == "cai" ]]; then
+         echo -e "\n               ==========================Initializing Parameter Values for CAI======================================\n"
          # Default Values
-         DEFAULT_CML_WS_INSTANCE_TYPE="m5.2xlarge"
-         DEFAULT_CML_MIN_INSTANCES=1
-         DEFAULT_CML_MAX_INSTANCES=10
-         DEFAULT_CML_ENABLE_GPU="false"
-         DEFAULT_CML_GPU_INSTANCE_TYPE="g4dn.xlarge"
-         DEFAULT_CML_MIN_GPU_INSTANCES=0
-         DEFAULT_CML_MAX_GPU_INSTANCES=10
+         DEFAULT_CAI_WS_INSTANCE_TYPE="m5.2xlarge"
+         DEFAULT_CAI_MIN_INSTANCES=1
+         DEFAULT_CAI_MAX_INSTANCES=10
+         DEFAULT_CAI_ENABLE_GPU="false"
+         DEFAULT_CAI_GPU_INSTANCE_TYPE="g4dn.xlarge"
+         DEFAULT_CAI_MIN_GPU_INSTANCES=0
+         DEFAULT_CAI_MAX_GPU_INSTANCES=10
 
-         # CML (Cloudera Machine Learning) Variables
-         cml_ws_instance_type="${cml_ws_instance_type:-$DEFAULT_CML_WS_INSTANCE_TYPE}"
-         cml_min_instances="${cml_min_instances:-$DEFAULT_CML_MIN_INSTANCES}"
-         cml_max_instances="${cml_max_instances:-$DEFAULT_CML_MAX_INSTANCES}"
-         cml_enable_gpu="${cml_enable_gpu:-$DEFAULT_CML_ENABLE_GPU}"
-         cml_gpu_instance_type="${cml_gpu_instance_type:-$DEFAULT_CML_GPU_INSTANCE_TYPE}"
-         cml_min_gpu_instances="${cml_min_gpu_instances:-$DEFAULT_CML_MIN_GPU_INSTANCES}"
-         cml_max_gpu_instances="${cml_max_gpu_instances:-$DEFAULT_CML_MAX_GPU_INSTANCES}"
+         # CAI (Cloudera AI) Variables
+         cai_ws_instance_type="${cai_ws_instance_type:-$DEFAULT_CAI_WS_INSTANCE_TYPE}"
+         cai_min_instances="${cai_min_instances:-$DEFAULT_CAI_MIN_INSTANCES}"
+         cai_max_instances="${cai_max_instances:-$DEFAULT_CAI_MAX_INSTANCES}"
+         cai_enable_gpu="${cai_enable_gpu:-$DEFAULT_CAI_ENABLE_GPU}"
+         cai_gpu_instance_type="${cai_gpu_instance_type:-$DEFAULT_CAI_GPU_INSTANCE_TYPE}"
+         cai_min_gpu_instances="${cai_min_gpu_instances:-$DEFAULT_CAI_MIN_GPU_INSTANCES}"
+         cai_max_gpu_instances="${cai_max_gpu_instances:-$DEFAULT_CAI_MAX_GPU_INSTANCES}"
 
-         # Print Assigned Values for CML
-         echo "CML (Cloudera Machine Learning) Variables:"
-         echo "  WS Instance Type: $cml_ws_instance_type"
-         echo "  Min Instances: $cml_min_instances"
-         echo "  Max Instances: $cml_max_instances"
-         echo "  Enable GPU: $cml_enable_gpu"
-         echo "  GPU Instance Type: $cml_gpu_instance_type"
-         echo "  Min GPU Instances: $cml_min_gpu_instances"
-         echo "  Max GPU Instances: $cml_max_gpu_instances"
+         # Print Assigned Values for CAI
+         echo "CAI (Cloudera AI) Variables:"
+         echo "  WS Instance Type: $cai_ws_instance_type"
+         echo "  Min Instances: $cai_min_instances"
+         echo "  Max Instances: $cai_max_instances"
+         echo "  Enable GPU: $cai_enable_gpu"
+         echo "  GPU Instance Type: $cai_gpu_instance_type"
+         echo "  Min GPU Instances: $cai_min_gpu_instances"
+         echo "  Max GPU Instances: $cai_max_gpu_instances"
 
-         deploy_cml
+         deploy_cai
          resource_roles=("MLUser")
          set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
 
@@ -1582,8 +1583,8 @@ disable_data_services() {
          disable_cdw
       elif [[ "$service" == "cde" ]]; then
          disable_cde
-      elif [[ "$service" == "cml" ]]; then
-         disable_cml
+      elif [[ "$service" == "cai" ]]; then
+         disable_cai
       elif [[ "$service" == "cdf" ]]; then
          echo "CDF"
       else

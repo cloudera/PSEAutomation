@@ -1,32 +1,32 @@
 ---
-- name: Disable CML data service
+- name: Disable CAI data service
   hosts: localhost
   connection: local
   gather_facts: yes
   tasks:
     - name: Check and print variable status
       debug:
-        msg: "cdp_env_name: {{ cdp_env_name }}, workshop_name: {{ workshop_name }}, workspace_name: {{ workshop_name }}-cml-ws"
+        msg: "cdp_env_name: {{ cdp_env_name }}, workshop_name: {{ workshop_name }}, workspace_name: {{ workshop_name }}-cai-ws"
 
-    - name: List CML Workspaces for existence check
+    - name: List CAI Workspaces for existence check
       ansible.builtin.shell: >
         cdp ml list-workspaces | jq -r '.workspaces[].instanceName'
       register: ml_list_workspaces
 
     - name: Set workspace exists flag
       set_fact:
-        workspace_exists: "{{ ml_list_workspaces.rc == 0 and (workshop_name + '-cml-ws' in ml_list_workspaces.stdout_lines ) }}"
+        workspace_exists: "{{ ml_list_workspaces.rc == 0 and (workshop_name + '-cai-ws' in ml_list_workspaces.stdout_lines ) }}"
 
     - name: Handle non-existing or deleted workspace
       debug:
-        msg: "Workspace {{ workshop_name }}-cml-ws does not exist or is already deleted in environment {{ cdp_env_name }}."
+        msg: "Workspace {{ workshop_name }}-cai-ws does not exist or is already deleted in environment {{ cdp_env_name }}."
       when: not workspace_exists or 'resourceCrn should not be empty or nil' in ml_list_workspaces.stderr
 
-    - name: Delete CML Workspace if exists
+    - name: Delete CAI Workspace if exists
       ansible.builtin.command: >
         cdp ml delete-workspace \
         --environment-name "{{ cdp_env_name }}" \
-        --workspace-name "{{ workshop_name }}-cml-ws" \
+        --workspace-name "{{ workshop_name }}-cai-ws" \
         --no-force
       register: ml_delete_workspace
       when: workspace_exists
@@ -38,7 +38,7 @@
 
     - name: Refresh the status until workspace deletion completes
       ansible.builtin.shell: >
-        cdp ml list-workspaces | jq -r '.workspaces[] | select(.instanceName == "{{ workshop_name }}-cml-ws")  | .instanceStatus'
+        cdp ml list-workspaces | jq -r '.workspaces[] | select(.instanceName == "{{ workshop_name }}-cai-ws")  | .instanceStatus'
       register: ml_ws_status
       until: >
         not workspace_exists or
@@ -52,7 +52,7 @@
 
     - name: Print success message on workspace deletion
       debug:
-        msg: "Successfully deleted workspace {{ workshop_name }}-cml-ws in environment {{ cdp_env_name }}."
+        msg: "Successfully deleted workspace {{ workshop_name }}-cai-ws in environment {{ cdp_env_name }}."
       when: >
         not workspace_exists or
         ml_ws_status.stdout in [""] or

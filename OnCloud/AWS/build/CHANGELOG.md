@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1]
+
+### Changed
+- Renamed CML data service to CAI (Cloudera AI) across pipeline, playbooks, and workspace naming.
+
+### Fixed
+- Renamed `owner` env tag to `pse-owner` to avoid conflict with CDP account default tags.
+- Fixed rollback shell error (`[: -eq: unary operator expected`) in `destroy_cdp` and `destroy_hol_infra`.
+
 ## [3.3.0]
 
 ### Added

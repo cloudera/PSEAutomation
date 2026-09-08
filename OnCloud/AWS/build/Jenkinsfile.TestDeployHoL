@@ -14,7 +14,7 @@ pipeline {
         password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', defaultValue: 'changeme', description: '❗❗❗(MANDATORY) Default password for Workshop Users')
         extendedChoice(
             name: 'ENABLE_DATA_SERVICES',
-            value: 'CDW,CML,CDE,NONE',
+            value: 'CDW,CAI,CDE,NONE',
             type: 'PT_CHECKBOX',
             description: 'Select the data services to enable. Default: NONE (No data services enabled)',
             // defaultValue: 'NONE',
@@ -31,13 +31,13 @@ pipeline {
         string(name: 'CDE_INITIAL_INSTANCES', defaultValue: '10', description: 'Initial number of CDE instances to deploy')
         string(name: 'CDE_MIN_INSTANCES', defaultValue: '10', description: 'Minimum number of CDE instances to scale down to')
         string(name: 'CDE_MAX_INSTANCES', defaultValue: '40', description: 'Maximum number of CDE instances to scale up to')
-        string(name: 'CML_WS_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CML Workspace Instance Type')
-        string(name: 'CML_MIN_INSTANCES', defaultValue: '1', description: 'Minimum number of CML instances')
-        string(name: 'CML_MAX_INSTANCES', defaultValue: '10', description: 'Maximum number of CML instances')
-        booleanParam(name: 'CML_ENABLE_GPU', defaultValue: false, description: 'Enable GPU instances for CML, if supported by the AWS region')
-        string(name: 'CML_GPU_INSTANCE_TYPE', defaultValue: 'g4dn.xlarge', description: 'CML GPU instance type')
-        string(name: 'CML_MIN_GPU_INSTANCES', defaultValue: '0', description: 'Minimum number of GPU instances for CML')
-        string(name: 'CML_MAX_GPU_INSTANCES', defaultValue: '10', description: 'Maximum number of GPU instances for CML')
+        string(name: 'CAI_WS_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CAI Workspace Instance Type')
+        string(name: 'CAI_MIN_INSTANCES', defaultValue: '1', description: 'Minimum number of CAI instances')
+        string(name: 'CAI_MAX_INSTANCES', defaultValue: '10', description: 'Maximum number of CAI instances')
+        booleanParam(name: 'CAI_ENABLE_GPU', defaultValue: false, description: 'Enable GPU instances for CAI, if supported by the AWS region')
+        string(name: 'CAI_GPU_INSTANCE_TYPE', defaultValue: 'g4dn.xlarge', description: 'CAI GPU instance type')
+        string(name: 'CAI_MIN_GPU_INSTANCES', defaultValue: '0', description: 'Minimum number of GPU instances for CAI')
+        string(name: 'CAI_MAX_GPU_INSTANCES', defaultValue: '10', description: 'Maximum number of GPU instances for CAI')
         string(name: 'DOMAIN', defaultValue: 'clouderapartners.click', description: '❗❗❗(MANDATORY) Route53 registered domain or subdomain (e.g., sub.example.com)')
         string(name: 'HOSTEDZONEID', defaultValue: 'Example: ZCLOUDERAPSEAPACTEAM1', description: '❗❗❗(MANDATORY) Route53 Hosted Zone Id for the above domain')
         string(name: 'DATALAKE_VERSION', defaultValue: '7.2.18', description: 'The Datalake runtime version to be used (e.g., 7.2.18)')
@@ -227,13 +227,13 @@ CDE_SPARK_VERSION:${params.CDE_SPARK_VERSION}
 CDE_VC_TIER:${params.CDE_VC_TIER}
 
 PROVISION_CAII:NO
-CML_WS_INSTANCE_TYPE:${params.CML_WS_INSTANCE_TYPE}
-CML_MIN_INSTANCES:${params.CML_MIN_INSTANCES}
-CML_MAX_INSTANCES:${params.CML_MAX_INSTANCES}
-CML_ENABLE_GPU:${params.CML_ENABLE_GPU}
-CML_GPU_INSTANCE_TYPE:${params.CML_GPU_INSTANCE_TYPE}
-CML_MIN_GPU_INSTANCES:${params.CML_MIN_GPU_INSTANCES}
-CML_MAX_GPU_INSTANCES:${params.CML_MAX_GPU_INSTANCES}
+CAI_WS_INSTANCE_TYPE:${params.CAI_WS_INSTANCE_TYPE}
+CAI_MIN_INSTANCES:${params.CAI_MIN_INSTANCES}
+CAI_MAX_INSTANCES:${params.CAI_MAX_INSTANCES}
+CAI_ENABLE_GPU:${params.CAI_ENABLE_GPU}
+CAI_GPU_INSTANCE_TYPE:${params.CAI_GPU_INSTANCE_TYPE}
+CAI_MIN_GPU_INSTANCES:${params.CAI_MIN_GPU_INSTANCES}
+CAI_MAX_GPU_INSTANCES:${params.CAI_MAX_GPU_INSTANCES}
 DATALAKE_VERSION:${params.DATALAKE_VERSION}
 
 DOMAIN:${params.DOMAIN}
@@ -309,7 +309,7 @@ sh """
         
                     // Check for specific failure messages
                     if (logOutput.contains('Workspace Provisioning Got Failed.')) {
-                        errorMessages.add("CML Data service provisioning failed.")
+                        errorMessages.add("CAI Data service provisioning failed.")
                     } 
                     if (logOutput.contains('Cluster Creation Got Failed.')) {
                         errorMessages.add("CDW data service provisioning failed.")
@@ -318,7 +318,7 @@ sh """
                         errorMessages.add("While destroying, CDE data service deletion failed.")
                     }
                     if (logOutput.contains('Workspace Deletion Got Failed.')) {
-                        errorMessages.add("While destroying, CML data service deletion failed.")
+                        errorMessages.add("While destroying, CAI data service deletion failed.")
                     }
                     if (logOutput.contains('Cluster deletion failed.')) {
                         errorMessages.add("While destroying, CDW data service deletion failed.")
