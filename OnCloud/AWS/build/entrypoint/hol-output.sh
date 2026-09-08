@@ -17,39 +17,35 @@ else
    HOL_BLUE='' HOL_MAGENTA='' HOL_CYAN='' HOL_WHITE=''
 fi
 
-# Match legacy Jenkins log banners: 15-space indent, 86-char equals line, centered title.
+# Section headers: left-aligned title between horizontal rules (15-space indent, 86-char width).
 HOL_SECTION_WIDTH=86
 HOL_SECTION_INDENT=15
+HOL_RULE_CHAR='─'
+
+_hol_rule_line() {
+   local width="${HOL_SECTION_WIDTH}"
+   printf '%*s' "$width" '' | tr ' ' "${HOL_RULE_CHAR}"
+}
 
 hol_section() {
    local title="$1"
-   local width="${HOL_SECTION_WIDTH}"
    local indent="${HOL_SECTION_INDENT}"
-   local tlen=${#title}
-   local pad left right left_pad right_pad line
+   local rule
+
+   rule="$(_hol_rule_line)"
 
    if [[ -z "$title" ]]; then
-      line="$(printf '%*s' "$width" '')"
-      line="${line// /=}"
-      printf '\n%*s%s\n' "$indent" '' "$line"
+      printf '\n%*s%s\n' "$indent" '' "$rule"
       return
    fi
 
-   if (( tlen > width - 4 )); then
-      title="${title:0:$((width - 7))}..."
-      tlen=${#title}
+   if (( ${#title} > HOL_SECTION_WIDTH - 4 )); then
+      title="${title:0:$((HOL_SECTION_WIDTH - 7))}..."
    fi
 
-   pad=$((width - tlen))
-   left=$((pad / 2))
-   right=$((pad - left))
-   left_pad="$(printf '%*s' "$left" '')"
-   right_pad="$(printf '%*s' "$right" '')"
-   left_pad="${left_pad// /=}"
-   right_pad="${right_pad// /=}"
-   line="${left_pad}${title}${right_pad}"
-
-   printf '\n%*s%s\n' "$indent" '' "$line"
+   printf '\n%*s%s\n' "$indent" '' "$rule"
+   printf '%*s%s\n' "$indent" '' "$title"
+   printf '%*s%s\n' "$indent" '' "$rule"
 }
 
 hol_divider() {
