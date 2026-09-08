@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Renamed CML data service to CAI (Cloudera AI) across pipeline, playbooks, and workspace naming.
 - Renamed Model Registry references to AI Registry in CAII provisioning and teardown scripts.
+- CDW, CDE, and CAI data service playbooks now run in parallel when multiple services are selected.
+- CAII provisioning runs in parallel with other selected data services to reduce total provision time.
+- CDW enable/disable playbooks now create or remove virtual warehouses and data visualizations in parallel using Ansible async tasks.
+- CDE enable/disable playbooks now create or remove virtual clusters in parallel using Ansible async tasks.
 
 ### Fixed
 - Jenkins failure emails now include parsed Ansible/Terraform fatal errors from provisioner logs.

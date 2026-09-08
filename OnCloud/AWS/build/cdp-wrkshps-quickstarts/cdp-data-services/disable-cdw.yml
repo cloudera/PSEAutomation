@@ -3,6 +3,11 @@
   hosts: localhost
   connection: local
   gather_facts: yes
+  vars:
+    cdw_async_timeout: 3600
+    cdw_async_retries: 120
+    cdw_async_delay: 30
+
   tasks:
     - name: Fetch details of the CDW cluster
       cloudera.cloud.dw_cluster_info:
@@ -52,26 +57,6 @@
         msg: "No data visualization clusters found for CDW cluster {{ cdw_cluster_id }}."
       when: dataviz_ids | length == 0
 
-    - name: Remove data visualization clusters
-      ansible.builtin.command: |
-        cdp dw delete-data-visualization --cluster-id "{{ cdw_cluster_id }}" --data-visualization-id "{{ item }}"
-      loop: "{{ dataviz_ids }}"
-      register: delete_dataviz_output
-      ignore_errors: true
-      when: dataviz_ids | length > 0
-
-    - name: Check if data visualization clusters still exist
-      ansible.builtin.command: |
-        cdp dw list-data-visualizations --cluster-id "{{ cdw_cluster_id }}"
-      register: check_dataviz_output
-      until: >
-        check_dataviz_output.rc != 0 or
-        ((check_dataviz_output.stdout | default('{\"dataVisualizations\": []}') | from_json).get('dataVisualizations', []) | length == 0)
-      retries: 50
-      delay: 10
-      ignore_errors: true
-      when: dataviz_ids | length > 0
-
     - name: Fetch all virtual warehouses
       cloudera.cloud.dw_virtual_warehouse_info:
         cluster_id: "{{ cdw_cluster_id }}"
@@ -97,7 +82,17 @@
         msg: "No virtual warehouses found for CDW cluster {{ cdw_cluster_id }}. Skipping VW deletion."
       when: vw_ids | length == 0
 
-    - name: Remove virtual warehouses
+    - name: Start data visualization deletions async
+      ansible.builtin.command: |
+        cdp dw delete-data-visualization --cluster-id "{{ cdw_cluster_id }}" --data-visualization-id "{{ item }}"
+      loop: "{{ dataviz_ids }}"
+      async: "{{ cdw_async_timeout }}"
+      poll: 0
+      register: dataviz_delete_async
+      ignore_errors: true
+      when: dataviz_ids | length > 0
+
+    - name: Start virtual warehouse deletions async
       cloudera.cloud.dw_virtual_warehouse:
         cluster_id: "{{ cdw_cluster_id }}"
         catalog_id: "{{ dbcatalog_id }}"
@@ -105,9 +100,42 @@
         wait: False
         state: absent
       loop: "{{ vw_ids | reverse | list }}"
-      register: delete_vw_output
+      async: "{{ cdw_async_timeout }}"
+      poll: 0
+      register: vw_delete_async
       ignore_errors: true
       when: vw_ids | length > 0
+
+    - name: Build CDW delete async job wait list
+      ansible.builtin.set_fact:
+        cdw_delete_async_jobs: >-
+          {{
+            (dataviz_delete_async.results | default([]) | selectattr('ansible_job_id', 'defined') | list)
+            + (vw_delete_async.results | default([]) | selectattr('ansible_job_id', 'defined') | list)
+          }}
+
+    - name: Wait for CDW delete async jobs
+      ansible.builtin.async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: cdw_delete_async_results
+      until: cdw_delete_async_results.finished
+      retries: "{{ cdw_async_retries }}"
+      delay: "{{ cdw_async_delay }}"
+      loop: "{{ cdw_delete_async_jobs }}"
+      when: cdw_delete_async_jobs | length > 0
+      ignore_errors: true
+
+    - name: Check if data visualization clusters still exist
+      ansible.builtin.command: |
+        cdp dw list-data-visualizations --cluster-id "{{ cdw_cluster_id }}"
+      register: check_dataviz_output
+      until: >
+        check_dataviz_output.rc != 0 or
+        ((check_dataviz_output.stdout | default('{\"dataVisualizations\": []}') | from_json).get('dataVisualizations', []) | length == 0)
+      retries: 50
+      delay: 10
+      ignore_errors: true
+      when: dataviz_ids | length > 0
 
     - name: Check if all virtual warehouses deleted successfully
       ansible.builtin.shell: |
