@@ -17,28 +17,61 @@ else
    HOL_BLUE='' HOL_MAGENTA='' HOL_CYAN='' HOL_WHITE=''
 fi
 
-HOL_WIDTH=76
+# Match legacy Jenkins log banners: 15-space indent, 86-char equals line, centered title.
+HOL_SECTION_WIDTH=86
+HOL_SECTION_INDENT=15
+
+hol_section() {
+   local title="$1"
+   local width="${HOL_SECTION_WIDTH}"
+   local indent="${HOL_SECTION_INDENT}"
+   local tlen=${#title}
+   local pad left right left_pad right_pad line
+
+   if [[ -z "$title" ]]; then
+      line="$(printf '%*s' "$width" '')"
+      line="${line// /=}"
+      printf '\n%*s%s\n' "$indent" '' "$line"
+      return
+   fi
+
+   if (( tlen > width - 4 )); then
+      title="${title:0:$((width - 7))}..."
+      tlen=${#title}
+   fi
+
+   pad=$((width - tlen))
+   left=$((pad / 2))
+   right=$((pad - left))
+   left_pad="$(printf '%*s' "$left" '')"
+   right_pad="$(printf '%*s' "$right" '')"
+   left_pad="${left_pad// /=}"
+   right_pad="${right_pad// /=}"
+   line="${left_pad}${title}${right_pad}"
+
+   printf '\n%*s%s\n' "$indent" '' "$line"
+}
 
 hol_divider() {
-   printf '%*s\n' "$HOL_WIDTH" '' | tr ' ' '─'
+   hol_section ""
 }
 
 hol_banner() {
    local title="$1"
    local emoji="${2:-🚀}"
-   echo ""
-   hol_divider
-   printf "${HOL_BOLD}${HOL_CYAN}%s  %s${HOL_RESET}\n" "$emoji" "$title"
-   hol_divider
-   echo ""
+   hol_section "${emoji}  ${title}"
 }
 
 hol_subsection() {
    local title="$1"
    local emoji="${2:-▶️}"
-   echo ""
-   printf "${HOL_BOLD}${HOL_BLUE}%s  %s${HOL_RESET}\n" "$emoji" "$title"
-   hol_divider
+   hol_section "${emoji}  ${title}"
+}
+
+hol_milestone() {
+   local title="$1"
+   local emoji="${2:-✅}"
+   hol_section "${emoji}  ${title}"
 }
 
 hol_step() {
@@ -69,10 +102,9 @@ hol_fail() {
    local msg="$1"
    local code="${2:-1}"
    echo ""
-   hol_divider
-   printf "${HOL_BOLD}${HOL_RED}💥 FATAL${HOL_RESET}\n"
+   hol_section "💥  FATAL"
    printf "${HOL_RED}%s${HOL_RESET}\n" "$msg"
-   hol_divider
+   hol_section ""
    echo ""
    exit "$code"
 }
@@ -87,6 +119,16 @@ hol_check_pass() {
 
 hol_quota_fail() {
    hol_fail "$1"
+}
+
+hol_service_short() {
+   case "$1" in
+   cdw) echo "CDW" ;;
+   cde) echo "CDE" ;;
+   cai) echo "CAI" ;;
+   cdf) echo "CDF" ;;
+   *) echo "$1" ;;
+   esac
 }
 
 hol_service_emoji() {
@@ -110,15 +152,15 @@ hol_service_label() {
 }
 
 hol_deploy_service() {
-   hol_subsection "Deploying $(hol_service_label "$1")" "$(hol_service_emoji "$1")"
+   hol_section "$(hol_service_emoji "$1")  Deploying $(hol_service_short "$1")"
 }
 
 hol_disable_service() {
-   hol_subsection "Disabling $(hol_service_label "$1")" "🗑️"
+   hol_section "🗑️  Disabling $(hol_service_short "$1")"
 }
 
 hol_init_service() {
-   hol_subsection "Initializing $(hol_service_label "$1")" "$(hol_service_emoji "$1")"
+   hol_section "$(hol_service_emoji "$1")  Initializing $(hol_service_short "$1")"
 }
 
 hol_service_vars() {
@@ -129,7 +171,7 @@ hol_service_vars() {
 }
 
 hol_parallel_start() {
-   hol_subsection "Running in parallel: $1" "⚡"
+   hol_section "⚡  Deploying data services in parallel"
 }
 
 hol_role_ok() {
@@ -149,38 +191,74 @@ hol_provision_failed() {
    hol_fail "Infrastructure provisioning for '${workshop}' failed. Review the logs above and try again."
 }
 
-_hol_box_horizontal() {
-   local char="${1:-━}"
-   local corner_left="${2:-┏}"
-   local corner_right="${3:-┓}"
-   printf "${HOL_BOLD}${HOL_CYAN}%s%*s%s${HOL_RESET}\n" \
-      "$corner_left" $((HOL_WIDTH - 2)) '' "$corner_right" | tr ' ' "$char"
+_hol_startup_hbar() {
+   local width="$1"
+   local char="${2:-━}"
+   printf '%*s' "$width" '' | tr ' ' "$char"
 }
 
-_hol_box_blank() {
-   printf "${HOL_BOLD}${HOL_CYAN}┃%*s┃${HOL_RESET}\n" $((HOL_WIDTH - 2)) '' | tr ' ' ' '
+_hol_startup_outer_line() {
+   local left_corner="$1"
+   local right_corner="$2"
+   local bar_char="${3:-━}"
+   local bar
+   bar="$(_hol_startup_hbar $((HOL_SECTION_WIDTH - 2)) "$bar_char")"
+   printf '%*s%s%s%s\n' "$HOL_SECTION_INDENT" '' "$left_corner" "$bar" "$right_corner"
 }
 
-_hol_box_text() {
-   local text="$1"
-   local pad=$((HOL_WIDTH - 4 - ${#text}))
-   if (( pad < 0 )); then
-      text="${text:0:$((HOL_WIDTH - 7))}..."
-      pad=0
+_hol_startup_outer_blank() {
+   local inner=$((HOL_SECTION_WIDTH - 2))
+   printf '%*s┃%*s┃\n' "$HOL_SECTION_INDENT" '' "$inner" ''
+}
+
+_hol_startup_outer_content() {
+   local content="$1"
+   local inner=$((HOL_SECTION_WIDTH - 2))
+   local tlen=${#content}
+   local pad left right
+
+   if (( tlen > inner )); then
+      content="${content:0:$((inner - 3))}..."
+      tlen=${#content}
    fi
-   printf "${HOL_BOLD}${HOL_CYAN}┃${HOL_RESET} ${HOL_WHITE}%s${HOL_RESET}%*s${HOL_BOLD}${HOL_CYAN}┃${HOL_RESET}\n" \
-      "$text" "$pad" ''
+
+   pad=$((inner - tlen))
+   left=$((pad / 2))
+   right=$((pad - left))
+   printf '%*s┃%*s%s%*s┃\n' "$HOL_SECTION_INDENT" '' "$left" '' "$content" "$right" ''
+}
+
+_hol_startup_inner_text() {
+   local text="$1"
+   local inner_width="$2"
+   local tlen=${#text}
+   local pad=$((inner_width - tlen - 2))
+   local left=$((pad / 2))
+   local right=$((pad - left))
+   printf '│ %*s%s%*s │' "$left" '' "$text" "$right" ''
 }
 
 hol_startup_banner() {
+   local inner_width=46
+   local hline
+   local title="Cloudera on AWS cloud provisioner"
+   local subtitle="(AutoClouderaDeploy)"
+   local top_line mid_line sub_line bot_line
+
+   hline="$(_hol_startup_hbar "$inner_width" '─')"
+   top_line="   ☁  ╭${hline}╮"
+   mid_line="$(printf '%6s' '')$(_hol_startup_inner_text "$title" "$inner_width")"
+   sub_line="$(printf '%6s' '')$(_hol_startup_inner_text "$subtitle" "$inner_width")"
+   bot_line="$(printf '%6s' '')╰${hline}╯"
+
    echo ""
-   _hol_box_horizontal '━' '┏' '┓'
-   _hol_box_blank
-   _hol_box_text "   ☁  ╭──────────────────────────────────────────────╮"
-   _hol_box_text "      │  Cloudera on AWS cloud provisioner           │"
-   _hol_box_text "      │  (AutoClouderaDeploy)                        │"
-   _hol_box_text "      ╰──────────────────────────────────────────────╯"
-   _hol_box_blank
-   _hol_box_horizontal '━' '┗' '┛'
+   _hol_startup_outer_line '┏' '┓' '━'
+   _hol_startup_outer_blank
+   _hol_startup_outer_content "$top_line"
+   _hol_startup_outer_content "$mid_line"
+   _hol_startup_outer_content "$sub_line"
+   _hol_startup_outer_content "$bot_line"
+   _hol_startup_outer_blank
+   _hol_startup_outer_line '┗' '┛' '━'
    echo ""
 }

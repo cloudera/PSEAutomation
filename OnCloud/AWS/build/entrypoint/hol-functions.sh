@@ -778,14 +778,31 @@ EOF
    hol_subsection "Generated Terraform env_tags" "🏷️"
    cat "$TFVARS_FILE"
 
-   terraform apply --auto-approve \
-      -var "env_prefix=${workshop_name}" \
-      -var "aws_region=${aws_region}" \
-      -var "aws_key_pair=${aws_key_pair}" \
-      -var "deployment_template=${deployment_template}" \
-      -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}" \
-      -var "datalake_version=${datalake_version}" \
+   local cdp_tf_apply_args=(
+      -var "env_prefix=${workshop_name}"
+      -var "aws_region=${aws_region}"
+      -var "aws_key_pair=${aws_key_pair}"
+      -var "deployment_template=${deployment_template}"
+      -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
+      -var "datalake_version=${datalake_version}"
       -var-file="${TFVARS_FILE}"
+   )
+
+   hol_subsection "Provisioning CDP environment (phase 1)" "☁️"
+   terraform apply --auto-approve \
+      -target=module.cdp_aws_prereqs \
+      -target='module.cdp_deploy.module.cdp_on_aws[0].cdp_iam_group.cdp_groups' \
+      -target='module.cdp_deploy.module.cdp_on_aws[0].cdp_environments_aws_environment.cdp_env' \
+      "${cdp_tf_apply_args[@]}"
+
+   if [ $? -ne 0 ]; then
+      return 1
+   fi
+
+   assign_environment_base_roles
+
+   hol_subsection "Provisioning CDP datalake (phase 2)" "☁️"
+   terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
 
    cdp_provision_status=$?
    if [ $cdp_provision_status -eq 0 ]; then
@@ -992,9 +1009,6 @@ provision_cai_inference() {
   # Step 1: Initialize compute cluster
   initialize_compute_cluster
 
-  resource_roles=("EnvironmentUser")
-  set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
   # Step 2: Provision compute cluster, AI registry and CAI workbench in parallel
   provision_compute_cluster &
   pid_compute=$!
@@ -1129,7 +1143,7 @@ cdp_idp_setup_user() {
       keycloak__realm=master \
       keycloak__auth_realm=master \
       cdp_region=$cdp_region"
-   hol_subsection "Creating users & groups" "👥"
+   hol_subsection "Creating Users & Groups" "👥"
    sleep 5
    ansible-playbook keycloak_hol_user_setup.yml --extra-vars \
       "keycloak__admin_username=admin \
@@ -1317,6 +1331,12 @@ disable_cdf() {
 #--------------------------------------------------------------------------------------------------#
 
 #---------------------------Start of functions for required roles to access data services-----------------------#
+assign_environment_base_roles() {
+   hol_subsection "Assigning EnvironmentUser resource role" "🔐"
+   local resource_roles=("EnvironmentUser")
+   set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+}
+
 set_account_roles() {
    CDP_GROUP_NAME=${1}
    shift
@@ -1542,10 +1562,8 @@ enable_data_services() {
       return 0
    fi
 
-   resource_roles=("EnvironmentUser")
-   set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-   hol_parallel_start "${services_to_deploy[*]}"
+   hol_parallel_start
+   hol_info "Services: ${services_to_deploy[*]}"
 
    local pids=()
    for service in "${services_to_deploy[@]}"; do
@@ -1576,7 +1594,8 @@ disable_data_services() {
       return 0
    fi
 
-   hol_subsection "Disabling data services in parallel: ${services_to_disable[*]}" "🗑️"
+   hol_subsection "Disabling data services in parallel" "🗑️"
+   hol_info "Services: ${services_to_disable[*]}"
 
    local pids=()
    for service in "${services_to_disable[@]}"; do
