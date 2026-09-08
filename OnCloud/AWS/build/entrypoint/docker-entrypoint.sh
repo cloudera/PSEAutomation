@@ -31,7 +31,7 @@ provision)
             destroy_keycloak
             hol_provision_failed "$workshop_name"
         else
-            hol_ok "Keycloak server provisioned"
+            hol_milestone "Keycloak Server Provisioned" "🔐"
         fi
     else
         hol_skip "Keycloak provisioning skipped (configfile)"
@@ -46,7 +46,7 @@ provision)
         fi
         hol_provision_failed "$workshop_name"
     else
-        hol_ok "CDP environment provisioned"
+        hol_milestone "CDP Environment Provisioned" "☁️"
     fi
     update_cdp_user_group
     if [ "$provision_keycloak" == "yes" ]; then
@@ -72,8 +72,7 @@ provision)
         hol_provision_failed "$workshop_name"
     fi
 
-    hol_banner "Infrastructure provisioned successfully" "🎉"
-    hol_ok "Workshop '${workshop_name}' is ready"
+    hol_milestone "Infrastructure Provisioned" "🎉"
     ;;
 destroy)
     hol_banner "HoL Destroy Pipeline" "🗑️"
