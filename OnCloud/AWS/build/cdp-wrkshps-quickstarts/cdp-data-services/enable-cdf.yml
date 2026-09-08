@@ -8,6 +8,16 @@
     minimum_nodes: 3
     maximum_nodes: 10
     use_public_load_balancer: true
+    cdf_success_states:
+      - ENABLED
+      - RUNNING
+      - INSTALLATION_FINISHED
+      - GOOD_HEALTH
+    cdf_failure_states:
+      - NOT_ENABLED
+      - DISABLED
+      - ERROR
+      - FAILED
 
   tasks:
     - name: Check and print variable status
@@ -29,6 +39,26 @@
           - maximum_nodes | int >= minimum_nodes | int
         fail_msg: "CDF requires at least 3 nodes and maximum_nodes must be >= minimum_nodes."
 
+    - name: Normalize load balancer subnet list
+      ansible.builtin.set_fact:
+        cdf_lb_subnets: >-
+          {{
+            env_lb_public_subnet
+            if env_lb_public_subnet is iterable and env_lb_public_subnet is not string
+            else env_lb_public_subnet | from_json
+          }}
+      when: env_lb_public_subnet is defined and env_lb_public_subnet | length > 0
+
+    - name: Normalize cluster subnet list
+      ansible.builtin.set_fact:
+        cdf_cluster_subnets: >-
+          {{
+            env_wrkr_private_subnet
+            if env_wrkr_private_subnet is iterable and env_wrkr_private_subnet is not string
+            else env_wrkr_private_subnet | from_json
+          }}
+      when: env_wrkr_private_subnet is defined and env_wrkr_private_subnet | length > 0
+
     - name: Check if CDF service is already enabled
       cloudera.cloud.df_service_info:
         name: "{{ cdp_env_name }}"
@@ -41,7 +71,7 @@
           {{
             df_service_info is succeeded and
             (df_service_info.services | default([]) | length > 0) and
-            (df_service_info.services[0].status.state | default('NOT_ENABLED')) not in ['NOT_ENABLED', 'DISABLED', 'ERROR', 'FAILED']
+            (df_service_info.services[0].status.state | default('NOT_ENABLED')) not in cdf_failure_states
           }}
 
     - name: Skip provisioning when CDF is already enabled
@@ -56,35 +86,48 @@
         nodes_max: "{{ maximum_nodes | int }}"
         instance_type: "{{ instance_type }}"
         public_loadbalancer: "{{ use_public_load_balancer | bool }}"
-        cluster_subnets: "{{ env_wrkr_private_subnet | from_json }}"
-        loadbalancer_subnets: "{{ env_lb_public_subnet | from_json }}"
+        cluster_subnets: "{{ cdf_cluster_subnets | default(omit) }}"
+        loadbalancer_subnets: "{{ cdf_lb_subnets | default(omit) }}"
         state: present
         wait: true
         timeout: 7200
       when: not cdf_service_enabled
       register: cdf_enable_result
 
-    - name: Wait for CDF service to reach enabled state
+    - name: Verify CDF service reached a healthy state
       cloudera.cloud.df_service_info:
         name: "{{ cdp_env_name }}"
       register: df_service_status
-      until: >
+      until: >-
         df_service_status is succeeded and
         (df_service_status.services | default([]) | length > 0) and
-        (df_service_status.services[0].status.state | default('NOT_ENABLED')) in ['ENABLED', 'RUNNING']
+        (
+          (df_service_status.services[0].status.state | default('NOT_ENABLED')) in cdf_success_states or
+          (df_service_status.services[0].status.detailedState | default('')) in cdf_success_states
+        )
       retries: 80
       delay: 60
       when: not cdf_service_enabled
 
     - name: Fail task on CDF enable failure
       ansible.builtin.fail:
-        msg: "CDF enable failed for environment {{ cdp_env_name }} (state: {{ df_service_status.services[0].status.state | default('unknown') }})."
+        msg: >-
+          CDF enable failed for environment {{ cdp_env_name }}
+          (state: {{ df_service_status.services[0].status.state | default('unknown') }},
+          detailedState: {{ df_service_status.services[0].status.detailedState | default('unknown') }}).
       when:
         - not cdf_service_enabled
         - df_service_status is succeeded
         - (df_service_status.services | default([]) | length > 0)
-        - (df_service_status.services[0].status.state | default('NOT_ENABLED')) not in ['ENABLED', 'RUNNING']
+        - (df_service_status.services[0].status.state | default('NOT_ENABLED')) in cdf_failure_states
 
     - name: Print CDF enable success message
       ansible.builtin.debug:
-        msg: "Successfully enabled CDF for environment {{ cdp_env_name }}."
+        msg: >-
+          Successfully enabled CDF for environment {{ cdp_env_name }}
+          (state: {{ df_service_status.services[0].status.state | default(df_service_info.services[0].status.state | default('unknown')) }}).
+      when: >-
+        cdf_service_enabled or (
+        df_service_status is defined and
+        (df_service_status.services | default([]) | length > 0)
+        )
