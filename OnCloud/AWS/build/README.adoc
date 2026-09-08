@@ -30,7 +30,7 @@ Infrastructure components are important and play a vital role in achieving the g
 
 1. Cloudera Environment
 2. Datalake
-3. Data Service (Currently CML, CDW & CDE)
+3. Data Service (Currently CAI, CDW & CDE)
 4. `Keycloak` Server
 5. Users
 
@@ -131,7 +131,7 @@ link:https://docs.docker.com/build/building/multi-platform/[**Link to Official D
 
 2.  Optional provisioning of `Keycloak` Server for providing external user access to the Lab Environment with the help of SSO.
 
-3.  When `Keycloak` Server is provisioned using this automation, the workshop owner can create the required number of workshop users with Keycloak (SSO) based access to the workshop environment (depending on the type of workshop e.g. CML, CDW, or CDE). The Keycloak server will be HTTPS (TLS/SSL Secured) with LetsEncrypt CA.
+3.  When `Keycloak` Server is provisioned using this automation, the workshop owner can create the required number of workshop users with Keycloak (SSO) based access to the workshop environment (depending on the type of workshop e.g. CAI, CDW, or CDE). The Keycloak server will be HTTPS (TLS/SSL Secured) with LetsEncrypt CA.
 
 4.  Provisioned Keycloak users are added in the backend to IAM Groups in the CDP Tenant with the least required access roles.
 
@@ -145,7 +145,7 @@ link:https://docs.docker.com/build/building/multi-platform/[**Link to Official D
     -  Enough quotas for VPC, ElasticIP, and S3 bucket creation are available on AWS.
     -  Enough quotas for CDP IAM Users, IAM Groups, and SAML Identity Provider (IdP) creation are available on the CDP Tenant.
 
-8.  Optional activation of CDW, CDE, and CML data services and provisioning of the required resources e.g. Virtual Service (CDE), Virtual Warehouses (CDW), Virtual Workspace (CML), etc.
+8.  Optional activation of CDW, CDE, and CAI data services and provisioning of the required resources e.g. Virtual Service (CDE), Virtual Warehouses (CDW), Virtual Workspace (CAI), etc.
 
 9.  The automation is implemented in such a way that it can be retriggered with the provision or destroy command as needed.
 
@@ -153,7 +153,7 @@ link:https://docs.docker.com/build/building/multi-platform/[**Link to Official D
 
 11. Deployment of the number of CDW Warehouses is determined dynamically, based on the number of workshop users.
 
-12. Optional deployment of GPU instances with CML workspaces.
+12. Optional deployment of GPU instances with CAI workspaces.
 
 13. Optionally override the various default configuration values for data services e.g. instance_type, instance_size, Spark version, etc. If you don't pass any override values, default values will be used.
 
