@@ -18,7 +18,10 @@ def extract(String logOutput) {
         return lower.contains('already_exists') ||
             lower.contains('already assigned') ||
             lower.contains('is already assigned') ||
-            (lower.contains('assignuserresourcerole') && lower.contains('already'))
+            (lower.contains('assignuserresourcerole') && lower.contains('already')) ||
+            (lower.contains('assigngroupresourcerole') && lower.contains('already')) ||
+            (lower.contains('an error occurred:') && lower.contains('resource role') &&
+                (lower.contains('already') || lower.contains('already_exists')))
     }
 
     def summarizeProvisionerError = { String message ->
@@ -41,6 +44,9 @@ def extract(String logOutput) {
         }
         if (lower.contains('s3 bucket limit has been reached')) {
             return 'AWS S3 bucket limit reached. Delete unused buckets or request a quota increase.'
+        }
+        if (lower.contains('local_machine_ip cannot be') && lower.contains('0.0.0.0/0') && lower.contains('provision_caii')) {
+            return 'When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be 0.0.0.0/0. Use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.'
         }
         if (lower.contains('not able to find config file')) {
             return 'Config file missing. Ensure configfile exists under /userconfig before running the job.'

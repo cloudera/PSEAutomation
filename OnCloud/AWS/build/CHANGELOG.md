@@ -8,8 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.3.1]
 
 ### Changed
+- Jenkins `OWNER` parameter default is `pse-apac@cloudera.com`; when `PROVISION_CAII=YES`, `LOCAL_MACHINE_IP` cannot be `0.0.0.0/0` (use Jenkins agent IP or Cloudera VPN `208.127.31.110/32` / `208.127.31.11/32`).
+- Script output uses emoji, ANSI colors, section dividers, and a startup ASCII banner via shared `hol-output.sh` helpers for clearer Jenkins/console logs.
 - Renamed CML data service to CAI (Cloudera AI) across pipeline, playbooks, and workspace naming.
-- Renamed Model Registry references to AI Registry in CAII provisioning and teardown scripts.
+- CDW, CDE, CAI, and CDF data service playbooks now run in parallel when multiple services are selected.
+- CAII provisioning runs in parallel with other selected data services to reduce total provision time.
+- CDW enable/disable playbooks now create or remove virtual warehouses and data visualizations in parallel using Ansible async tasks.
+- CDE enable/disable playbooks now create or remove virtual clusters in parallel using Ansible async tasks.
+
+### Added
+- CDF (Cloudera Data Flow) data service support with enable/disable playbooks, Jenkins parameters, and `DFFlowUser`/`DFFlowDeveloper` resource roles for workshop users.
 
 ### Fixed
 - Jenkins failure emails now include parsed Ansible/Terraform fatal errors from provisioner logs.

@@ -4,22 +4,24 @@ pipeline {
     parameters {
         choice(name: 'ACTION', choices: ['provision', 'destroy'], description: 'Choose whether to provision or destroy the stack')
         choice(name: 'PROVISION_KEYCLOAK', choices: ['YES', 'NO'], description: 'Choose whether to provision Keycloak Instance (YES/NO)')
+        choice(name: 'PROVISION_CAII', choices: ['NO', 'YES'], description: 'Provision CAII (YES/NO). When YES, LOCAL_MACHINE_IP cannot be 0.0.0.0/0 — use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
         password(name: 'KEYCLOAK_ADMIN_PASSWORD', defaultValue: 'admin', description: '❗❗❗(MANDATORY) Admin User Password for Keycloak')
         choice(name: 'CDP_DEPLOYMENT_TYPE', choices: ['public', 'private', 'semi-private'], description: 'Choose the CDP Deployment Type (public/private/semi-private). Default: public')
         string(name: 'AWS_REGION', defaultValue: 'ap-southeast-1', description: 'AWS Region (e.g., ap-southeast-1). Please provide a valid AWS region format (e.g., ap-southeast-1).')
-        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'IP or network range to whitelist (e.g., 172.31.x.x/32 or a subnet range). Default: 0.0.0.0/0 allows open access for all.')
+        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'IP/CIDR to whitelist. Default 0.0.0.0/0 allows all. If PROVISION_CAII=YES, 0.0.0.0/0 is rejected — use Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
         string(name: 'WORKSHOP_NAME', defaultValue: 'pseworkshop', description: 'Workshop Name (5-12 characters long, no underscores allowed)')
         string(name: 'NUMBER_OF_WORKSHOP_USERS', defaultValue: '1', description: 'Number of Workshop Users')
         string(name: 'WORKSHOP_USER_PREFIX', defaultValue: 'pseworkshop', description: 'Prefix for Workshop Users')
         password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', defaultValue: 'changeme', description: '❗❗❗(MANDATORY) Default password for Workshop Users')
         extendedChoice(
             name: 'ENABLE_DATA_SERVICES',
-            value: 'CDW,CAI,CDE,NONE',
+            value: 'CDW,CAI,CDE,CDF,NONE',
             type: 'PT_CHECKBOX',
             description: 'Select the data services to enable. Default: NONE (No data services enabled)',
             // defaultValue: 'NONE',
             multiSelectDelimiter: ','
         )
+        string(name: 'OWNER', defaultValue: 'pse-apac@cloudera.com', description: '❗❗❗(MANDATORY) Resource tag: pse-owner (email or name). Default: pse-apac@cloudera.com. Cannot use "owner" — CDP reserves it as a default tag.')
         string(name: 'CDP_SAML_PROVIDER_LIMIT', defaultValue: '10', description: 'Maximum number of SAML providers allowed')
         string(name: 'CDP_USER_LIMIT', defaultValue: '3000', description: 'Maximum number of CDP users allowed')
         string(name: 'CDP_GROUP_LIMIT', defaultValue: '50', description: 'Maximum number of CDP groups allowed')
@@ -38,6 +40,10 @@ pipeline {
         string(name: 'CAI_GPU_INSTANCE_TYPE', defaultValue: 'g4dn.xlarge', description: 'CAI GPU instance type')
         string(name: 'CAI_MIN_GPU_INSTANCES', defaultValue: '0', description: 'Minimum number of GPU instances for CAI')
         string(name: 'CAI_MAX_GPU_INSTANCES', defaultValue: '10', description: 'Maximum number of GPU instances for CAI')
+        string(name: 'CDF_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CDF Kubernetes node instance type')
+        string(name: 'CDF_MIN_NODES', defaultValue: '3', description: 'Minimum number of CDF Kubernetes nodes (minimum 3)')
+        string(name: 'CDF_MAX_NODES', defaultValue: '10', description: 'Maximum number of CDF Kubernetes nodes')
+        booleanParam(name: 'CDF_USE_PUBLIC_LB', defaultValue: true, description: 'Expose CDF with a public load balancer')
         string(name: 'DOMAIN', defaultValue: 'clouderapartners.click', description: '❗❗❗(MANDATORY) Route53 registered domain or subdomain (e.g., sub.example.com)')
         string(name: 'HOSTEDZONEID', defaultValue: 'Example: ZCLOUDERAPSEAPACTEAM1', description: '❗❗❗(MANDATORY) Route53 Hosted Zone Id for the above domain')
         string(name: 'DATALAKE_VERSION', defaultValue: '7.2.18', description: 'The Datalake runtime version to be used (e.g., 7.2.18)')
@@ -106,6 +112,18 @@ pipeline {
                     if (!params.AWS_REGION?.trim()) {
                         printError("AWS_REGION is mandatory! Please provide a value.")
                     }
+                    if (params.LOCAL_MACHINE_IP?.trim() == "0.0.0.0/32") {
+                        printError("LOCAL_MACHINE_IP cannot be '0.0.0.0/32'. Please provide a valid IP.")
+                    }
+                    def caiiLocalIpError = "When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be '0.0.0.0/0'. Use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32."
+                    if (params.PROVISION_CAII?.trim().equalsIgnoreCase("YES")) {
+                        def ip = params.LOCAL_MACHINE_IP?.trim()
+                        if (!ip) {
+                            printError("When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be empty. ${caiiLocalIpError}")
+                        } else if (ip == "0.0.0.0/0") {
+                            printError(caiiLocalIpError)
+                        }
+                    }
                     if (!params.CDP_DEPLOYMENT_TYPE?.trim()) {
                         printError("CDP_DEPLOYMENT_TYPE is mandatory! Please select a deployment type.")
                     }
@@ -120,6 +138,9 @@ pipeline {
                     }
                     if (!params.LOCAL_MACHINE_IP?.trim()) {
                         printError("LOCAL_MACHINE_IP is mandatory! Please provide a value.")
+                    }
+                    if (!params.OWNER?.trim()) {
+                        printError("OWNER is mandatory! Please provide a value.")
                     }
 
                     // Domain and Hosted Zone validity checks with updated regex
@@ -203,6 +224,7 @@ pipeline {
                     // Create or overwrite the config file
                     writeFile file: env.CONFIG_FILE, text: """PROVISION_KEYCLOAK:${params.PROVISION_KEYCLOAK}
 KEYCLOAK_ADMIN_PASSWORD:${params.KEYCLOAK_ADMIN_PASSWORD}
+PROVISION_CAII:${params.PROVISION_CAII}
 AWS_REGION:${params.AWS_REGION}
 CDP_DEPLOYMENT_TYPE:${params.CDP_DEPLOYMENT_TYPE}
 LOCAL_MACHINE_IP:${params.LOCAL_MACHINE_IP}
@@ -226,7 +248,6 @@ CDE_MAX_INSTANCES:${params.CDE_MAX_INSTANCES}
 CDE_SPARK_VERSION:${params.CDE_SPARK_VERSION}
 CDE_VC_TIER:${params.CDE_VC_TIER}
 
-PROVISION_CAII:NO
 CAI_WS_INSTANCE_TYPE:${params.CAI_WS_INSTANCE_TYPE}
 CAI_MIN_INSTANCES:${params.CAI_MIN_INSTANCES}
 CAI_MAX_INSTANCES:${params.CAI_MAX_INSTANCES}
@@ -234,10 +255,16 @@ CAI_ENABLE_GPU:${params.CAI_ENABLE_GPU}
 CAI_GPU_INSTANCE_TYPE:${params.CAI_GPU_INSTANCE_TYPE}
 CAI_MIN_GPU_INSTANCES:${params.CAI_MIN_GPU_INSTANCES}
 CAI_MAX_GPU_INSTANCES:${params.CAI_MAX_GPU_INSTANCES}
+
+CDF_INSTANCE_TYPE:${params.CDF_INSTANCE_TYPE}
+CDF_MIN_NODES:${params.CDF_MIN_NODES}
+CDF_MAX_NODES:${params.CDF_MAX_NODES}
+CDF_USE_PUBLIC_LB:${params.CDF_USE_PUBLIC_LB}
 DATALAKE_VERSION:${params.DATALAKE_VERSION}
 
 DOMAIN:${params.DOMAIN}
 HOSTEDZONEID:${params.HOSTEDZONEID}
+ENV_TAGS:{pse-owner=${params.OWNER.trim()}}
 """
 sh """
     pwd
@@ -295,6 +322,10 @@ sh """
                 script {
                     sh "docker logs hol-provisioner-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log 2>&1 || true"
                     def logOutput = readFile("${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log")
+                    def dockerExit = sh(
+                        script: "docker inspect hol-provisioner-${BUILD_NUMBER} --format='{{.State.ExitCode}}' 2>/dev/null || echo 1",
+                        returnStdout: true
+                    ).trim()
 
                     def parserCandidates = [
                         "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/provisionFailureParser.groovy",
@@ -309,7 +340,10 @@ sh """
                         errorMessages = failureParser.extract(logOutput)
                     }
 
-                    if (!errorMessages.isEmpty()) {
+                    if (dockerExit != '0') {
+                        if (errorMessages.isEmpty()) {
+                            errorMessages = ["Docker provisioner exited with code ${dockerExit}"]
+                        }
                         currentBuild.result = 'FAILURE'
                         currentBuild.description = errorMessages.take(10).join('\n')
                         println currentBuild.description
@@ -322,56 +356,71 @@ sh """
             expression { params.ACTION == 'provision' }
             }
             steps {
-                echo 'Assigning Resorce roles'
                 script{
                     sh '''
                     set +e
+                    set +x
 
                     CDP_WORKLOAD_USERNAME="${BUILD_USER_ID//_/.}"
-                    echo "CDP_WORKLOAD_USERNAME: $CDP_WORKLOAD_USERNAME"
                     CDP_ENV_NAME="$(echo "$WORKSHOP_NAME" | tr '[:upper:]' '[:lower:]')-cdp-env"
-                    echo "CDP_ENV_NAME: $CDP_ENV_NAME"
+                    echo "Assigning environment roles for ${CDP_WORKLOAD_USERNAME} on ${CDP_ENV_NAME}"
 
-                    export CDP_USER_CRN=$(cdp iam list-users --max-items 10000 | jq --arg CDP_WORKLOAD_USERNAME "$CDP_WORKLOAD_USERNAME" '.users[] | select(.workloadUsername==$CDP_WORKLOAD_USERNAME).userId' | tr -d '"')
-                    export CDP_ENV_CRN=$(cdp environments describe-environment --environment-name "${CDP_ENV_NAME}" | jq -r .environment.crn)
-                    export RESOURCE_ROLES=(EnvironmentAdmin Owner)
+                    CDP_USER_CRN=$(cdp iam list-users --max-items 10000 \
+                        | jq -r --arg u "$CDP_WORKLOAD_USERNAME" '.users[] | select(.workloadUsername==$u).userId')
+                    CDP_ENV_CRN=$(cdp environments describe-environment --environment-name "$CDP_ENV_NAME" | jq -r .environment.crn)
 
-                    get_crn_resource_role () {
-                        local role_name="$1"
+                    if [ -z "$CDP_USER_CRN" ] || [ "$CDP_USER_CRN" = "null" ]; then
+                        echo "WARN: CDP user not found for '$CDP_WORKLOAD_USERNAME' — skipping role assignment."
+                        exit 0
+                    fi
+                    if [ -z "$CDP_ENV_CRN" ] || [ "$CDP_ENV_CRN" = "null" ]; then
+                        echo "WARN: Environment '$CDP_ENV_NAME' not found — skipping role assignment."
+                        exit 0
+                    fi
+
+                    get_crn_resource_role() {
                         cdp iam list-resource-roles | jq -r \
-                            --arg role "$role_name" \
+                            --arg role "$1" \
                             '.resourceRoles[] | select(.crn | endswith(":" + $role)) | .crn'
                     }
 
-                    assign_failed=0
-                    for role_name in "${RESOURCE_ROLES[@]}"; do
-                        role_crn=$(get_crn_resource_role "$role_name")
+                    user_has_resource_role() {
+                        cdp iam list-user-assigned-resource-roles --user "$CDP_USER_CRN" 2>/dev/null \
+                            | jq -e --arg role ":$1" --arg env "$CDP_ENV_CRN" \
+                            '.resourceRoles[]? | select(.crn | endswith($role)) | select(.resourceCrn == $env)' >/dev/null
+                    }
 
-                        if [ -z "$role_crn" ]; then
-                            echo "Could not find CRN for role '$role_name'. Skipping..."
+                    assign_failed=0
+                    for role_name in EnvironmentAdmin Owner; do
+                        if user_has_resource_role "$role_name"; then
+                            echo "  ✓ ${role_name} (already assigned)"
                             continue
                         fi
 
-                        echo "Assigning role '$role_name' to user '${CDP_USER_CRN}'..."
-                        output=$(cdp iam assign-user-resource-role \
+                        role_crn=$(get_crn_resource_role "$role_name")
+                        if [ -z "$role_crn" ]; then
+                            echo "  WARN: Role '${role_name}' not found — skipping"
+                            continue
+                        fi
+
+                        err_file=$(mktemp)
+                        if cdp iam assign-user-resource-role \
                             --user "$CDP_USER_CRN" \
                             --resource-role-crn "$role_crn" \
-                            --resource-crn "$CDP_ENV_CRN" 2>&1)
-                        exit_status=$?
-
-                        if [ "$exit_status" -eq 0 ]; then
-                            echo "Role '$role_name' assigned successfully."
-                        elif echo "$output" | grep -qiE 'ALREADY_EXISTS|already assigned'; then
-                            echo "Role '$role_name' is already assigned. Skipping..."
+                            --resource-crn "$CDP_ENV_CRN" >"$err_file" 2>&1; then
+                            echo "  ✓ ${role_name} assigned"
+                        elif grep -qiE 'ALREADY_EXISTS|already assigned' "$err_file"; then
+                            echo "  ✓ ${role_name} (already assigned)"
                         else
-                            echo "Error assigning role '$role_name':"
-                            echo "$output"
+                            echo "  ✗ Failed to assign ${role_name}:"
+                            sed 's/^/    /' "$err_file"
                             assign_failed=1
                         fi
+                        rm -f "$err_file"
                     done
 
-                    cdp environments sync-all-users --environment-name "$CDP_ENV_NAME" || true
-                    cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" || true
+                    cdp environments sync-all-users --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
+                    cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
 
                     if [ "$assign_failed" -ne 0 ]; then
                         exit 1

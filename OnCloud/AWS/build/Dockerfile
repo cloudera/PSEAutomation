@@ -42,6 +42,7 @@ RUN curl "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}
 
 COPY cdp-wrkshps-quickstarts /opt/cdp-public-cloud-automation/cdp-wrkshps-quickstarts
 COPY entrypoint/docker-entrypoint.sh /usr/local/bin/
+COPY entrypoint/hol-output.sh /usr/local/bin/
 COPY entrypoint/hol-functions.sh /usr/local/bin/
 COPY entrypoint/default.py /usr/local/lib/python3.12/dist-packages/ansible/plugins/callback/
 

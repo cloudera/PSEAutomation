@@ -10,6 +10,9 @@
     maximum_instances: 40
     spark_version: "SPARK3"
     vc_tier: "CORE"  # Default value for vc-tier, can be "ALLP" or "CORE"
+    cde_async_timeout: 7200
+    cde_async_retries: 120
+    cde_async_delay: 30
 
   tasks:
     - name: Check and print variable status
@@ -76,21 +79,55 @@
       debug:
         msg: "Existing virtual clusters: {{ existing_vcs.stdout_lines }}"
 
-    - name: Determine the names of CDE virtual clusters to create, if they do not exist
-      debug:
-        msg: "{{ workshop_name }}-cde-vc-{{ item }}"
-      with_sequence: start=1 end="{{ number_vc_to_create | default(1) }}" format=%02d
+    - name: Build missing virtual cluster deployment plan
+      ansible.builtin.set_fact:
+        vc_deploy_plan_missing: >-
+          {%- set missing = [] -%}
+          {%- for i in range(1, (number_vc_to_create | default(1) | int) + 1) -%}
+          {%- set suffix = '%02d' | format(i) -%}
+          {%- set name = workshop_name ~ '-cde-vc-' ~ suffix -%}
+          {%- if name not in existing_vcs.stdout_lines -%}
+          {%- set _ = missing.append({'name': name, 'suffix': suffix}) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ missing }}
 
-    - name: Deploy CDE virtual clusters if they do not exist
+    - name: Debug virtual clusters to create
+      ansible.builtin.debug:
+        msg: "Virtual clusters to create: {{ vc_deploy_plan_missing | map(attribute='name') | list }}"
+
+    - name: Start virtual cluster deployments async
       ansible.builtin.command: >
-        cdp de create-vc \
-        --name "{{ workshop_name }}-cde-vc-{{ item }}" \
-        --cluster-id "{{ deservicestatus.services[0].clusterId }}" \
-        --spark-version "{{ spark_version }}" \
-        --cpu-requests "{{ '20' }}" \
-        --memory-requests "{{ '80Gi' }}" \
+        cdp de create-vc
+        --name "{{ item.name }}"
+        --cluster-id "{{ deservicestatus.services[0].clusterId }}"
+        --spark-version "{{ spark_version }}"
+        --cpu-requests "20"
+        --memory-requests "80Gi"
         --vc-tier "{{ vc_tier }}"
-      with_sequence: start=1 end="{{ number_vc_to_create | default(1) }}" format=%02d
-      loop_control:
-        pause: 30
-      when: "workshop_name + '-cde-vc-' + item not in existing_vcs.stdout_lines"
+      loop: "{{ vc_deploy_plan_missing }}"
+      async: "{{ cde_async_timeout }}"
+      poll: 0
+      register: vc_async_jobs
+      when: vc_deploy_plan_missing | length > 0
+      ignore_errors: true
+
+    - name: Wait for virtual cluster async provisioning jobs
+      ansible.builtin.async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: vc_async_results
+      until: vc_async_results.finished
+      retries: "{{ cde_async_retries }}"
+      delay: "{{ cde_async_delay }}"
+      loop: "{{ vc_async_jobs.results | default([]) | selectattr('ansible_job_id', 'defined') | list }}"
+      when: vc_deploy_plan_missing | length > 0
+
+    - name: Fail on unexpected virtual cluster deployment errors
+      ansible.builtin.fail:
+        msg: "Failed to create {{ item.item.item.name | default('virtual cluster') }}: {{ item.stderr | default(item.msg) }}"
+      loop: "{{ vc_async_results.results | default([]) }}"
+      when:
+        - item.finished | default(false)
+        - item.rc | default(0) != 0
+        - "'already exists' not in (item.stderr | default('') | lower)"
+        - "'ALREADY_EXISTS' not in (item.stderr | default(''))"
