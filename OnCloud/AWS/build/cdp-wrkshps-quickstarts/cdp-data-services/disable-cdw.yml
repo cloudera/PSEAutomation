@@ -10,78 +10,130 @@
       register: dwcluster
       ignore_errors: true
 
+    - name: Set CDW cluster facts
+      ansible.builtin.set_fact:
+        cdw_cluster_exists: "{{ dwcluster is succeeded and (dwcluster.get('clusters', []) | length > 0) }}"
+        cdw_cluster_id: "{{ dwcluster.get('clusters', [{}])[0].get('id', '') }}"
+
+    - name: Skip CDW teardown when cluster does not exist
+      ansible.builtin.debug:
+        msg: "CDW cluster not found for environment {{ cdp_env_name }}. Skipping CDW disable."
+      when: not cdw_cluster_exists
+
+    - name: End play when CDW cluster does not exist
+      ansible.builtin.meta: end_play
+      when: not cdw_cluster_exists
+
     - name: Fetch details of the database catalog
       cloudera.cloud.dw_database_catalog_info:
-        cluster_id: "{{ dwcluster.get('clusters', [{}])[0].get('id') }}"
+        cluster_id: "{{ cdw_cluster_id }}"
       register: dbcatalogstatus
       ignore_errors: true
 
+    - name: Set database catalog facts
+      ansible.builtin.set_fact:
+        dbcatalog_id: "{{ dbcatalogstatus.get('database_catalogs', [{}])[0].get('id', '') }}"
+        dbcatalog_exists: "{{ dbcatalogstatus is succeeded and (dbcatalogstatus.get('database_catalogs', []) | length > 0) }}"
+
     - name: Fetch data visualization clusters
       ansible.builtin.command: |
-        cdp dw list-data-visualizations --cluster-id "{{ dwcluster.get('clusters', [{}])[0].get('id') }}"
+        cdp dw list-data-visualizations --cluster-id "{{ cdw_cluster_id }}"
       register: datavizs
       ignore_errors: true
+      changed_when: false
+
+    - name: Set data visualization IDs
+      ansible.builtin.set_fact:
+        dataviz_ids: "{{ (datavizs.stdout | default('{\"dataVisualizations\": []}') | from_json).get('dataVisualizations', []) | map(attribute='id') | list }}"
+      ignore_errors: true
+
+    - name: No data visualization clusters to delete
+      ansible.builtin.debug:
+        msg: "No data visualization clusters found for CDW cluster {{ cdw_cluster_id }}."
+      when: dataviz_ids | length == 0
 
     - name: Remove data visualization clusters
       ansible.builtin.command: |
-        cdp dw delete-data-visualization --cluster-id "{{ dwcluster.get('clusters', [{}])[0].get('id') }}" --data-visualization-id "{{ item }}"
-      loop: "{{ datavizs.stdout | from_json | json_query('dataVisualizations[].id') }}"
-      register: delete_output
+        cdp dw delete-data-visualization --cluster-id "{{ cdw_cluster_id }}" --data-visualization-id "{{ item }}"
+      loop: "{{ dataviz_ids }}"
+      register: delete_dataviz_output
       ignore_errors: true
+      when: dataviz_ids | length > 0
 
     - name: Check if data visualization clusters still exist
       ansible.builtin.command: |
-        cdp dw list-data-visualizations --cluster-id "{{ dwcluster.get('clusters', [{}])[0].get('id') }}"
-      register: check_output
-      until: check_output.stdout | from_json | json_query('dataVisualizations') | length == 0
+        cdp dw list-data-visualizations --cluster-id "{{ cdw_cluster_id }}"
+      register: check_dataviz_output
+      until: >
+        check_dataviz_output.rc != 0 or
+        ((check_dataviz_output.stdout | default('{\"dataVisualizations\": []}') | from_json).get('dataVisualizations', []) | length == 0)
       retries: 50
       delay: 10
       ignore_errors: true
-
-    - name: Print dwcluster and dbcatalogstatus
-      debug:
-        msg: "dwcluster: {{ dwcluster }}, dbcatalogstatus: {{ dbcatalogstatus }}"
+      when: dataviz_ids | length > 0
 
     - name: Fetch all virtual warehouses
       cloudera.cloud.dw_virtual_warehouse_info:
-        cluster_id: "{{ dwcluster.get('clusters', [{}])[0].get('id') }}"
-        catalog_id: "{{ dbcatalogstatus.get('database_catalogs', [{}])[0].get('id') }}"
+        cluster_id: "{{ cdw_cluster_id }}"
+        catalog_id: "{{ dbcatalog_id }}"
       register: vwarehouses
       ignore_errors: true
+      when: dbcatalog_exists
 
     - name: Extract virtual warehouse IDs
       ansible.builtin.set_fact:
-        vw_ids: "{{ vwarehouses['virtual_warehouses'] | community.general.json_query(query_string) | default([]) }}"
-      vars:
-        query_string: "[].{id:id}"
-      ignore_errors: true
+        vw_ids: "{{ vwarehouses.get('virtual_warehouses', []) | map(attribute='id') | list }}"
+      when:
+        - vwarehouses is succeeded
+        - vwarehouses.get('virtual_warehouses', []) | length > 0
+
+    - name: Set empty virtual warehouse IDs when none found
+      ansible.builtin.set_fact:
+        vw_ids: []
+      when: vw_ids is not defined
+
+    - name: No virtual warehouses to delete
+      ansible.builtin.debug:
+        msg: "No virtual warehouses found for CDW cluster {{ cdw_cluster_id }}. Skipping VW deletion."
+      when: vw_ids | length == 0
 
     - name: Remove virtual warehouses
       cloudera.cloud.dw_virtual_warehouse:
-        cluster_id: "{{ dwcluster.get('clusters', [{}])[0].get('id') }}"
-        catalog_id: "{{ dbcatalogstatus.get('database_catalogs', [{}])[0].get('id') }}"
-        warehouse_id: "{{ item.id }}"
+        cluster_id: "{{ cdw_cluster_id }}"
+        catalog_id: "{{ dbcatalog_id }}"
+        warehouse_id: "{{ item }}"
         wait: False
         state: absent
       loop: "{{ vw_ids | reverse | list }}"
+      register: delete_vw_output
       ignore_errors: true
+      when: vw_ids | length > 0
 
-    - name: Check if all the virtual warehouses deleted successfully
-      shell: |
-        cdp dw list-vws --cluster-id "{{ dwcluster.get('clusters', [{}])[0].get('id') }}" | jq '.vws | length'
-      register: result
-      until: result.stdout | int == 0
+    - name: Check if all virtual warehouses deleted successfully
+      ansible.builtin.shell: |
+        cdp dw list-vws --cluster-id "{{ cdw_cluster_id }}" | jq '.vws | length'
+      register: vw_delete_check
+      until: vw_delete_check.rc == 0 and (vw_delete_check.stdout | default('0') | int == 0)
       retries: 50
       delay: 60
+      ignore_errors: true
+      when: vw_ids | length > 0
+
+    - name: Warn when virtual warehouse deletion could not be verified
+      ansible.builtin.debug:
+        msg: "Virtual warehouse deletion could not be fully verified. Remaining count: {{ vw_delete_check.stdout | default('unknown') }}"
+      when:
+        - vw_ids | length > 0
+        - vw_delete_check.stdout | default('1') | int > 0
 
     - name: Print virtual warehouse deletion completed
-      debug:
+      ansible.builtin.debug:
         msg: "All virtual warehouses are now removed."
-      when: result.stdout | int == 0
+      when: vw_ids | length == 0 or (vw_delete_check.stdout | default('0') | int == 0)
 
     - name: Remove CDW cluster
       cloudera.cloud.dw_cluster:
-        cluster_id: "{{ dwcluster['clusters'][0]['id'] }}"
+        cluster_id: "{{ cdw_cluster_id }}"
         env: "{{ cdp_env_name }}"
         wait: False
         state: absent
@@ -91,18 +143,29 @@
       cloudera.cloud.dw_cluster_info:
         env: "{{ cdp_env_name }}"
       register: dw_cluster_status
-      until: (dw_cluster_status['clusters'] | length == 0) or (dw_cluster_status['clusters'][0]['status'] in ["Deleting", "Running", "Error", "Failed"])
+      until: >
+        (dw_cluster_status['clusters'] | length == 0) or
+        (dw_cluster_status['clusters'][0]['status'] in ["Deleting", "Running", "Error", "Failed"])
       retries: 50
       delay: 30
+      ignore_errors: true
 
     - name: Check and print cluster status
-      debug:
+      ansible.builtin.debug:
         msg: "Cluster is in {{ dw_cluster_status['clusters'][0]['status'] }} state"
+      when: dw_cluster_status['clusters'] | length > 0
+
+    - name: Print cluster already removed
+      ansible.builtin.debug:
+        msg: "CDW cluster already removed for environment {{ cdp_env_name }}."
+      when: dw_cluster_status['clusters'] | length == 0
 
     - name: Fail task if cluster deletion failed
-      fail:
+      ansible.builtin.fail:
         msg: "Cluster deletion failed."
-      when: dw_cluster_status['clusters'][0]['status'] in ["Error", "Failed"]
+      when:
+        - dw_cluster_status['clusters'] | length > 0
+        - dw_cluster_status['clusters'][0]['status'] in ["Error", "Failed"]
 
     - name: Deactivate CDW cluster
       cloudera.cloud.dw_cluster_info:
