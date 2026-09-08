@@ -15,7 +15,7 @@
         password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', defaultValue: 'changeme', description: '❗❗❗(MANDATORY) Default password for Workshop Users')
         extendedChoice(
             name: 'ENABLE_DATA_SERVICES',
-            value: 'CDW,CAI,CDE,NONE',
+            value: 'CDW,CAI,CDE,CDF,NONE',
             type: 'PT_CHECKBOX',
             description: 'Select the data services to enable. Default: NONE (No data services enabled)',
             // defaultValue: 'NONE',
@@ -40,6 +40,10 @@
         string(name: 'CAI_GPU_INSTANCE_TYPE', defaultValue: 'g4dn.xlarge', description: 'CAI GPU instance type')
         string(name: 'CAI_MIN_GPU_INSTANCES', defaultValue: '0', description: 'Minimum number of GPU instances for CAI')
         string(name: 'CAI_MAX_GPU_INSTANCES', defaultValue: '10', description: 'Maximum number of GPU instances for CAI')
+        string(name: 'CDF_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CDF Kubernetes node instance type')
+        string(name: 'CDF_MIN_NODES', defaultValue: '3', description: 'Minimum number of CDF Kubernetes nodes (minimum 3)')
+        string(name: 'CDF_MAX_NODES', defaultValue: '10', description: 'Maximum number of CDF Kubernetes nodes')
+        booleanParam(name: 'CDF_USE_PUBLIC_LB', defaultValue: true, description: 'Expose CDF with a public load balancer')
         string(name: 'DOMAIN', defaultValue: 'example.com', description: '❗❗❗(MANDATORY) Route53 registered domain or subdomain (e.g., sub.example.com)')
         string(name: 'HOSTEDZONEID', defaultValue: 'Example: ZCLOUDERAPSEAPACTEAM1', description: '❗❗❗(MANDATORY) Route53 Hosted Zone Id for the above domain')
         string(name: 'DATALAKE_VERSION', defaultValue: '7.3.2', description: 'The Datalake runtime version to be used (e.g., 7.2.18)')
@@ -259,6 +263,11 @@ CAI_ENABLE_GPU:${params.CAI_ENABLE_GPU}
 CAI_GPU_INSTANCE_TYPE:${params.CAI_GPU_INSTANCE_TYPE}
 CAI_MIN_GPU_INSTANCES:${params.CAI_MIN_GPU_INSTANCES}
 CAI_MAX_GPU_INSTANCES:${params.CAI_MAX_GPU_INSTANCES}
+
+CDF_INSTANCE_TYPE:${params.CDF_INSTANCE_TYPE}
+CDF_MIN_NODES:${params.CDF_MIN_NODES}
+CDF_MAX_NODES:${params.CDF_MAX_NODES}
+CDF_USE_PUBLIC_LB:${params.CDF_USE_PUBLIC_LB}
 DATALAKE_VERSION:${params.DATALAKE_VERSION}
 
 DOMAIN:${params.DOMAIN}

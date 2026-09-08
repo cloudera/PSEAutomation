@@ -304,6 +304,18 @@ validating_variables() {
          CAI_MAX_GPU_INSTANCES)
             cai_max_gpu_instances=$value
             ;;
+         CDF_INSTANCE_TYPE)
+            cdf_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            ;;
+         CDF_MIN_NODES)
+            cdf_min_nodes=$value
+            ;;
+         CDF_MAX_NODES)
+            cdf_max_nodes=$value
+            ;;
+         CDF_USE_PUBLIC_LB)
+            cdf_use_public_lb=$(echo $value | tr '[:upper:]' '[:lower:]')
+            ;;
          CDP_SAML_PROVIDER_LIMIT)
             cdp_saml_provider_limit=$value
             ;;
@@ -1380,6 +1392,25 @@ disable_cai() {
       workshop_name=$workshop_name"
 }
 #--------------------------------------------------------------------------------------------------#
+deploy_cdf() {
+   echo -e "\n               ==========================Deploying CDF======================================\n"
+   ansible-playbook $DS_CONFIG_DIR/enable-cdf.yml --extra-vars \
+      "cdp_env_name=$workshop_name-cdp-env \
+      workshop_name=$workshop_name \
+      env_lb_public_subnet=$ENV_PUBLIC_SUBNETS \
+      env_wrkr_private_subnet=$ENV_PRIVATE_SUBNETS \
+      instance_type=$cdf_instance_type \
+      minimum_nodes=$cdf_min_nodes \
+      maximum_nodes=$cdf_max_nodes \
+      use_public_load_balancer=$cdf_use_public_lb"
+}
+#--------------------------------------------------------------------------------------------------#
+disable_cdf() {
+   echo "               ==========================Disabling CDF======================================"
+   ansible-playbook $DS_CONFIG_DIR/disable-cdf.yml --extra-vars \
+      "cdp_env_name=$workshop_name-cdp-env \
+      workshop_name=$workshop_name"
+}
 #--------------------------------------------------------------------------------------------------#
 
 #---------------------------Start of functions for required roles to access data services-----------------------#
@@ -1540,7 +1571,23 @@ deploy_single_data_service() {
       set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
       ;;
    cdf)
-      echo "CDF deployment is not supported at the moment"
+      echo -e "\n               ==========================Initializing Parameter Values for CDF======================================\n"
+      DEFAULT_CDF_INSTANCE_TYPE="m5.2xlarge"
+      DEFAULT_CDF_MIN_NODES=3
+      DEFAULT_CDF_MAX_NODES=10
+      DEFAULT_CDF_USE_PUBLIC_LB="true"
+      cdf_instance_type="${cdf_instance_type:-$DEFAULT_CDF_INSTANCE_TYPE}"
+      cdf_min_nodes="${cdf_min_nodes:-$DEFAULT_CDF_MIN_NODES}"
+      cdf_max_nodes="${cdf_max_nodes:-$DEFAULT_CDF_MAX_NODES}"
+      cdf_use_public_lb="${cdf_use_public_lb:-$DEFAULT_CDF_USE_PUBLIC_LB}"
+      echo "CDF (Cloudera Data Flow) Variables:"
+      echo "  Instance Type: $cdf_instance_type"
+      echo "  Min Nodes: $cdf_min_nodes"
+      echo "  Max Nodes: $cdf_max_nodes"
+      echo "  Use Public Load Balancer: $cdf_use_public_lb"
+      deploy_cdf
+      resource_roles=("DFFlowUser" "DFFlowDeveloper")
+      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
       ;;
    *)
       echo "Unknown data service: $service"
@@ -1556,7 +1603,7 @@ disable_single_data_service() {
    cdw) disable_cdw ;;
    cde) disable_cde ;;
    cai) disable_cai ;;
-   cdf) echo "CDF" ;;
+   cdf) disable_cdf ;;
    *)
       echo "Unknown data service: $service"
       return 1
