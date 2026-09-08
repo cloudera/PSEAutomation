@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Renamed CML data service to CAI (Cloudera AI) across pipeline, playbooks, and workspace naming.
+- Renamed Model Registry references to AI Registry in CAII provisioning and teardown scripts.
 
 ### Fixed
+- AI Registry teardown now deletes registries in any status (not only `installation:finished`) and stops infinite retry loops with a bounded verification timeout.
 - Renamed `owner` env tag to `pse-owner` to avoid conflict with CDP account default tags.
 - Fixed rollback shell error (`[: -eq: unary operator expected`) in `destroy_cdp` and `destroy_hol_infra`.
 

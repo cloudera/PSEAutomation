@@ -965,14 +965,14 @@ echo -e "\n               ==============================Provisioning Compute Clu
    ./compute_cluster_deploy.sh $workshop_name
 }
 
-enable_model_registry() { 
-  echo -e "\n               =============================Deploying Model Registry ========================================="
+enable_ai_registry() { 
+  echo -e "\n               =============================Deploying AI Registry ========================================="
   USER_NAMESPACE=$workshop_name   
   cd /userconfig/.$USER_NAMESPACE/CAII
 
   environment_crn=$(cdp environments describe-environment --environment-name ${workshop_name}-cdp-env | jq -r .environment.crn)
 
-  # Check if ML Model Registry exists and is already installed
+  # Check if AI Registry exists and is already installed
   registry_status=$(cdp ml list-model-registries | jq -r --arg env_name "${workshop_name}-cdp-env" '
     .modelRegistries[]
     | select(.environmentName == $env_name)
@@ -980,17 +980,17 @@ enable_model_registry() {
   ')
 
   if [[ "$registry_status" == "installation:finished" ]]; then
-    echo "✅ ML Model Registry for environment '${workshop_name}-cdp-env' is already installed. Skipping creation."
+    echo "✅ AI Registry for environment '${workshop_name}-cdp-env' is already installed. Skipping creation."
     return
   else
-    echo "🚀 Proceeding with model registry deployment"
+    echo "🚀 Proceeding with AI Registry deployment"
     cdp ml create-model-registry \
       --environment-crn "$environment_crn" \
       --environment-name "${workshop_name}-cdp-env" \
       --use-public-load-balancer
   fi
 
-  echo "⏳ Waiting for ML Model Registry installation to finish..."
+  echo "⏳ Waiting for AI Registry installation to finish..."
   for i in {1..75}; do
     registry_status=$(cdp ml list-model-registries | jq -r --arg env_name "${workshop_name}-cdp-env" '
       .modelRegistries[]
@@ -1004,17 +1004,17 @@ enable_model_registry() {
     status_lower=$(echo "$registry_status" | tr '[:upper:]' '[:lower:]')
 
     if [[ "$status_lower" == "installation:finished" ]]; then
-      echo "✅ ML Model Registry installation finished successfully."
+      echo "✅ AI Registry installation finished successfully."
       return
     elif [[ "$status_lower" == *"failed"* ]]; then
-      echo "❌ ML Model Registry installation FAILED with status: $registry_status"
+      echo "❌ AI Registry installation FAILED with status: $registry_status"
       exit 1
     fi
 
     sleep 60
   done
 
-  echo "❌ Timeout Error: ML Model Registry did not reach 'installation:finished' state."
+  echo "❌ Timeout Error: AI Registry did not reach 'installation:finished' state."
   exit 1
 }
 
@@ -1067,7 +1067,7 @@ provision_caii_service_app() {
 }
 
 provision_cai_inference() {
-   echo -e "\n   ========= Provisioning AI Inference with other dependencies e.g Compute cluster, workbench & Model registry ========="
+   echo -e "\n   ========= Provisioning AI Inference with other dependencies e.g Compute cluster, workbench & AI Registry ========="
 
   local enable_data_services="cai"
   local env_name="${workshop_name}-cdp-env"
@@ -1075,13 +1075,13 @@ provision_cai_inference() {
   # Step 1: Initialize compute cluster
   initialize_compute_cluster
 
-  # Step 2: Provision compute cluster, model registry and ai workbench in parallel
+  # Step 2: Provision compute cluster, AI registry and ai workbench in parallel
   provision_compute_cluster &
   pid_compute=$!
   sleep 60
   
-  enable_model_registry &
-  pid_model=$!
+  enable_ai_registry &
+  pid_ai_registry=$!
 
   enable_data_services &
   pid_cai=$!
@@ -1090,13 +1090,13 @@ provision_cai_inference() {
   wait $pid_compute
   status_compute=$?
 
-  wait $pid_model
-  status_model=$?
+  wait $pid_ai_registry
+  status_ai_registry=$?
 
   wait $pid_cai
   status_cai=$?
 
-  if [[ $status_compute -ne 0 || $status_model -ne 0 || $status_cai -ne 0 ]]; then
+  if [[ $status_compute -ne 0 || $status_ai_registry -ne 0 || $status_cai -ne 0 ]]; then
     echo "❌ Error: One or more provisioning steps failed."
     return 1
   fi
