@@ -54,12 +54,28 @@ provision)
     if [ "$provision_keycloak" == "yes" ]; then
         cdp_idp_setup_user
     fi
+
+    parallel_pids=()
     if [ "$provision_caii" == "yes" ]; then
         sleep 30
         echo -e "\n               =============================CAII Provisioning Started=============================="
-        provision_cai_inference  
+        provision_cai_inference &
+        parallel_pids+=($!)
     fi
-    enable_data_services
+
+    enable_data_services &
+    parallel_pids+=($!)
+
+    parallel_failed=0
+    for pid in "${parallel_pids[@]}"; do
+        wait "$pid" || parallel_failed=1
+    done
+    if [ "$parallel_failed" -ne 0 ]; then
+        echo "Infrastructure Provisioning For $workshop_name Is Not Successful.
+            Please Try Again. Exiting....."
+        exit 1
+    fi
+
     echo -e "\n               ==============================Infrastructure Provisioned========================================="
     ;;
 destroy)

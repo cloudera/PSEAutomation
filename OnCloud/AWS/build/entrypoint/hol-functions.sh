@@ -1069,24 +1069,25 @@ provision_caii_service_app() {
 provision_cai_inference() {
    echo -e "\n   ========= Provisioning AI Inference with other dependencies e.g Compute cluster, workbench & AI Registry ========="
 
-  local enable_data_services="cai"
   local env_name="${workshop_name}-cdp-env"
 
   # Step 1: Initialize compute cluster
   initialize_compute_cluster
 
-  # Step 2: Provision compute cluster, AI registry and ai workbench in parallel
+  resource_roles=("EnvironmentUser")
+  set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+
+  # Step 2: Provision compute cluster, AI registry and CAI workbench in parallel
   provision_compute_cluster &
   pid_compute=$!
   sleep 60
-  
+
   enable_ai_registry &
   pid_ai_registry=$!
 
-  enable_data_services &
+  deploy_single_data_service cai &
   pid_cai=$!
 
-  # Step 4: Wait for all background tasks
   wait $pid_compute
   status_compute=$?
 
@@ -1101,7 +1102,7 @@ provision_cai_inference() {
     return 1
   fi
 
-  # Step 5: Proceed to CAII service deployment
+  # Step 3: Proceed to CAII service deployment
   provision_caii_service_app
 }
 
@@ -1125,8 +1126,7 @@ destroy_cai_inference() {
    fi
    
    # Set the data service value for cleanup
-   local enable_data_services="cai"
-   disable_data_services &  # Call the function that disables CAI
+   disable_single_data_service cai &
    pid_disable=$!
    sleep 30
    
@@ -1458,138 +1458,178 @@ set_resource_roles() {
 }
 #-----------------------------------End of functions for required roles to access data services-----------------------------#
 
-enable_data_services() {
-   # Remove the brackets.
-   enable_data_services="${enable_data_services//[/}"
-   enable_data_services="${enable_data_services//]/}"
-   # Convert to lower case.
-   enable_data_services=$(echo "$enable_data_services" | tr '[:upper:]' '[:lower:]')
-   # Split into array.
-   IFS=',' read -ra data_services <<<"$enable_data_services"
-
-   # Deploy selected data services
-   for service in "${data_services[@]}"; do
-      resource_roles=("EnvironmentUser")
-      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-      if [[ "$service" == "cdw" ]]; then
-         echo -e "\n               ==========================Initializing Parameter Values for CDW======================================\n"
-         # Default Values
-         DEFAULT_CDW_VRTL_WAREHOUSE_SIZE="xsmall"
-         DEFAULT_CDW_DATAVIZ_SIZE="viz-default"
-
-         # CDW (Cloudera Data Warehouse) Variables
-         cdw_vrtl_warehouse_size="${cdw_vrtl_warehouse_size:-$DEFAULT_CDW_VRTL_WAREHOUSE_SIZE}"
-         cdw_dataviz_size="${cdw_dataviz_size:-$DEFAULT_CDW_DATAVIZ_SIZE}"
-
-         # Print Assigned Values for CDW
-         echo "CDW (Cloudera Data Warehouse) Variables:"
-         echo "  Virtual Warehouse Size: $cdw_vrtl_warehouse_size"
-         echo "  DataViz Size: $cdw_dataviz_size"
-
-         deploy_cdw
-         resource_roles=("DWAdmin" "DWUser")
-         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-      elif [[ "$service" == "cde" ]]; then
-         echo -e "\n               ==========================Initializing Parameter Values for CDE======================================\n"
-         # Default Values
-         DEFAULT_CDE_INSTANCE_TYPE="m5.2xlarge"
-         DEFAULT_CDE_INITIAL_INSTANCES=10
-         DEFAULT_CDE_MIN_INSTANCES=10
-         DEFAULT_CDE_MAX_INSTANCES=40
-         DEFAULT_CDE_SPARK_VERSION="SPARK3"
-         DEFAULT_CDE_VC_TIER="CORE"
-
-         # CDE (Cloudera Data Engineering) Variables
-         cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
-         cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
-         cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
-         cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
-         cde_spark_version="${cde_spark_version:-$DEFAULT_CDE_SPARK_VERSION}"
-         cde_vc_tier="${cde_vc_tier:-$DEFAULT_CDE_VC_TIER}"
-
-         # Print Assigned Values for CDE
-         echo "CDE (Cloudera Data Engineering) Variables:"
-         echo "  Instance Type: $cde_instance_type"
-         echo "  Initial Instances: $cde_initial_instances"
-         echo "  Min Instances: $cde_min_instances"
-         echo "  Max Instances: $cde_max_instances"
-         echo "  Spark Version: $cde_spark_version"
-         echo "  Virtual Cluster Tier: $cde_vc_tier"
-
-         deploy_cde
-         resource_roles=("DEUser")
-         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-      elif [[ "$service" == "cai" ]]; then
-         echo -e "\n               ==========================Initializing Parameter Values for CAI======================================\n"
-         # Default Values
-         DEFAULT_CAI_WS_INSTANCE_TYPE="m5.2xlarge"
-         DEFAULT_CAI_MIN_INSTANCES=1
-         DEFAULT_CAI_MAX_INSTANCES=10
-         DEFAULT_CAI_ENABLE_GPU="false"
-         DEFAULT_CAI_GPU_INSTANCE_TYPE="g4dn.xlarge"
-         DEFAULT_CAI_MIN_GPU_INSTANCES=0
-         DEFAULT_CAI_MAX_GPU_INSTANCES=10
-
-         # CAI (Cloudera AI) Variables
-         cai_ws_instance_type="${cai_ws_instance_type:-$DEFAULT_CAI_WS_INSTANCE_TYPE}"
-         cai_min_instances="${cai_min_instances:-$DEFAULT_CAI_MIN_INSTANCES}"
-         cai_max_instances="${cai_max_instances:-$DEFAULT_CAI_MAX_INSTANCES}"
-         cai_enable_gpu="${cai_enable_gpu:-$DEFAULT_CAI_ENABLE_GPU}"
-         cai_gpu_instance_type="${cai_gpu_instance_type:-$DEFAULT_CAI_GPU_INSTANCE_TYPE}"
-         cai_min_gpu_instances="${cai_min_gpu_instances:-$DEFAULT_CAI_MIN_GPU_INSTANCES}"
-         cai_max_gpu_instances="${cai_max_gpu_instances:-$DEFAULT_CAI_MAX_GPU_INSTANCES}"
-
-         # Print Assigned Values for CAI
-         echo "CAI (Cloudera AI) Variables:"
-         echo "  WS Instance Type: $cai_ws_instance_type"
-         echo "  Min Instances: $cai_min_instances"
-         echo "  Max Instances: $cai_max_instances"
-         echo "  Enable GPU: $cai_enable_gpu"
-         echo "  GPU Instance Type: $cai_gpu_instance_type"
-         echo "  Min GPU Instances: $cai_min_gpu_instances"
-         echo "  Max GPU Instances: $cai_max_gpu_instances"
-
-         deploy_cai
-         resource_roles=("MLUser")
-         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-      elif [[ "$service" == "cdf" ]]; then
-         echo "CDF deployment is not supported at the moment"
-         #resource_roles=("DFAdmin" "DFFlowAdmin")
-         #account_role=("DFCatalogAdmin")
-         #set_account_roles $workshop_name-aw-cdp-user-group "${account_role[@]}"
-         #set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-      else
-         echo "No Data Services Selected"
+wait_for_pids() {
+   local failed=0
+   local pid
+   for pid in "$@"; do
+      if ! wait "$pid"; then
+         failed=1
       fi
    done
+   return $failed
+}
+
+deploy_single_data_service() {
+   local service="$1"
+
+   case "$service" in
+   cdw)
+      echo -e "\n               ==========================Initializing Parameter Values for CDW======================================\n"
+      DEFAULT_CDW_VRTL_WAREHOUSE_SIZE="xsmall"
+      DEFAULT_CDW_DATAVIZ_SIZE="viz-default"
+      cdw_vrtl_warehouse_size="${cdw_vrtl_warehouse_size:-$DEFAULT_CDW_VRTL_WAREHOUSE_SIZE}"
+      cdw_dataviz_size="${cdw_dataviz_size:-$DEFAULT_CDW_DATAVIZ_SIZE}"
+      echo "CDW (Cloudera Data Warehouse) Variables:"
+      echo "  Virtual Warehouse Size: $cdw_vrtl_warehouse_size"
+      echo "  DataViz Size: $cdw_dataviz_size"
+      deploy_cdw
+      resource_roles=("DWAdmin" "DWUser")
+      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      ;;
+   cde)
+      echo -e "\n               ==========================Initializing Parameter Values for CDE======================================\n"
+      DEFAULT_CDE_INSTANCE_TYPE="m5.2xlarge"
+      DEFAULT_CDE_INITIAL_INSTANCES=10
+      DEFAULT_CDE_MIN_INSTANCES=10
+      DEFAULT_CDE_MAX_INSTANCES=40
+      DEFAULT_CDE_SPARK_VERSION="SPARK3"
+      DEFAULT_CDE_VC_TIER="CORE"
+      cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
+      cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
+      cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
+      cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
+      cde_spark_version="${cde_spark_version:-$DEFAULT_CDE_SPARK_VERSION}"
+      cde_vc_tier="${cde_vc_tier:-$DEFAULT_CDE_VC_TIER}"
+      echo "CDE (Cloudera Data Engineering) Variables:"
+      echo "  Instance Type: $cde_instance_type"
+      echo "  Initial Instances: $cde_initial_instances"
+      echo "  Min Instances: $cde_min_instances"
+      echo "  Max Instances: $cde_max_instances"
+      echo "  Spark Version: $cde_spark_version"
+      echo "  Virtual Cluster Tier: $cde_vc_tier"
+      deploy_cde
+      resource_roles=("DEUser")
+      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      ;;
+   cai)
+      echo -e "\n               ==========================Initializing Parameter Values for CAI======================================\n"
+      DEFAULT_CAI_WS_INSTANCE_TYPE="m5.2xlarge"
+      DEFAULT_CAI_MIN_INSTANCES=1
+      DEFAULT_CAI_MAX_INSTANCES=10
+      DEFAULT_CAI_ENABLE_GPU="false"
+      DEFAULT_CAI_GPU_INSTANCE_TYPE="g4dn.xlarge"
+      DEFAULT_CAI_MIN_GPU_INSTANCES=0
+      DEFAULT_CAI_MAX_GPU_INSTANCES=10
+      cai_ws_instance_type="${cai_ws_instance_type:-$DEFAULT_CAI_WS_INSTANCE_TYPE}"
+      cai_min_instances="${cai_min_instances:-$DEFAULT_CAI_MIN_INSTANCES}"
+      cai_max_instances="${cai_max_instances:-$DEFAULT_CAI_MAX_INSTANCES}"
+      cai_enable_gpu="${cai_enable_gpu:-$DEFAULT_CAI_ENABLE_GPU}"
+      cai_gpu_instance_type="${cai_gpu_instance_type:-$DEFAULT_CAI_GPU_INSTANCE_TYPE}"
+      cai_min_gpu_instances="${cai_min_gpu_instances:-$DEFAULT_CAI_MIN_GPU_INSTANCES}"
+      cai_max_gpu_instances="${cai_max_gpu_instances:-$DEFAULT_CAI_MAX_GPU_INSTANCES}"
+      echo "CAI (Cloudera AI) Variables:"
+      echo "  WS Instance Type: $cai_ws_instance_type"
+      echo "  Min Instances: $cai_min_instances"
+      echo "  Max Instances: $cai_max_instances"
+      echo "  Enable GPU: $cai_enable_gpu"
+      echo "  GPU Instance Type: $cai_gpu_instance_type"
+      echo "  Min GPU Instances: $cai_min_gpu_instances"
+      echo "  Max GPU Instances: $cai_max_gpu_instances"
+      deploy_cai
+      resource_roles=("MLUser")
+      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      ;;
+   cdf)
+      echo "CDF deployment is not supported at the moment"
+      ;;
+   *)
+      echo "Unknown data service: $service"
+      return 1
+      ;;
+   esac
+}
+
+disable_single_data_service() {
+   local service="$1"
+
+   case "$service" in
+   cdw) disable_cdw ;;
+   cde) disable_cde ;;
+   cai) disable_cai ;;
+   cdf) echo "CDF" ;;
+   *)
+      echo "Unknown data service: $service"
+      return 1
+      ;;
+   esac
+}
+
+enable_data_services() {
+   local selected_services="${enable_data_services//[/}"
+   selected_services="${selected_services//]/}"
+   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
+
+   IFS=',' read -ra data_services <<<"$selected_services"
+   local services_to_deploy=()
+   local service
+
+   for service in "${data_services[@]}"; do
+      service=$(echo "$service" | xargs)
+      [[ -z "$service" || "$service" == "none" ]] && continue
+      if [[ "$service" == "cai" && "$provision_caii" == "yes" ]]; then
+         echo "Skipping CAI in data services list; it is provisioned by CAII."
+         continue
+      fi
+      services_to_deploy+=("$service")
+   done
+
+   if [ "${#services_to_deploy[@]}" -eq 0 ]; then
+      echo "No Data Services Selected"
+      return 0
+   fi
+
+   resource_roles=("EnvironmentUser")
+   set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+
+   echo -e "\n               ==========================Deploying data services in parallel: ${services_to_deploy[*]} ==========================\n"
+
+   local pids=()
+   for service in "${services_to_deploy[@]}"; do
+      deploy_single_data_service "$service" &
+      pids+=($!)
+   done
+
+   wait_for_pids "${pids[@]}"
 }
 #--------------------------------------------------------------------------------------------------#
 disable_data_services() {
-   # Remove the brackets.
-   enabled_data_services="${enable_data_services//[/}"
-   enabled_data_services="${enabled_data_services//]/}"
-   # converting to lower case.
-   enabled_data_services=$(echo "$enabled_data_services" | tr '[:upper:]' '[:lower:]')
-   # Spliting into array.
-   IFS=',' read -ra data_services <<<"$enabled_data_services"
+   local selected_services="${enable_data_services//[/}"
+   selected_services="${selected_services//]/}"
+   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
 
-   # Deploying selected data services
+   IFS=',' read -ra data_services <<<"$selected_services"
+   local services_to_disable=()
+   local service
+
    for service in "${data_services[@]}"; do
-      if [[ "$service" == "cdw" ]]; then
-         disable_cdw
-      elif [[ "$service" == "cde" ]]; then
-         disable_cde
-      elif [[ "$service" == "cai" ]]; then
-         disable_cai
-      elif [[ "$service" == "cdf" ]]; then
-         echo "CDF"
-      else
-         echo "No Data Services were deployed"
-      fi
+      service=$(echo "$service" | xargs)
+      [[ -z "$service" || "$service" == "none" ]] && continue
+      services_to_disable+=("$service")
    done
+
+   if [ "${#services_to_disable[@]}" -eq 0 ]; then
+      echo "No Data Services were deployed"
+      return 0
+   fi
+
+   echo -e "\n               ==========================Disabling data services in parallel: ${services_to_disable[*]} ==========================\n"
+
+   local pids=()
+   for service in "${services_to_disable[@]}"; do
+      disable_single_data_service "$service" &
+      pids+=($!)
+   done
+
+   wait_for_pids "${pids[@]}"
 }
 #--------------------------------------------------------------------------------------------------#
