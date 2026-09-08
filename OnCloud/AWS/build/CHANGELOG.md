@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.3.1]
 
 ### Changed
-- Renamed CML data service to CAI (Cloudera AI) across pipeline, playbooks, and workspace naming.
+- Script output uses emoji, ANSI colors, section dividers, and a startup ASCII banner via shared `hol-output.sh` helpers for clearer Jenkins/console logs.
 - Renamed Model Registry references to AI Registry in CAII provisioning and teardown scripts.
 - CDW, CDE, CAI, and CDF data service playbooks now run in parallel when multiple services are selected.
 - CAII provisioning runs in parallel with other selected data services to reduce total provision time.
