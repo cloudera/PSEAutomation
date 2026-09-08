@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed Model Registry references to AI Registry in CAII provisioning and teardown scripts.
 
 ### Fixed
+- Jenkins failure emails now include parsed Ansible/Terraform fatal errors from provisioner logs.
+- Failure emails now summarize CDP/AWS quota errors such as SAML provider, IAM user/group, VPC, EIP, and S3 limits.
+- IAM role assignment in Jenkins treats `ALREADY_EXISTS` / already-assigned roles as success instead of failing the build.
+- CDW disable playbook now skips teardown gracefully when the cluster or virtual warehouses do not exist, instead of retrying indefinitely.
+- CDW enable playbook now treats existing virtual warehouses as success and fails only on real create errors.
 - AI Registry teardown now deletes registries in any status (not only `installation:finished`) and stops infinite retry loops with a bounded verification timeout.
 - Renamed `owner` env tag to `pse-owner` to avoid conflict with CDP account default tags.
 - Fixed rollback shell error (`[: -eq: unary operator expected`) in `destroy_cdp` and `destroy_hol_infra`.

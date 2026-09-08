@@ -319,71 +319,26 @@ ENV_TAGS:${envTags}
         stage('Check Logs for Failures') {
             steps {
                 script {
-                    // Check the container logs for failure strings
-                    sh "docker logs hol-provisioner-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log"
+                    sh "docker logs hol-provisioner-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log 2>&1 || true"
                     def logOutput = readFile("${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log")
-                    // def logOutput = """
-                    // 17:37:24  fatal: [localhost]: FAILED! => {"changed": false, "error": "{'base_error': ClientError('An error occurred: failed to activate the environment (cause: unable to create cluster initial state: state validation error (cause: public load balancer selected. worker subnets should be exactly 3. got: 5)) [request-id: ] (Status Code: 500; Error Code: UNKNOWN; Service: dw; Operation: createCluster; Request ID: cbbf3c45-fb32-488c-adff-a44ac8702490;)')", "msg": "Client request error", "violations": "failed to activate the environment (cause: unable to create cluster initial state: state validation error (cause: public load balancer selected. worker subnets should be exactly 3. got: 5)) [request-id: ]"}
-                    // 03:04:32  fatal: [localhost]: FAILED! => {"changed": true, "cmd": ["cdp", "ml", "create-workspace", "--environment-name", "cicdworkshop-cdp-env", "--workspace-name", "cicdworkshop-cml-ws", "--use-public-load-balancer", "--enable-model-metrics", "--no-disable-tls", "--enable-monitoring", "--static-subdomain", "cicdworksho-cml", "--provision-k8s-request", "{\"environmentName\": \"cicdworkshop-cdp-env\", \"instanceGroups\": [{\"name\": \"default_settings\", \"instanceType\": \"m5.2xlarge\", \"rootVolume\": {\"size\": 256}, \"autoscaling\": {\"minInstances\": 1, \"maxInstances\": 1, \"enabled\": true}}]}"], "delta": "0:00:01.558565", "end": "2025-03-27 21:34:32.531632", "msg": "non-zero return code", "rc": 255, "start": "2025-03-27 21:34:30.973067", "stderr": "\\nAn error occurred: INTERNAL: Failed to create workbench: the workbench with name cicdworkshop-cml-ws in environment cicdworkshop-cdp-env already exists. Can not retry create workflow for the workbench because it is in : state (Status Code: 500; Error Code: UNKNOWN; Service: ml; Operation: createWorkspace; Request ID: 082fcc7e-dcf6-4f57-99ab-12bdfcd994e4;)", "stderr_lines": ["", "An error occurred: INTERNAL: Failed to create workbench: the workbench with name cicdworkshop-cml-ws in environment cicdworkshop-cdp-env already exists. Can not retry create workflow for the workbench because it is in : state (Status Code: 500; Error Code: UNKNOWN; Service: ml; Operation: createWorkspace; Request ID: 082fcc7e-dcf6-4f57-99ab-12bdfcd994e4;)"], "stdout": "", "stdout_lines": []}
-                    // """
-                
-                    // Initialize a list to hold error messages
+
+                    def parserCandidates = [
+                        "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/provisionFailureParser.groovy",
+                        "${env.WORKSPACE}/jenkins/provisionFailureParser.groovy",
+                        "jenkins/provisionFailureParser.groovy"
+                    ]
+                    def parserPath = parserCandidates.find { fileExists(it) }
                     def errorMessages = []
 
-                    // Match multiple occurrences of error messages
-                    def fatalPattern = ~/fatal: .*?"(?:stderr|error)": ".*?(An error occurred: .*?)"/
-                    def matcher = fatalPattern.matcher(logOutput)
-
-                    // Define fatal patterns to ignore
-                    def ignoredFatalPatterns = [
-                        ~/fatal: detected dubious ownership in repository.*/
-                    ]
-
-                    // Check for specific failure messages
-                    if (logOutput.contains('Workspace Provisioning Got Failed.')) {
-                        errorMessages.add("CAI Data service provisioning failed.")
-                    } 
-                    if (logOutput.contains('Cluster Creation Got Failed.')) {
-                        errorMessages.add("CDW data service provisioning failed.")
-                    } 
-                    if (logOutput.contains('CDE Service Deletion Failed.')) {
-                        errorMessages.add("While destroying, CDE data service deletion failed.")
-                    }
-                    if (logOutput.contains('Workspace Deletion Got Failed.')) {
-                        errorMessages.add("While destroying, CAI data service deletion failed.")
-                    }
-                    if (logOutput.contains('Cluster deletion failed.')) {
-                        errorMessages.add("While destroying, CDW data service deletion failed.")
+                    if (parserPath) {
+                        def failureParser = load parserPath
+                        errorMessages = failureParser.extract(logOutput)
                     }
 
-                    // Check each line for 'fatal', skipping ignored patterns
-                    def lines = logOutput.readLines()
-                    for (line in lines) {
-                        if (line.toLowerCase().contains('fatal')) {
-                            def isIgnored = ignoredFatalPatterns.any { pattern -> line ==~ pattern }
-                            if (!isIgnored) {
-                                errorMessages.add("Job failed with error code 'fatal': ${line.trim()}")
-                            }
-                        }
-                    }
-
-                    // Extract structured fatal error messages from JSON blobs
-                    while (matcher.find()) {
-                        def errorMessage = matcher.group(1).replaceAll("\\\\n", "\n").trim() // Replace escaped \n with actual newline
-                        errorMessages.add("\nJob failed: 'FATAL': \n${errorMessage}")
-                    }
-
-                    // Print all extracted errors
                     if (!errorMessages.isEmpty()) {
                         currentBuild.result = 'FAILURE'
-                        println errorMessages.join("\n") // Separate multiple errors with a newline
-
-                        // Save error messages in build variable for use in post section
-                        currentBuild.description = errorMessages.join('\n')
-
-                        // Send an email with the error logs
-
-                        // Mark the build as failed with the error messages
+                        currentBuild.description = errorMessages.take(10).join('\n')
+                        println currentBuild.description
                     }
                 }
             }
@@ -396,61 +351,57 @@ ENV_TAGS:${envTags}
                 echo 'Assigning Resorce roles'
                 script{
                     sh '''
+                    set +e
+
                     CDP_WORKLOAD_USERNAME="${BUILD_USER_ID//_/.}"
-		            echo "CDP_WORKLOAD_USERNAME: $CDP_WORKLOAD_USERNAME"
-                    # Set your environment name
+                    echo "CDP_WORKLOAD_USERNAME: $CDP_WORKLOAD_USERNAME"
                     CDP_ENV_NAME="$(echo "$WORKSHOP_NAME" | tr '[:upper:]' '[:lower:]')-cdp-env"
                     echo "CDP_ENV_NAME: $CDP_ENV_NAME"
-                    # Get User CRN
-                    export CDP_USER_CRN=$(cdp iam list-users --max-items 10000 | jq --arg CDP_WORKLOAD_USERNAME "$CDP_WORKLOAD_USERNAME" \'.users[] | select(.workloadUsername==$CDP_WORKLOAD_USERNAME).userId\'| tr -d \'"\')
-                    
-                    # Get Environment CRN
-                    export CDP_ENV_CRN=$(cdp environments describe-environment --environment-name ${CDP_ENV_NAME} | jq -r .environment.crn)
-                    
+
+                    export CDP_USER_CRN=$(cdp iam list-users --max-items 10000 | jq --arg CDP_WORKLOAD_USERNAME "$CDP_WORKLOAD_USERNAME" '.users[] | select(.workloadUsername==$CDP_WORKLOAD_USERNAME).userId' | tr -d '"')
+                    export CDP_ENV_CRN=$(cdp environments describe-environment --environment-name "${CDP_ENV_NAME}" | jq -r .environment.crn)
                     export RESOURCE_ROLES=(EnvironmentAdmin Owner)
-			
-                    # Function: Get Resource Role CRN from its name
+
                     get_crn_resource_role () {
-                    local role_name="$1"
-                    cdp iam list-resource-roles | jq -r \
-                        --arg role "$role_name" \
-                        '.resourceRoles[] | select(.crn | endswith(":" + $role)) | .crn'
+                        local role_name="$1"
+                        cdp iam list-resource-roles | jq -r \
+                            --arg role "$role_name" \
+                            '.resourceRoles[] | select(.crn | endswith(":" + $role)) | .crn'
                     }
-                    
-                    # Assign resource roles to the user
+
+                    assign_failed=0
                     for role_name in "${RESOURCE_ROLES[@]}"; do
-                    role_crn=$(get_crn_resource_role "$role_name")
-                    
-                    if [ -z "$role_crn" ]; then
-                        echo "❌ Could not find CRN for role '$role_name'. Skipping..."
-                        continue
-                    fi
-                    
-                    echo "➡️  Assigning role '$role_name' to user '${CDP_USER_CRN}'..."
+                        role_crn=$(get_crn_resource_role "$role_name")
 
-                    # Temporarily disable the "exit on error" behavior
-		    set +e
-                    output=$(cdp iam assign-user-resource-role \
-                        --user "$CDP_USER_CRN" \
-                        --resource-role-crn "$role_crn" \
-                        --resource-crn "$CDP_ENV_CRN" 2>&1)
-                    exit_status=$?
-		    # Re-enable "exit on error" for the rest of the script
-		    set -e
-		    echo "check_output"
+                        if [ -z "$role_crn" ]; then
+                            echo "Could not find CRN for role '$role_name'. Skipping..."
+                            continue
+                        fi
 
-                    if [ $exit_status -eq 0 ]; then
-                        echo "✅ Role '$role_name' assigned successfully."
-                    elif echo "$output" | grep -q "ALREADY_EXISTS"; then
-                        echo "ℹ️  Role '$role_name' is already assigned. Skipping..."
-                    else
-                        echo "❌ Error assigning role '$role_name':"
-                    fi
+                        echo "Assigning role '$role_name' to user '${CDP_USER_CRN}'..."
+                        output=$(cdp iam assign-user-resource-role \
+                            --user "$CDP_USER_CRN" \
+                            --resource-role-crn "$role_crn" \
+                            --resource-crn "$CDP_ENV_CRN" 2>&1)
+                        exit_status=$?
+
+                        if [ "$exit_status" -eq 0 ]; then
+                            echo "Role '$role_name' assigned successfully."
+                        elif echo "$output" | grep -qiE 'ALREADY_EXISTS|already assigned'; then
+                            echo "Role '$role_name' is already assigned. Skipping..."
+                        else
+                            echo "Error assigning role '$role_name':"
+                            echo "$output"
+                            assign_failed=1
+                        fi
                     done
-                    
-                    # Synchronize CDP user data
-                    cdp environments sync-all-users --environment-name "$CDP_ENV_NAME"
-                    cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME"
+
+                    cdp environments sync-all-users --environment-name "$CDP_ENV_NAME" || true
+                    cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" || true
+
+                    if [ "$assign_failed" -ne 0 ]; then
+                        exit 1
+                    fi
                     '''
                 }
             }
@@ -561,7 +512,29 @@ ENV_TAGS:${envTags}
 
         failure {
             script {
-                def errorLog = currentBuild.description ?: "Unknown error occurred."
+                def errorLog = currentBuild.description ?: ""
+                def logFile = "${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log"
+
+                if ((!errorLog || errorLog == "Unknown error occurred.") && fileExists(logFile)) {
+                    def parserCandidates = [
+                        "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/provisionFailureParser.groovy",
+                        "${env.WORKSPACE}/jenkins/provisionFailureParser.groovy",
+                        "jenkins/provisionFailureParser.groovy"
+                    ]
+                    def parserPath = parserCandidates.find { fileExists(it) }
+                    if (parserPath) {
+                        def failureParser = load parserPath
+                        def parsedErrors = failureParser.extract(readFile(logFile))
+                        if (!parsedErrors.isEmpty()) {
+                            errorLog = parsedErrors.take(10).join('\n')
+                            currentBuild.description = errorLog
+                        }
+                    }
+                }
+
+                if (!errorLog) {
+                    errorLog = "Unknown error occurred."
+                }
 
                 env.WORKSHOP_NAME_LOWER = params.WORKSHOP_NAME.toLowerCase()
                 if (params.ACTION == 'provision') {

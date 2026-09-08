@@ -95,8 +95,26 @@
           with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
           loop_control:
             pause: 30
+          register: hive_vw_create_results
           when: not (existing_vws.stdout_lines | select('match', workshop_name ~ '-hive-' ~ item) | list | length > 0)
           ignore_errors: true
+
+        - name: Fail on unexpected hive virtual warehouse errors
+          ansible.builtin.fail:
+            msg: "Failed to create hive virtual warehouse {{ workshop_name }}-hive-{{ item.item }}: {{ item.stderr | default(item.msg) }}"
+          loop: "{{ hive_vw_create_results.results | default([]) }}"
+          when:
+            - not item.skipped | default(false)
+            - item.rc is defined
+            - item.rc != 0
+            - "'already exists' not in (item.stderr | default('') | lower)"
+            - "'ALREADY_EXISTS' not in (item.stderr | default(''))"
+
+        - name: Log skipped hive virtual warehouse deployments
+          ansible.builtin.debug:
+            msg: "Hive virtual warehouse {{ workshop_name }}-hive-{{ item }} already exists. Skipping creation."
+          with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
+          when: (existing_vws.stdout_lines | select('match', workshop_name ~ '-hive-' ~ item) | list | length > 0)
 
     - name: Set facts for impala virtual warehouse
       block:
@@ -127,8 +145,47 @@
           with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
           loop_control:
             pause: 30
+          register: impala_vw_create_results
           when: not (existing_vws.stdout_lines | select('match', workshop_name ~ '-impala-' ~ item) | list | length > 0)
           ignore_errors: true
+
+        - name: Fail on unexpected impala virtual warehouse errors
+          ansible.builtin.fail:
+            msg: "Failed to create impala virtual warehouse {{ workshop_name }}-impala-{{ item.item }}: {{ item.stderr | default(item.msg) }}"
+          loop: "{{ impala_vw_create_results.results | default([]) }}"
+          when:
+            - not item.skipped | default(false)
+            - item.rc is defined
+            - item.rc != 0
+            - "'already exists' not in (item.stderr | default('') | lower)"
+            - "'ALREADY_EXISTS' not in (item.stderr | default(''))"
+
+        - name: Log skipped impala virtual warehouse deployments
+          ansible.builtin.debug:
+            msg: "Impala virtual warehouse {{ workshop_name }}-impala-{{ item }} already exists. Skipping creation."
+          with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
+          when: (existing_vws.stdout_lines | select('match', workshop_name ~ '-impala-' ~ item) | list | length > 0)
+
+    - name: Refresh virtual warehouse list after deployment
+      ansible.builtin.shell: >
+        cdp dw list-vws --cluster-id "{{ dwcluster['cluster']['id'] }}" | jq -r '.vws[]?.name // empty'
+      register: final_vws
+      changed_when: false
+      failed_when: false
+
+    - name: Validate expected hive virtual warehouses exist
+      ansible.builtin.assert:
+        that:
+          - (final_vws.stdout_lines | select('match', workshop_name ~ '-hive-' ~ item) | list | length) > 0
+        fail_msg: "Hive virtual warehouse {{ workshop_name }}-hive-{{ item }} does not exist after deployment."
+      with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
+
+    - name: Validate expected impala virtual warehouses exist
+      ansible.builtin.assert:
+        that:
+          - (final_vws.stdout_lines | select('match', workshop_name ~ '-impala-' ~ item) | list | length) > 0
+        fail_msg: "Impala virtual warehouse {{ workshop_name }}-impala-{{ item }} does not exist after deployment."
+      with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
 
     - name: List existing data visualizations
       ansible.builtin.shell: >
@@ -152,5 +209,9 @@
         --name "{{ workshop_name }}-data-viz" \
         --resource-template "{{ cdvc_size }}" \
         --config adminGroups="{{ workshop_name }}-aw-cdp-user-group"
+      register: data_viz_create
       when: not data_viz_exists
-      ignore_errors: true
+      failed_when:
+        - data_viz_create.rc != 0
+        - "'already exists' not in (data_viz_create.stderr | default('') | lower)"
+        - "'ALREADY_EXISTS' not in (data_viz_create.stderr | default(''))"
