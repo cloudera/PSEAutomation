@@ -788,12 +788,8 @@ EOF
       -var-file="${TFVARS_FILE}"
    )
 
-   hol_subsection "Provisioning CDP environment (phase 1)" "☁️"
-   terraform apply --auto-approve \
-      -target=module.cdp_aws_prereqs \
-      -target='module.cdp_deploy.module.cdp_on_aws[0].cdp_iam_group.cdp_groups' \
-      -target='module.cdp_deploy.module.cdp_on_aws[0].cdp_environments_aws_environment.cdp_env' \
-      "${cdp_tf_apply_args[@]}"
+   hol_subsection "Running Terraform for CDP environment & datalake" "☁️"
+   terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
 
    if [ $? -ne 0 ]; then
       return 1
@@ -801,10 +797,7 @@ EOF
 
    assign_environment_base_roles
 
-   hol_subsection "Provisioning CDP datalake (phase 2)" "☁️"
-   terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
-
-   cdp_provision_status=$?
+   cdp_provision_status=0
    if [ $cdp_provision_status -eq 0 ]; then
       export ENV_PUBLIC_SUBNETS=$(terraform output -json aws_public_subnet_ids)
       export ENV_PRIVATE_SUBNETS=$(terraform output -json aws_private_subnet_ids)

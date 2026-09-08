@@ -322,6 +322,10 @@ sh """
                 script {
                     sh "docker logs hol-provisioner-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log 2>&1 || true"
                     def logOutput = readFile("${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log")
+                    def dockerExit = sh(
+                        script: "docker inspect hol-provisioner-${BUILD_NUMBER} --format='{{.State.ExitCode}}' 2>/dev/null || echo 1",
+                        returnStdout: true
+                    ).trim()
 
                     def parserCandidates = [
                         "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/provisionFailureParser.groovy",
@@ -336,7 +340,10 @@ sh """
                         errorMessages = failureParser.extract(logOutput)
                     }
 
-                    if (!errorMessages.isEmpty()) {
+                    if (dockerExit != '0') {
+                        if (errorMessages.isEmpty()) {
+                            errorMessages = ["Docker provisioner exited with code ${dockerExit}"]
+                        }
                         currentBuild.result = 'FAILURE'
                         currentBuild.description = errorMessages.take(10).join('\n')
                         println currentBuild.description
@@ -349,56 +356,71 @@ sh """
             expression { params.ACTION == 'provision' }
             }
             steps {
-                echo 'Assigning Resorce roles'
                 script{
                     sh '''
                     set +e
+                    set +x
 
                     CDP_WORKLOAD_USERNAME="${BUILD_USER_ID//_/.}"
-                    echo "CDP_WORKLOAD_USERNAME: $CDP_WORKLOAD_USERNAME"
                     CDP_ENV_NAME="$(echo "$WORKSHOP_NAME" | tr '[:upper:]' '[:lower:]')-cdp-env"
-                    echo "CDP_ENV_NAME: $CDP_ENV_NAME"
+                    echo "Assigning environment roles for ${CDP_WORKLOAD_USERNAME} on ${CDP_ENV_NAME}"
 
-                    export CDP_USER_CRN=$(cdp iam list-users --max-items 10000 | jq --arg CDP_WORKLOAD_USERNAME "$CDP_WORKLOAD_USERNAME" '.users[] | select(.workloadUsername==$CDP_WORKLOAD_USERNAME).userId' | tr -d '"')
-                    export CDP_ENV_CRN=$(cdp environments describe-environment --environment-name "${CDP_ENV_NAME}" | jq -r .environment.crn)
-                    export RESOURCE_ROLES=(EnvironmentAdmin Owner)
+                    CDP_USER_CRN=$(cdp iam list-users --max-items 10000 \
+                        | jq -r --arg u "$CDP_WORKLOAD_USERNAME" '.users[] | select(.workloadUsername==$u).userId')
+                    CDP_ENV_CRN=$(cdp environments describe-environment --environment-name "$CDP_ENV_NAME" | jq -r .environment.crn)
 
-                    get_crn_resource_role () {
-                        local role_name="$1"
+                    if [ -z "$CDP_USER_CRN" ] || [ "$CDP_USER_CRN" = "null" ]; then
+                        echo "WARN: CDP user not found for '$CDP_WORKLOAD_USERNAME' — skipping role assignment."
+                        exit 0
+                    fi
+                    if [ -z "$CDP_ENV_CRN" ] || [ "$CDP_ENV_CRN" = "null" ]; then
+                        echo "WARN: Environment '$CDP_ENV_NAME' not found — skipping role assignment."
+                        exit 0
+                    fi
+
+                    get_crn_resource_role() {
                         cdp iam list-resource-roles | jq -r \
-                            --arg role "$role_name" \
+                            --arg role "$1" \
                             '.resourceRoles[] | select(.crn | endswith(":" + $role)) | .crn'
                     }
 
-                    assign_failed=0
-                    for role_name in "${RESOURCE_ROLES[@]}"; do
-                        role_crn=$(get_crn_resource_role "$role_name")
+                    user_has_resource_role() {
+                        cdp iam list-user-assigned-resource-roles --user "$CDP_USER_CRN" 2>/dev/null \
+                            | jq -e --arg role ":$1" --arg env "$CDP_ENV_CRN" \
+                            '.resourceRoles[]? | select(.crn | endswith($role)) | select(.resourceCrn == $env)' >/dev/null
+                    }
 
-                        if [ -z "$role_crn" ]; then
-                            echo "Could not find CRN for role '$role_name'. Skipping..."
+                    assign_failed=0
+                    for role_name in EnvironmentAdmin Owner; do
+                        if user_has_resource_role "$role_name"; then
+                            echo "  ✓ ${role_name} (already assigned)"
                             continue
                         fi
 
-                        echo "Assigning role '$role_name' to user '${CDP_USER_CRN}'..."
-                        output=$(cdp iam assign-user-resource-role \
+                        role_crn=$(get_crn_resource_role "$role_name")
+                        if [ -z "$role_crn" ]; then
+                            echo "  WARN: Role '${role_name}' not found — skipping"
+                            continue
+                        fi
+
+                        err_file=$(mktemp)
+                        if cdp iam assign-user-resource-role \
                             --user "$CDP_USER_CRN" \
                             --resource-role-crn "$role_crn" \
-                            --resource-crn "$CDP_ENV_CRN" 2>&1)
-                        exit_status=$?
-
-                        if [ "$exit_status" -eq 0 ]; then
-                            echo "Role '$role_name' assigned successfully."
-                        elif echo "$output" | grep -qiE 'ALREADY_EXISTS|already assigned'; then
-                            echo "Role '$role_name' is already assigned. Skipping..."
+                            --resource-crn "$CDP_ENV_CRN" >"$err_file" 2>&1; then
+                            echo "  ✓ ${role_name} assigned"
+                        elif grep -qiE 'ALREADY_EXISTS|already assigned' "$err_file"; then
+                            echo "  ✓ ${role_name} (already assigned)"
                         else
-                            echo "Error assigning role '$role_name':"
-                            echo "$output"
+                            echo "  ✗ Failed to assign ${role_name}:"
+                            sed 's/^/    /' "$err_file"
                             assign_failed=1
                         fi
+                        rm -f "$err_file"
                     done
 
-                    cdp environments sync-all-users --environment-name "$CDP_ENV_NAME" || true
-                    cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" || true
+                    cdp environments sync-all-users --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
+                    cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
 
                     if [ "$assign_failed" -ne 0 ]; then
                         exit 1

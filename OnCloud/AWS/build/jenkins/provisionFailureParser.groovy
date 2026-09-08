@@ -18,7 +18,10 @@ def extract(String logOutput) {
         return lower.contains('already_exists') ||
             lower.contains('already assigned') ||
             lower.contains('is already assigned') ||
-            (lower.contains('assignuserresourcerole') && lower.contains('already'))
+            (lower.contains('assignuserresourcerole') && lower.contains('already')) ||
+            (lower.contains('assigngroupresourcerole') && lower.contains('already')) ||
+            (lower.contains('an error occurred:') && lower.contains('resource role') &&
+                (lower.contains('already') || lower.contains('already_exists')))
     }
 
     def summarizeProvisionerError = { String message ->
