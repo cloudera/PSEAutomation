@@ -57,7 +57,7 @@ pipeline {
                         string(name: 'NUMBER_OF_WORKSHOP_USERS', value: '1'),
                         string(name: 'WORKSHOP_USER_PREFIX', value: "CICD${env.BUILD_NUMBER}"),
                         password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', value: 'changeme'),
-                        extendedChoice(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CDW,CAI'),
+                        extendedChoice(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CDW,CAI,CDF'),
                         string(name: 'CDW_VRTL_WAREHOUSE_SIZE', value: 'xsmall'),
                         string(name: 'CDW_DATAVIZ_SIZE', value: 'viz-default'),
                         string(name: 'CDE_SPARK_VERSION', value: 'SPARK3'),
@@ -72,6 +72,10 @@ pipeline {
                         string(name: 'CAI_GPU_INSTANCE_TYPE', value: 'g4dn.xlarge'),
                         string(name: 'CAI_MIN_GPU_INSTANCES', value: '1'),
                         string(name: 'CAI_MAX_GPU_INSTANCES', value: '1'),
+                        string(name: 'CDF_INSTANCE_TYPE', value: 'm5.2xlarge'),
+                        string(name: 'CDF_MIN_NODES', value: '3'),
+                        string(name: 'CDF_MAX_NODES', value: '3'),
+                        booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'ACTION', value: 'provision'),  // Set action for deploy
                         string(name: 'IMAGE_TAG', value: 'testmain')        
                     ]
@@ -136,7 +140,7 @@ pipeline {
                         string(name: 'NUMBER_OF_WORKSHOP_USERS', value: '1'),
                         string(name: 'WORKSHOP_USER_PREFIX', value: "CICD${env.BUILD_NUMBER}"),
                         password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', value: 'changeme'),
-                        extendedChoice(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CAI,CDW'),
+                        extendedChoice(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CAI,CDW,CDF'),
                         string(name: 'CDW_VRTL_WAREHOUSE_SIZE', value: 'xsmall'),
                         string(name: 'CDW_DATAVIZ_SIZE', value: 'viz-default'),
                         string(name: 'CDE_SPARK_VERSION', value: 'SPARK3'),
@@ -151,6 +155,10 @@ pipeline {
                         string(name: 'CAI_GPU_INSTANCE_TYPE', value: 'g4dn.xlarge'),
                         string(name: 'CAI_MIN_GPU_INSTANCES', value: '1'),
                         string(name: 'CAI_MAX_GPU_INSTANCES', value: '1'),
+                        string(name: 'CDF_INSTANCE_TYPE', value: 'm5.2xlarge'),
+                        string(name: 'CDF_MIN_NODES', value: '3'),
+                        string(name: 'CDF_MAX_NODES', value: '3'),
+                        booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
                         string(name: 'IMAGE_TAG', value: 'testmain')        
                     ]
