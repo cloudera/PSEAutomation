@@ -1072,6 +1072,10 @@ update_cdp_user_group() {
 destroy_cdp() {
    USER_NAMESPACE=$workshop_name
    hol_banner "Destroying CDP environment infrastructure" "🗑️"
+   if [[ ! -d "/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws" ]]; then
+      hol_skip "Terraform state not found — skipping CDP terraform destroy"
+      return 0
+   fi
    cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws
    # Convert comma-separated IPs into properly quoted Terraform list elements
    cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
@@ -1199,10 +1203,11 @@ cdp_idp_user_teardown() {
    USER_NAMESPACE=$workshop_name
    hol_subsection "Deleting IDP users & group" "👥"
    
-   if [[ -f /userconfig/keycloak_ip ]]; then
+   local kc_ansible_dir="/userconfig/.$USER_NAMESPACE/keycloak_ansible_config"
+   if [[ -f /userconfig/keycloak_ip && -d "$kc_ansible_dir" && -f "$kc_ansible_dir/keycloak_hol_user_teardown.yml" ]]; then
       KEYCLOAK_SERVER_IP=$(cat /userconfig/keycloak_ip)
       hol_info "Keycloak server IP: $KEYCLOAK_SERVER_IP"
-      cd /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
+      cd "$kc_ansible_dir"
       ansible-playbook keycloak_hol_user_teardown.yml --extra-vars \
          "keycloak__admin_username=admin \
          keycloak__admin_password=$keycloak__admin_password \
@@ -1211,11 +1216,15 @@ cdp_idp_user_teardown() {
          hol_session_name=$workshop_name-aw-cdp-user-group"
       sleep 10
    else
-      hol_skip "Keycloak IP file not found — assuming Keycloak already destroyed"
+      hol_skip "Keycloak IDP not configured for this workshop — skipping user teardown playbook"
    fi
 
    hol_subsection "Removing IDP from CDP tenant" "🔗"
-   cdp iam delete-saml-provider --saml-provider-name $workshop_name
+   if cdp iam delete-saml-provider --saml-provider-name "$workshop_name" >/dev/null 2>&1; then
+      hol_ok "Removed SAML provider $workshop_name"
+   else
+      hol_skip "SAML provider $workshop_name not found (already removed)"
+   fi
 }
 #--------------------------------------------------------------------------------------------------#
 # Function to count elements in a JSON array variable
@@ -1304,27 +1313,52 @@ disable_cai() {
 }
 #--------------------------------------------------------------------------------------------------#
 deploy_cdf() {
+   if [[ -z "${ENV_PUBLIC_SUBNETS}" || -z "${ENV_PRIVATE_SUBNETS}" ]]; then
+      hol_warn "ENV_PUBLIC_SUBNETS/ENV_PRIVATE_SUBNETS are not set — cannot deploy CDF"
+      return 1
+   fi
+
    local extra_vars_file="/tmp/cdf_extra_vars_${workshop_name}.json"
 
-   jq -n \
-      --arg cdp_env_name "${workshop_name}-cdp-env" \
-      --arg workshop_name "$workshop_name" \
-      --arg instance_type "${cdf_instance_type}" \
-      --argjson minimum_nodes "${cdf_min_nodes}" \
-      --argjson maximum_nodes "${cdf_max_nodes}" \
-      --arg use_public_load_balancer "${cdf_use_public_lb}" \
-      --argjson env_lb_public_subnet "${ENV_PUBLIC_SUBNETS}" \
-      --argjson env_wrkr_private_subnet "${ENV_PRIVATE_SUBNETS}" \
-      '{
-        cdp_env_name: $cdp_env_name,
-        workshop_name: $workshop_name,
-        instance_type: $instance_type,
-        minimum_nodes: $minimum_nodes,
-        maximum_nodes: $maximum_nodes,
-        use_public_load_balancer: ($use_public_load_balancer == "true" or $use_public_load_balancer == "yes"),
-        env_lb_public_subnet: $env_lb_public_subnet,
-        env_wrkr_private_subnet: $env_wrkr_private_subnet
-      }' > "$extra_vars_file"
+   if [[ -n "${cdf_instance_type}" ]]; then
+      jq -n \
+         --arg cdp_env_name "${workshop_name}-cdp-env" \
+         --arg workshop_name "$workshop_name" \
+         --arg instance_type "${cdf_instance_type}" \
+         --argjson minimum_nodes "${cdf_min_nodes}" \
+         --argjson maximum_nodes "${cdf_max_nodes}" \
+         --arg use_public_load_balancer "${cdf_use_public_lb}" \
+         --argjson env_lb_public_subnet "${ENV_PUBLIC_SUBNETS}" \
+         --argjson env_wrkr_private_subnet "${ENV_PRIVATE_SUBNETS}" \
+         '{
+           cdp_env_name: $cdp_env_name,
+           workshop_name: $workshop_name,
+           instance_type: $instance_type,
+           minimum_nodes: $minimum_nodes,
+           maximum_nodes: $maximum_nodes,
+           use_public_load_balancer: ($use_public_load_balancer == "true" or $use_public_load_balancer == "yes"),
+           env_lb_public_subnet: $env_lb_public_subnet,
+           env_wrkr_private_subnet: $env_wrkr_private_subnet
+         }' > "$extra_vars_file"
+   else
+      jq -n \
+         --arg cdp_env_name "${workshop_name}-cdp-env" \
+         --arg workshop_name "$workshop_name" \
+         --argjson minimum_nodes "${cdf_min_nodes}" \
+         --argjson maximum_nodes "${cdf_max_nodes}" \
+         --arg use_public_load_balancer "${cdf_use_public_lb}" \
+         --argjson env_lb_public_subnet "${ENV_PUBLIC_SUBNETS}" \
+         --argjson env_wrkr_private_subnet "${ENV_PRIVATE_SUBNETS}" \
+         '{
+           cdp_env_name: $cdp_env_name,
+           workshop_name: $workshop_name,
+           minimum_nodes: $minimum_nodes,
+           maximum_nodes: $maximum_nodes,
+           use_public_load_balancer: ($use_public_load_balancer == "true" or $use_public_load_balancer == "yes"),
+           env_lb_public_subnet: $env_lb_public_subnet,
+           env_wrkr_private_subnet: $env_wrkr_private_subnet
+         }' > "$extra_vars_file"
+   fi
 
    ansible-playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}"
 }
@@ -1459,7 +1493,7 @@ deploy_single_data_service() {
       DEFAULT_CDE_INITIAL_INSTANCES=10
       DEFAULT_CDE_MIN_INSTANCES=10
       DEFAULT_CDE_MAX_INSTANCES=40
-      DEFAULT_CDE_SPARK_VERSION="SPARK3"
+      DEFAULT_CDE_SPARK_VERSION="AUTO"
       DEFAULT_CDE_VC_TIER="CORE"
       cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
       cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
@@ -1514,7 +1548,7 @@ deploy_single_data_service() {
       ;;
    cdf)
       hol_init_service "cdf"
-      DEFAULT_CDF_INSTANCE_TYPE="m5.2xlarge"
+      DEFAULT_CDF_INSTANCE_TYPE=""
       DEFAULT_CDF_MIN_NODES=3
       DEFAULT_CDF_MAX_NODES=10
       DEFAULT_CDF_USE_PUBLIC_LB="true"
