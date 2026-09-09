@@ -72,6 +72,37 @@ class CallbackModule(CallbackBase):
             return message
         return u"[%s] %s" % (tag, message)
 
+    def _hol_short_item_label(self, item):
+        if not isinstance(item, dict):
+            return None
+        if 'name' in item and ('vw_type' in item or 'suffix' in item):
+            return item['name']
+        nested = item.get('item')
+        if isinstance(nested, dict):
+            if 'name' in nested:
+                return nested['name']
+            inner = nested.get('item')
+            if isinstance(inner, dict) and 'name' in inner:
+                return inner['name']
+        if 'ansible_job_id' in item:
+            if isinstance(nested, dict) and 'name' in nested:
+                return nested['name']
+            return item['ansible_job_id']
+        if 'name' in item:
+            return item['name']
+        return None
+
+    def _get_item_label(self, result):
+        if isinstance(result, dict) and 'item' in result:
+            label = self._hol_short_item_label(result['item'])
+            if label:
+                return label
+        elif isinstance(result, dict):
+            label = self._hol_short_item_label(result)
+            if label:
+                return label
+        return super(CallbackModule, self)._get_item_label(result)
+
     def set_options(self, task_keys=None, var_options=None, direct=None):
 
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
@@ -408,14 +439,19 @@ class CallbackModule(CallbackBase):
             self._display.banner("DRY RUN")
 
     def v2_runner_retry(self, result):
+        if self._display.verbosity < 2:
+            return
         task_name = result.task_name or result._task
         host_label = self.host_label(result)
-        msg = "Processing Request!! Please Wait: [%s]: %s (%d retries left)." % (host_label, task_name, result._result['retries'] - result._result['attempts'])
+        retries_left = result._result['retries'] - result._result['attempts']
+        msg = "WAIT [%s]: %s (%d retries left)" % (host_label, task_name, retries_left)
         if self._run_is_verbose(result, verbosity=2):
-            msg += "Result was: %s" % self._dump_results(result._result)
-        self._display.display(msg, color=C.COLOR_DEBUG)
+            msg += " => %s" % self._dump_results(result._result)
+        self._display.display(self._hol_tag_prefix(msg), color=C.COLOR_DEBUG)
 
     def v2_runner_on_async_poll(self, result):
+        if self._display.verbosity < 2:
+            return
         host = result._host.get_name()
         jid = result._result.get('ansible_job_id')
         started = result._result.get('started')
@@ -426,11 +462,15 @@ class CallbackModule(CallbackBase):
         )
 
     def v2_runner_on_async_ok(self, result):
+        if self._display.verbosity < 2:
+            return
         host = result._host.get_name()
         jid = result._result.get('ansible_job_id')
-        self._display.display("ASYNC OK on %s: jid=%s" % (host, jid), color=C.COLOR_DEBUG)
+        self._display.display(self._hol_tag_prefix("ASYNC OK on %s: jid=%s" % (host, jid)), color=C.COLOR_DEBUG)
 
     def v2_runner_on_async_failed(self, result):
+        if self._display.verbosity < 2:
+            return
         host = result._host.get_name()
 
         # Attempt to get the async job ID. If the job does not finish before the
@@ -438,7 +478,7 @@ class CallbackModule(CallbackBase):
         jid = result._result.get('ansible_job_id')
         if not jid and 'async_result' in result._result:
             jid = result._result['async_result'].get('ansible_job_id')
-        self._display.display("ASYNC FAILED on %s: jid=%s" % (host, jid), color=C.COLOR_DEBUG)
+        self._display.display(self._hol_tag_prefix("ASYNC FAILED on %s: jid=%s" % (host, jid)), color=C.COLOR_DEBUG)
 
     def v2_playbook_on_notify(self, handler, host):
         if self._display.verbosity > 1:
