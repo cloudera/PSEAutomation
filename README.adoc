@@ -51,6 +51,15 @@ This folder contains automation scripts, templates, and configurations for deplo
 - AWS infrastructure provisioning using Infrastructure-as-Code.  
 - Build scripts for reproducible deployments.  
 
+=== OnCloud/Azure/build
+This folder contains automation scripts, templates, and configurations for deploying Cloudera components on **Azure cloud environments**.
+
+**Key capabilities:**
+
+- Azure infrastructure provisioning using Infrastructure-as-Code.
+- Containerized HoL provisioner with support for CAI, CDW, CDE, CDF, and optional Keycloak.
+- Jenkins pipelines and Ansible playbooks mirrored from the AWS automation.
+
 === Participant_amps
 This folder contains **Selenium based automation** tailored for CAI project creation and deploying AMPs for workshop participants.  
 
