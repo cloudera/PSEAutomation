@@ -15,37 +15,28 @@ provider "azurerm" {
   # profile = "default"
 }
 
-resource "azurerm_resource_group" "keycloak" {
-  name     = "${var.workshop_name}-keyc-rg"
-  location = var.azure_region
+data "azurerm_resource_group" "cdp" {
+  name = var.resource_group_name
 }
 
-resource "azurerm_virtual_network" "keycloak" {
-  name                = "${var.workshop_name}-keyc-vnet"
-  address_space       = ["10.30.0.0/16"]
-  location            = azurerm_resource_group.keycloak.location
-  resource_group_name = azurerm_resource_group.keycloak.name
-}
-
-resource "azurerm_subnet" "keycloak" {
-  name                 = "${var.workshop_name}-keyc-subnet"
-  resource_group_name  = azurerm_resource_group.keycloak.name
-  virtual_network_name = azurerm_virtual_network.keycloak.name
-  address_prefixes     = ["10.30.1.0/24"]
+data "azurerm_subnet" "gateway" {
+  name                 = var.subnet_name
+  virtual_network_name = var.vnet_name
+  resource_group_name  = var.network_resource_group_name
 }
 
 resource "azurerm_public_ip" "keycloak" {
   name                = "${var.workshop_name}-keyc-pip"
-  location            = azurerm_resource_group.keycloak.location
-  resource_group_name = azurerm_resource_group.keycloak.name
+  location            = data.azurerm_resource_group.cdp.location
+  resource_group_name = data.azurerm_resource_group.cdp.name
   allocation_method   = "Static"
   sku                 = "Standard"
 }
 
 resource "azurerm_network_security_group" "keycloak" {
   name                = var.kc_security_group
-  location            = azurerm_resource_group.keycloak.location
-  resource_group_name = azurerm_resource_group.keycloak.name
+  location            = data.azurerm_resource_group.cdp.location
+  resource_group_name = data.azurerm_resource_group.cdp.name
 
   security_rule {
     name                       = "ssh"
@@ -98,12 +89,12 @@ resource "azurerm_network_security_group" "keycloak" {
 
 resource "azurerm_network_interface" "keycloak" {
   name                = "${var.workshop_name}-keyc-nic"
-  location            = azurerm_resource_group.keycloak.location
-  resource_group_name = azurerm_resource_group.keycloak.name
+  location            = data.azurerm_resource_group.cdp.location
+  resource_group_name = data.azurerm_resource_group.cdp.name
 
   ip_configuration {
     name                          = "internal"
-    subnet_id                     = azurerm_subnet.keycloak.id
+    subnet_id                     = data.azurerm_subnet.gateway.id
     private_ip_address_allocation = "Dynamic"
     public_ip_address_id          = azurerm_public_ip.keycloak.id
   }
@@ -116,8 +107,8 @@ resource "azurerm_network_interface_security_group_association" "keycloak" {
 
 resource "azurerm_linux_virtual_machine" "keycloak" {
   name                = "${var.workshop_name}-keyc"
-  location            = azurerm_resource_group.keycloak.location
-  resource_group_name = azurerm_resource_group.keycloak.name
+  location            = data.azurerm_resource_group.cdp.location
+  resource_group_name = data.azurerm_resource_group.cdp.name
   size                = var.instance_type
   admin_username      = "ubuntu"
 

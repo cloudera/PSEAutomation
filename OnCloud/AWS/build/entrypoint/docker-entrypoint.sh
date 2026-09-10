@@ -1,6 +1,7 @@
 #!/bin/bash
 # ***************************************************************************************************#
 source /usr/local/bin/hol-functions.sh
+configure_git_for_userconfig
 # Setting required path and variables.
 USER_CONFIG_FILE="/userconfig/configfile"
 TERRAFORM_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/cdp-kc-config/keycloak_terraform_config

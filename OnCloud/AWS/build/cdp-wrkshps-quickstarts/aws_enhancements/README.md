@@ -1,6 +1,12 @@
 # AWS Enhancements
 
-This directory contains AWS-specific enhancements to improve and extend your infrastructure. Currently, it includes modules for S3 bucket enhancements, such as applying lifecycle policies to automatically delete log objects under the `logs/` prefix after **3 days**.
+Post-provision enhancements applied after the CDP environment is created.
 
-Additional AWS service enhancements may be added in the future.
+## s3_enhancements
+
+Applies a lifecycle policy on the CDP log bucket so objects under `logs/` are removed after **3 days**.
+
+## dladmin_log_policy
+
+Attaches the CDP `${env_prefix}-logs-policy` IAM policy to the `${env_prefix}-dladmin-role`. This grants `s3:PutObject` on the logs location, which the datalake admin role does not receive from the default quickstart role attachments alone.
 

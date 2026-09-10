@@ -16,6 +16,7 @@
         msg:
           - "cdp_env_name: {{ cdp_env_name }}"
           - "azure_subnet_name: {{ azure_subnet_name }}"
+          - "cdw_managed_identity_id: {{ cdw_managed_identity_id }}"
           - "vw_size: {{ vw_size }}"
           - "cdvc_size: {{ cdvc_size }}"
 
@@ -24,6 +25,7 @@
         env: "{{ cdp_env_name }}"
         azure:
           subnet: "{{ azure_subnet_name }}"
+          managed_identity: "{{ cdw_managed_identity_id }}"
         overlay: True
         private_load_balancer: False
         public_worker_node: True

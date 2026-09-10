@@ -3,9 +3,9 @@ pipeline {
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
-        IMAGE_NAME = 'clouderapartners/cdp-public-cloud-hol-provisioner'
+        IMAGE_NAME = 'clouderapartners/cdp-public-cloud-hol-provisioner-azure'
         DOCKER_CREDENTIALS_ID = 'dockerhub-cloudera-partners'
-        DOCKERFILE_DIR = 'OnCloud/AWS/build'
+        DOCKERFILE_DIR = 'OnCloud/Azure/build'
         BUILDER_NAME = 'mybuilder'
         RECIPIENTS = 'ksahu@cloudera.com,aktiwari@cloudera.com,ygulati@cloudera.com'
     }

@@ -6,6 +6,11 @@ HOL_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hol-output.sh
 source "${HOL_LIB_DIR}/hol-output.sh"
 
+# Jenkins mounts /userconfig with a different uid than the container process.
+configure_git_for_userconfig() {
+   git config --global --add safe.directory '*' 2>/dev/null || true
+}
+
 #TF_QUICKSTART_VERSION=v0.8.0
 USER_CONFIG_FILE="/userconfig/configfile"
 KEYGEN_TF_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/keypair_gen
@@ -167,8 +172,20 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          AZURE_REGION)
             azure_region=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
-         SSH_KEY_NAME)
+         SSH_KEY_NAME|AWS_KEY_PAIR)
             ssh_key_name=$(echo $value | tr '[:upper:]' '[:lower:]')
+            ;;
+         AZURE_CLIENT_ID)
+            azure_client_id=$value
+            ;;
+         AZURE_CLIENT_SECRET)
+            azure_client_secret=$value
+            ;;
+         AZURE_TENANT_ID)
+            azure_tenant_id=$value
+            ;;
+         AZURE_SUBSCRIPTION_ID)
+            azure_subscription_id=$value
             ;;
          CDP_DEPLOYMENT_TYPE)
             if [[ "$value" == "public" || "$value" == "private" || "$value" == "semi-private" ]]; then
@@ -312,6 +329,12 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
       fi
    done < "$USER_CONFIG_FILE"
 
+   export provision_caii="${provision_caii:-no}"
+   export azure_client_id="${azure_client_id:-${AZURE_CLIENT_ID:-}}"
+   export azure_client_secret="${azure_client_secret:-${AZURE_CLIENT_SECRET:-}}"
+   export azure_tenant_id="${azure_tenant_id:-${AZURE_TENANT_ID:-}}"
+   export azure_subscription_id="${azure_subscription_id:-${AZURE_SUBSCRIPTION_ID:-}}"
+
    # Call the function with the user-provided config file as an argument
    check_config "$USER_CONFIG_FILE"
    hol_ok "Configfile validated — input parameters verified"
@@ -337,9 +360,13 @@ check_key_pair() {
    # echo "USER_NAMESPACE: ${USER_NAMESPACE}"
    if [[ -z "$ssh_key_name" ]]; then
       # If keypair is empty, check if it's already generated and stored internally
-      if [[ -f "/userconfig/.$USER_NAMESPACE/keypair_gen/${workshop_name}-keypair.pem" ]]; then
+      local generated_pem="/userconfig/.$USER_NAMESPACE/keypair_gen/${workshop_name}-keypair.pem"
+      local copied_pem="/userconfig/.$USER_NAMESPACE/${workshop_name}-keypair.pem"
+      if [[ -f "$generated_pem" || -f "$copied_pem" ]]; then
          export ssh_key_name=${workshop_name}-keypair
-         export ssh_public_key=$(ssh-keygen -y -f "/userconfig/.$USER_NAMESPACE/${ssh_key_name}.pem")
+         local pem_path="$copied_pem"
+         [[ -f "$generated_pem" ]] && pem_path="$generated_pem"
+         export ssh_public_key=$(ssh-keygen -y -f "$pem_path")
          hol_ok "Using previously generated keypair: $ssh_key_name"
       else
          hol_info "No SSH key name provided — generating a new keypair"
@@ -360,13 +387,38 @@ check_key_pair() {
 #   cdp configure set cdp_private_key $cdp_private_key
 #}
 #---------------------------------------------------------------------------------------------------------------------#
+# Auth helpers — probe live CLI access only (no credential-file checks).
+setup_azure_cli_auth() {
+   if az account show --query id -o tsv &>/dev/null; then
+      return 0
+   fi
+   if [[ -n "$azure_client_id" && -n "$azure_client_secret" && -n "$azure_tenant_id" ]]; then
+      hol_step "Authenticating Azure CLI via service principal"
+      if az login --service-principal -u "$azure_client_id" -p "$azure_client_secret" --tenant "$azure_tenant_id" --only-show-errors &>/dev/null; then
+         [[ -n "$azure_subscription_id" ]] && az account set --subscription "$azure_subscription_id" --only-show-errors
+         hol_ok "Azure CLI authenticated via service principal"
+         return 0
+      fi
+   fi
+   hol_fail "Azure CLI is not authenticated. Jenkins: -v /home/holautosa/.azure:/root/.azure  Local: -v \$HOME/.azure:/root/.azure"
+}
+
+ensure_aws_cli_for_dns() {
+   [[ "$provision_keycloak" != "yes" ]] && return 0
+   if aws sts get-caller-identity --query Account --output text &>/dev/null; then
+      return 0
+   fi
+   hol_fail "AWS CLI required for Keycloak DNS. Jenkins: -v /home/holautosa/.aws:/root/.aws  Local: -v \$HOME/.aws:/root/.aws"
+}
+
 # Function to verify Azure pre-requisites
 azure_prereq() {
+   setup_azure_cli_auth
    hol_subsection "Checking Azure subscription quotas" "☁️"
    subscription_name=$(az account show --query name -o tsv 2>/dev/null)
    subscription_id=$(az account show --query id -o tsv 2>/dev/null)
    if [[ -z "$subscription_id" ]]; then
-      hol_fail "Azure CLI is not authenticated. Run 'az login' on the host or provide service principal credentials."
+      hol_fail "Azure CLI is not authenticated after login attempt."
    fi
    hol_kv "Azure subscription" "${subscription_name:-$subscription_id}"
 
@@ -515,6 +567,25 @@ destroy_keypair() {
    fi
 }
 
+get_cdp_network_for_keycloak() {
+   local azure_tf_dir="/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/azure"
+   if [[ ! -d "${azure_tf_dir}" ]]; then
+      hol_fail "CDP Terraform directory not found at ${azure_tf_dir}. Provision CDP before Keycloak."
+   fi
+   cd "${azure_tf_dir}" || hol_fail "Unable to enter CDP Terraform directory: ${azure_tf_dir}"
+   KC_RESOURCE_GROUP=$(terraform output -raw azure_resource_group_name)
+   KC_NETWORK_RG=$(terraform output -raw azure_network_resource_group_name 2>/dev/null || terraform output -raw azure_resource_group_name)
+   KC_VNET_NAME=$(terraform output -raw azure_vnet_name)
+   KC_SUBNET_NAME=$(terraform output -json azure_cdp_gateway_subnet_names | jq -r '.[0]')
+   if [[ -z "$KC_RESOURCE_GROUP" || -z "$KC_NETWORK_RG" || -z "$KC_VNET_NAME" || -z "$KC_SUBNET_NAME" || "$KC_SUBNET_NAME" == "null" ]]; then
+      hol_fail "Unable to read CDP network outputs required for Keycloak (resource group, VNet, or gateway subnet)."
+   fi
+   hol_kv "Keycloak resource group" "$KC_RESOURCE_GROUP"
+   hol_kv "Keycloak network resource group" "$KC_NETWORK_RG"
+   hol_kv "Keycloak VNet" "$KC_VNET_NAME"
+   hol_kv "Keycloak gateway subnet" "$KC_SUBNET_NAME"
+}
+
 setup_keycloak_vm() {
    hol_banner "Provisioning Keycloak" "🔐"
    USER_NAMESPACE=$workshop_name
@@ -582,6 +653,9 @@ setup_keycloak_vm() {
    #local sg_name="$1"
    local sg_name="$workshop_name-keyc-sg"
 
+   hol_subsection "Resolving CDP network for Keycloak" "🌐"
+   get_cdp_network_for_keycloak
+
    hol_subsection "Running Terraform for Keycloak" "🏗️"
    # Run Terraform to provision Keycloak instance
    if check_azure_nsg_exists "$sg_name"; then
@@ -607,7 +681,11 @@ setup_keycloak_vm() {
       -var "wildcard_fullchain=$FULLCHAIN" \
       -var "wildcard_privkey=$PRIVKEY" \
       -var "kc_security_group=$sg_name" \
-      -var "keycloak_admin_password=$keycloak__admin_password"
+      -var "keycloak_admin_password=$keycloak__admin_password" \
+      -var "resource_group_name=$KC_RESOURCE_GROUP" \
+      -var "network_resource_group_name=$KC_NETWORK_RG" \
+      -var "vnet_name=$KC_VNET_NAME" \
+      -var "subnet_name=$KC_SUBNET_NAME"
 
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
@@ -650,6 +728,11 @@ setup_keycloak_vm() {
 destroy_keycloak() {
    USER_NAMESPACE=$workshop_name
    hol_subsection "Destroying Keycloak" "🔐"
+   local sg_name="${workshop_name}-keyc-sg"
+   if check_azure_nsg_exists "$sg_name"; then
+      sg_name="${sg_name}-${workshop_name}"
+   fi
+   get_cdp_network_for_keycloak
    cd /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
    terraform init
    hol_step "Waiting 30 seconds before Keycloak teardown..."
@@ -678,8 +761,15 @@ destroy_keycloak() {
       -var "ssh_key_name=$ssh_key_name" \
       -var "ssh_public_key=${ssh_public_key:-placeholder}" \
       -var "azure_region=$azure_region" \
+      -var "domain=${domain:-example.com}" \
+      -var "wildcard_fullchain=placeholder" \
+      -var "wildcard_privkey=placeholder" \
       -var "kc_security_group=$sg_name" \
-      -var "keycloak_admin_password=$keycloak__admin_password"
+      -var "keycloak_admin_password=$keycloak__admin_password" \
+      -var "resource_group_name=$KC_RESOURCE_GROUP" \
+      -var "network_resource_group_name=$KC_NETWORK_RG" \
+      -var "vnet_name=$KC_VNET_NAME" \
+      -var "subnet_name=$KC_SUBNET_NAME"
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
       rm -rf /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
@@ -691,22 +781,194 @@ destroy_keycloak() {
    fi
 }
 #--------------------------------------------------------------------------------------------------#
+# Sync cdp-tf-quickstarts without deleting terraform state or workshop files.
+sync_cdp_tf_quickstarts() {
+   local quickstart_dir="$1"
+   local cloud_path="$2"
+   local repo_url="https://github.com/cloudera-labs/cdp-tf-quickstarts.git"
+   local git_err=""
+   local -a git_safe=(git -c safe.directory='*' -c "safe.directory=${quickstart_dir}")
+
+   configure_git_for_userconfig
+
+   if [[ -d "${quickstart_dir}/.git" ]]; then
+      hol_step "Updating cdp-tf-quickstarts (${TF_QUICKSTART_VERSION})"
+      cd "${quickstart_dir}" || hol_fail "Unable to enter cdp-tf-quickstarts directory."
+      "${git_safe[@]}" fetch --depth 1 origin "${TF_QUICKSTART_VERSION}" 2>/dev/null \
+         || "${git_safe[@]}" fetch --depth 1 origin "refs/tags/${TF_QUICKSTART_VERSION}:refs/tags/${TF_QUICKSTART_VERSION}" 2>/dev/null \
+         || "${git_safe[@]}" fetch --depth 1 origin
+      if ! git_err=$("${git_safe[@]}" checkout -f "${TF_QUICKSTART_VERSION}" 2>&1); then
+         hol_fail "Unable to checkout ${TF_QUICKSTART_VERSION} in cdp-tf-quickstarts: ${git_err}"
+      fi
+      "${git_safe[@]}" sparse-checkout init --cone
+      "${git_safe[@]}" sparse-checkout set "${cloud_path}"
+      "${git_safe[@]}" checkout @ &>/dev/null
+      hol_ok "cdp-tf-quickstarts updated"
+      return 0
+   fi
+
+   if [[ -e "${quickstart_dir}" ]]; then
+      hol_warn "Quickstart path exists but is not a git repo — recloning"
+      rm -rf "${quickstart_dir}"
+   fi
+
+   hol_step "Cloning cdp-tf-quickstarts (${TF_QUICKSTART_VERSION})"
+   if ! "${git_safe[@]}" clone "${repo_url}" -b "${TF_QUICKSTART_VERSION}" --single-branch --depth 1 "${quickstart_dir}"; then
+      hol_fail "Failed to clone cdp-tf-quickstarts (branch/tag: ${TF_QUICKSTART_VERSION})."
+   fi
+   cd "${quickstart_dir}" || hol_fail "Unable to enter cdp-tf-quickstarts directory."
+   "${git_safe[@]}" sparse-checkout init --cone
+   "${git_safe[@]}" sparse-checkout set "${cloud_path}"
+   "${git_safe[@]}" checkout @ &>/dev/null
+}
+
+# Azure NSG rules reject 0.0.0.0/0 combined with more-specific CIDRs.
+normalize_ingress_cidrs() {
+   local input="$1"
+   local -a cidrs=()
+   local cidr normalized=""
+
+   IFS=',' read -ra raw <<< "$input"
+   for cidr in "${raw[@]}"; do
+      cidr=$(echo "$cidr" | xargs)
+      [[ -z "$cidr" ]] && continue
+      cidrs+=("$cidr")
+   done
+
+   for cidr in "${cidrs[@]}"; do
+      if [[ "$cidr" == "0.0.0.0/0" ]]; then
+         if [[ "${#cidrs[@]}" -gt 1 ]]; then
+            hol_warn "LOCAL_MACHINE_IP contains 0.0.0.0/0 with other CIDRs — using 0.0.0.0/0 only (Azure NSG overlap restriction)"
+         fi
+         echo "0.0.0.0/0"
+         return 0
+      fi
+   done
+
+   normalized=$(printf '%s\n' "${cidrs[@]}" | awk '!seen[$0]++' | paste -sd, -)
+   echo "$normalized"
+}
+
+build_cdp_ingress_cidr_tf_list() {
+   local normalized
+   normalized=$(normalize_ingress_cidrs "$local_ip")
+   normalized=$(echo "$normalized" | sed 's/,/\",\"/g')
+   echo "\"${normalized}\""
+}
+
+should_provision_cdw() {
+   local selected_services="${enable_data_services//[/}"
+   selected_services="${selected_services//]/}"
+   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
+   [[ ",${selected_services}," == *",cdw,"* ]]
+}
+
+# Return 0 when CAI or CAII is selected and Azure NFS should be provisioned.
+should_provision_cai_nfs() {
+   [[ "${provision_caii:-no}" == "yes" ]] && return 0
+   local selected_services="${enable_data_services//[/}"
+   selected_services="${selected_services//]/}"
+   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
+   [[ ",${selected_services}," == *",cai,"* ]]
+}
+
+cdp_nfs_enabled_in_state() {
+   terraform state list 2>/dev/null | grep -q "module.cdp_azure_prereqs.module.azure_cml_nfs"
+}
+
+# Wire create_azure_cml_nfs into cdp-tf-quickstarts (not exposed in root module by default).
+patch_cdp_quickstart_for_cai_nfs() {
+   local azure_tf_dir="$1"
+   local main_tf="${azure_tf_dir}/main.tf"
+   local variables_tf="${azure_tf_dir}/variables.tf"
+   local outputs_tf="${azure_tf_dir}/outputs.tf"
+
+   if ! grep -q "create_azure_cml_nfs" "$variables_tf"; then
+      cat <<'EOF' >>"$variables_tf"
+
+variable "create_azure_cml_nfs" {
+  type        = bool
+  description = "Whether to create NFS for CAI/CML"
+  default     = false
+}
+
+variable "nfs_file_share_size" {
+  type        = number
+  description = "NFS File Share size in GB"
+  default     = 100
+}
+
+variable "create_vm_mounting_nfs" {
+  type        = bool
+  description = "Whether to create a VM which mounts this NFS"
+  default     = false
+}
+EOF
+   fi
+
+   # Repair a prior bad patch that inserted NFS inputs into module.cdp_deploy.
+   sed -i '/^[[:space:]]*# HoL automation: premium NFS/d' "$main_tf"
+   sed -i '/^[[:space:]]*create_azure_cml_nfs[[:space:]]*=/d' "$main_tf"
+   sed -i '/^[[:space:]]*nfs_file_share_size[[:space:]]*=/d' "$main_tf"
+   sed -i '/^[[:space:]]*create_vm_mounting_nfs[[:space:]]*=/d' "$main_tf"
+
+   if ! awk '/module "cdp_azure_prereqs"/,/^[}]/{if(/create_azure_cml_nfs/) found=1} END{exit found?0:1}' "$main_tf"; then
+      sed -i '/cdp_delegated_subnet_names = var.cdp_delegated_subnet_names/a\
+\
+  # HoL automation: NFS for CAI in CDP VNet/RG (premium file share + private endpoints)\
+  create_azure_cml_nfs   = var.create_azure_cml_nfs\
+  nfs_file_share_size    = var.nfs_file_share_size\
+  create_vm_mounting_nfs = var.create_vm_mounting_nfs' "$main_tf"
+   fi
+
+   if ! grep -q "nfs_file_share_url" "$outputs_tf"; then
+      cat <<'EOF' >>"$outputs_tf"
+output "nfs_file_share_url" {
+  description = "NFS file share URL for CAI"
+  value       = module.cdp_azure_prereqs.nfs_file_share_url
+}
+output "nfs_storage_account_name" {
+  description = "Premium NFS storage account name for CAI"
+  value       = module.cdp_azure_prereqs.nfs_storage_account_name
+}
+EOF
+   fi
+}
+
+append_cdp_nfs_tf_args() {
+   local -n tf_args=$1
+   local enable_nfs=false
+   if should_provision_cai_nfs || cdp_nfs_enabled_in_state; then
+      enable_nfs=true
+   fi
+   if [[ "$enable_nfs" == true ]]; then
+      tf_args+=(
+         -var "create_azure_cml_nfs=true"
+         -var "nfs_file_share_size=${nfs_file_share_size:-100}"
+         -var "create_vm_mounting_nfs=false"
+      )
+   fi
+}
+
 # Function to provision CDP Environment.
 provision_cdp() {
    hol_banner "Provisioning CDP environment" "☁️"
    sleep 10
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
-   git clone https://github.com/cloudera-labs/cdp-tf-quickstarts.git -b $TF_QUICKSTART_VERSION --single-branch --depth 1 /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts &>/dev/null
-   cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts
-   git sparse-checkout init --cone
-   git sparse-checkout set azure
-   git checkout @ &>/dev/null
-   cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/azure
+   local quickstart_dir="/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts"
+   local azure_tf_dir="${quickstart_dir}/azure"
+
+   sync_cdp_tf_quickstarts "${quickstart_dir}" "azure"
+
+   if [[ ! -d "${azure_tf_dir}" || ! -f "${azure_tf_dir}/variables.tf" || ! -f "${azure_tf_dir}/main.tf" ]]; then
+      hol_fail "Azure Terraform quickstart files are missing under ${azure_tf_dir}. Check TF_QUICKSTART_VERSION=${TF_QUICKSTART_VERSION}."
+   fi
+
+   cd "${azure_tf_dir}" || hol_fail "Unable to enter Azure Terraform directory: ${azure_tf_dir}"
 
    # Convert comma-separated IPs into properly quoted Terraform list elements
-   cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
-   cdp_cidr="\"${cdp_cidr}\""
+   cdp_cidr=$(build_cdp_ingress_cidr_tf_list)
 
    #Adding outputs in quickstart outputs.tf
    file="outputs.tf"
@@ -719,6 +981,9 @@ provision_cdp() {
 
    # Check if the bucket_name output already exists
    bucket_name=$(grep "azure_log_storage_container" "$file")
+
+   vnet_name_output=$(grep "azure_vnet_name" "$file")
+   network_rg_output=$(grep "azure_network_resource_group_name" "$file")
 
    # Append the public subnet output if it does not exist
    if [ -z "$public_subnet" ]; then
@@ -753,12 +1018,40 @@ output "azure_resource_group_name" {
 }
 EOF
    fi
+   if [ -z "$vnet_name_output" ]; then
+      cat <<EOF >>"$file"
+output "azure_vnet_name" {
+  description = "Azure Virtual Network Name"
+  value       = module.cdp_azure_prereqs.azure_vnet_name
+}
+EOF
+   fi
+   if [ -z "$network_rg_output" ]; then
+      cat <<EOF >>"$file"
+output "azure_network_resource_group_name" {
+  description = "Azure resource group containing the CDP VNet"
+  value       = module.cdp_azure_prereqs.azure_network_resource_group_name
+}
+EOF
+   fi
+   if should_provision_cai_nfs; then
+      hol_subsection "CDP Terraform: enable CAI NFS in prereqs module" "📁"
+      hol_info "NFS is provisioned with CDP infra (same RG/VNet) — premium FileStorage, private endpoints, secure transfer disabled"
+      patch_cdp_quickstart_for_cai_nfs "${azure_tf_dir}"
+   fi
    terraform init
 
    # Default to empty map if ENV_TAGS not provided in configfile
    env_tags="${env_tags:-{}}"
 
    TFVARS_FILE="/tmp/env_tags_${workshop_name}.tfvars"
+
+   if [[ -z "${ssh_public_key:-}" && -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem" ]]; then
+      export ssh_public_key=$(ssh-keygen -y -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem")
+   fi
+   if [[ -z "${ssh_public_key:-}" ]]; then
+      hol_fail "SSH public key is not set. Generate or mount an SSH key before provisioning CDP."
+   fi
 
    if [[ "$env_tags" == "{}" ]]; then
       echo 'env_tags = {}' > "$TFVARS_FILE"
@@ -776,25 +1069,27 @@ EOF
       echo '}' >> "$TFVARS_FILE"
    fi
 
-   hol_subsection "Generated Terraform env_tags" "🏷️"
-   cat "$TFVARS_FILE"
+   {
+      echo ''
+      echo 'public_key_text = <<-EOT'
+      echo "$ssh_public_key"
+      echo 'EOT'
+   } >> "$TFVARS_FILE"
 
-   if [[ -z "${ssh_public_key:-}" && -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem" ]]; then
-      export ssh_public_key=$(ssh-keygen -y -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem")
-   fi
-   if [[ -z "${ssh_public_key:-}" ]]; then
-      hol_fail "SSH public key is not set. Generate or mount an SSH key before provisioning CDP."
-   fi
+   hol_subsection "Generated Terraform tfvars" "🏷️"
+   hol_kv "Quickstart version" "$TF_QUICKSTART_VERSION"
+   hol_kv "Terraform directory" "$(pwd)"
+   cat "$TFVARS_FILE"
 
    local cdp_tf_apply_args=(
       -var "env_prefix=${workshop_name}"
       -var "azure_region=${azure_region}"
-      -var "public_key_text=${ssh_public_key}"
       -var "deployment_template=${deployment_template}"
       -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
       -var "datalake_version=${datalake_version}"
       -var-file="${TFVARS_FILE}"
    )
+   append_cdp_nfs_tf_args cdp_tf_apply_args
 
    hol_subsection "Running Terraform for CDP environment & datalake" "☁️"
    terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
@@ -822,6 +1117,15 @@ EOF
       export LOG_STORAGE_ACCOUNT=$(terraform output -raw log_storage_account_name)
       export AZURE_RESOURCE_GROUP=$(terraform output -raw azure_resource_group_name)
 
+      if should_provision_cai_nfs; then
+         NFS_FILE_SHARE_URL=$(terraform output -raw nfs_file_share_url 2>/dev/null || true)
+         NFS_STORAGE_ACCOUNT=$(terraform output -raw nfs_storage_account_name 2>/dev/null || true)
+         if [[ -n "$NFS_FILE_SHARE_URL" ]]; then
+            hol_kv "CAI NFS share URL" "$NFS_FILE_SHARE_URL"
+            hol_kv "CAI NFS storage account" "$NFS_STORAGE_ACCOUNT"
+         fi
+      fi
+
       # Count elements in ENV_PUBLIC_SUBNETS and ENV_PRIVATE_SUBNETS
       count_public=$(count_elements "$ENV_PUBLIC_SUBNETS")
       count_private=$(count_elements "$ENV_PRIVATE_SUBNETS")
@@ -842,6 +1146,9 @@ EOF
       if [ $azure_enhancements_status -ne 0 ]; then
          hol_warn "Azure enhancements failed to apply — check logs for details"
       fi
+      if [[ -n "${CDW_MANAGED_IDENTITY_ID:-}" ]]; then
+         export CDW_MANAGED_IDENTITY_ID
+      fi
 
       return 0
    else
@@ -861,12 +1168,34 @@ azure_enhancements() {
    fi
 
    cd /userconfig/.$USER_NAMESPACE/azure_enhancements/storage_lifecycle
-     terraform init
-     terraform apply -auto-approve \
-         -var="log_storage_account=$LOG_STORAGE_ACCOUNT" \
-         -var="log_storage_container=$LOG_STORAGE_CONTAINER" \
+   terraform init
+   terraform apply -auto-approve \
+      -var="log_storage_account=$LOG_STORAGE_ACCOUNT" \
+      -var="log_storage_container=$LOG_STORAGE_CONTAINER" \
+      -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
+      -var="azure_region=$azure_region"
+
+   hol_subsection "Granting datalake admin log container write access" "🔐"
+   cd /userconfig/.$USER_NAMESPACE/azure_enhancements/dladmin_log_access
+   terraform init
+   terraform apply -auto-approve \
+      -var="env_prefix=$workshop_name" \
+      -var="log_storage_account=$LOG_STORAGE_ACCOUNT" \
+      -var="log_storage_container=$LOG_STORAGE_CONTAINER" \
+      -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
+      -var="azure_region=$azure_region"
+
+   if should_provision_cdw; then
+      hol_subsection "Provisioning CDW custom identity and role" "🏢"
+      cd /userconfig/.$USER_NAMESPACE/azure_enhancements/cdw_custom_identity
+      terraform init
+      terraform apply -auto-approve \
+         -var="env_prefix=$workshop_name" \
          -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
          -var="azure_region=$azure_region"
+      export CDW_MANAGED_IDENTITY_ID=$(terraform output -raw cdw_managed_identity_id)
+      hol_kv "CDW managed identity" "$CDW_MANAGED_IDENTITY_ID"
+   fi
 }
 
 #--------------------------------------------------------------------------------------------------#
@@ -1084,25 +1413,30 @@ update_cdp_user_group() {
 destroy_cdp() {
    USER_NAMESPACE=$workshop_name
    hol_banner "Destroying CDP environment infrastructure" "🗑️"
-   if [[ ! -d "/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/azure" ]]; then
+   local azure_tf_dir="/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/azure"
+   if [[ ! -d "${azure_tf_dir}" || ! -f "${azure_tf_dir}/variables.tf" ]]; then
       hol_skip "Terraform state not found — skipping CDP terraform destroy"
       return 0
    fi
-   cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/azure
-   # Convert comma-separated IPs into properly quoted Terraform list elements
-   cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
-   cdp_cidr="\"${cdp_cidr}\""
+   cd "${azure_tf_dir}" || hol_fail "Unable to enter Azure Terraform directory: ${azure_tf_dir}"
+   cdp_cidr=$(build_cdp_ingress_cidr_tf_list)
 
    if [[ -z "${ssh_public_key:-}" && -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem" ]]; then
       export ssh_public_key=$(ssh-keygen -y -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem")
    fi
    terraform init
-   terraform destroy --auto-approve \
-      -var "env_prefix=${workshop_name}" \
-      -var "azure_region=${azure_region}" \
-      -var "public_key_text=${ssh_public_key:-placeholder}" \
-      -var "deployment_template=${deployment_template}" \
+   if should_provision_cai_nfs || cdp_nfs_enabled_in_state; then
+      patch_cdp_quickstart_for_cai_nfs "${azure_tf_dir}"
+   fi
+   local cdp_tf_destroy_args=(
+      -var "env_prefix=${workshop_name}"
+      -var "azure_region=${azure_region}"
+      -var "public_key_text=${ssh_public_key:-placeholder}"
+      -var "deployment_template=${deployment_template}"
       -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
+   )
+   append_cdp_nfs_tf_args cdp_tf_destroy_args
+   terraform destroy --auto-approve "${cdp_tf_destroy_args[@]}"
       
    cdp_destroy_status=$?
    if [ "${cdp_destroy_status:-1}" -eq 0 ]; then
@@ -1117,11 +1451,14 @@ destroy_cdp() {
 destroy_hol_infra() {
    USER_NAMESPACE=$workshop_name
    keycloak_destroy_status=0
-   destroy_cdp
-   cdp_destroy_status=$?
-   if [[ "$provision_keycloak" == "yes" && "$cdp_destroy_status" -eq 0 ]]; then
+   cdp_destroy_status=0
+   if [[ "$provision_keycloak" == "yes" ]]; then
       destroy_keycloak
       keycloak_destroy_status=$?
+   fi
+   if [[ "$keycloak_destroy_status" -eq 0 ]]; then
+      destroy_cdp
+      cdp_destroy_status=$?
    fi
 
    if [[ "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]]; then
@@ -1259,10 +1596,20 @@ deploy_cdw() {
    number_vw_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
    azure_cdw_subnet=$(echo "$ENV_PRIVATE_SUBNETS" | jq -r '.[0]')
 
+   if [[ -z "${CDW_MANAGED_IDENTITY_ID:-}" && -d "/userconfig/.$workshop_name/azure_enhancements/cdw_custom_identity" ]]; then
+      cd "/userconfig/.$workshop_name/azure_enhancements/cdw_custom_identity"
+      CDW_MANAGED_IDENTITY_ID=$(terraform output -raw cdw_managed_identity_id 2>/dev/null || true)
+      export CDW_MANAGED_IDENTITY_ID
+   fi
+   if [[ -z "${CDW_MANAGED_IDENTITY_ID:-}" ]]; then
+      hol_fail "CDW managed identity is not set. Ensure CDW is enabled and CDP/Azure enhancements completed successfully."
+   fi
+
    ansible-playbook $DS_CONFIG_DIR/enable-cdw.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       azure_subnet_name=$azure_cdw_subnet \
       workshop_name=$workshop_name \
+      cdw_managed_identity_id=$CDW_MANAGED_IDENTITY_ID \
       vw_size=$cdw_vrtl_warehouse_size \
       cdvc_size=$cdw_dataviz_size \
       number_vw_to_create=$number_vw_to_create"

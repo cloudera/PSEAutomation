@@ -47,7 +47,8 @@ COPY entrypoint/hol-output.sh /usr/local/bin/
 COPY entrypoint/hol-functions.sh /usr/local/bin/
 COPY entrypoint/default.py /usr/local/lib/python3.12/dist-packages/ansible/plugins/callback/
 
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
+    git config --global --add safe.directory '*'
 
 WORKDIR "$HOME_DIR"
 #CMD ["/bin/bash"]
