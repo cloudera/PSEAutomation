@@ -1,0 +1,120 @@
+= AutoClouderaDeploy (Hands On Labs Infrastructure Provisioner) — Azure
+:imagesdir: https://github.com/cloudera/ClouderaSetup/blob/main/images
+:toc:
+
+Author: **Kuldeep Sahu**
+
+Email: **ksahu@cloudera.com**
+
+Author: **Avanish Tiwari**
+
+Email: **aktiwari@cloudera.com**
+
+---
+
+== Overview
+
+**AutoClouderaDeploy** for Azure is a container-based solution that provisions disposable on-demand Hands-on Lab infrastructure on Microsoft Azure with minimal manual effort. A single `provision` or `destroy` command creates or tears down:
+
+1. Cloudera Environment
+2. Datalake
+3. Data Services (CAI, CDW, CDE, and CDF)
+4. Optional `Keycloak` server
+5. Workshop users
+
+=== Jenkins / configfile parameters
+
+* *OWNER* (resource tag `pse-owner`): default `pse-apac@cloudera.com`
+* *LOCAL_MACHINE_IP*: IP or CIDR to whitelist for environment access
+* *PROVISION_CAII*: when set to `YES`, `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`
+* *AZURE_REGION*: Azure region for CDP and Keycloak resources (for example, `eastus`)
+* *SSH_KEY_NAME*: optional existing SSH key name; if omitted, a key pair is generated automatically
+
+== Technology Stack
+
+1. `Ansible`
+2. `Terraform`
+3. `Cloudera.cloud`
+4. `CDP-tf-quickstarts` (Azure quickstart)
+5. `CDPY`
+6. `CDP CLI`
+7. `Azure CLI`
+8. `AWS CLI` (Route53 DNS and Let's Encrypt DNS challenge only)
+9. `Shell Scripting`
+
+All tools are packaged in a Docker container.
+
+---
+
+== Build the Docker Image
+
+[source,bash]
+----
+cd OnCloud/Azure/build/
+docker build . -t hol-azure:latest
+----
+
+---
+
+== Major Features for Azure
+
+1. Ubuntu Linux-based base image
+2. Optional Keycloak VM provisioning with SSO access for workshop users
+3. Workshop users are mapped to CDP IAM groups with least-privilege roles
+4. Parameterized Keycloak admin password
+5. Azure and CDP prerequisite checks for VNet, public IP, storage account, IAM, and SAML provider quotas
+6. Optional activation of CDW, CDE, CAI, and CDF data services
+7. Idempotent provision and destroy workflows
+8. Uses `cdp-tf-quickstarts` Azure Terraform modules pulled at runtime
+9. Dynamic CDW virtual warehouse count based on workshop user count
+10. Optional GPU-backed CAI workspaces
+11. Configurable data service sizing and Spark version overrides
+12. CDV and Data Catalog deployment with CDW
+13. Azure authentication via `az login`, service principal, or managed identity on the deployer host
+
+---
+
+== Usage
+
+Mount a config directory at `/userconfig` containing a file named `configfile`. Example keys:
+
+[source]
+----
+PROVISION_KEYCLOAK: yes
+AZURE_REGION: eastus
+WORKSHOP_NAME: pseworkshop
+NUMBER_OF_WORKSHOP_USERS: 10
+WORKSHOP_USER_PREFIX: pseworkshop
+WORKSHOP_USER_DEFAULT_PASSWORD: changeme
+CDP_DEPLOYMENT_TYPE: public
+LOCAL_MACHINE_IP: 203.0.113.10/32
+ENABLE_DATA_SERVICES: CDW,CAI,CDE,CDF
+DOMAIN: example.com
+HOSTEDZONEID: Z1234567890ABC
+KEYCLOAK_ADMIN_PASSWORD: admin
+DATALAKE_VERSION: 7.3.2
+----
+
+Run the container:
+
+[source,bash]
+----
+docker run --rm \
+  -v /path/to/userconfig:/userconfig \
+  -v $HOME/.azure:/root/.azure \
+  -v $HOME/.aws:/root/.aws \
+  hol-azure:latest provision
+----
+
+Destroy:
+
+[source,bash]
+----
+docker run --rm \
+  -v /path/to/userconfig:/userconfig \
+  -v $HOME/.azure:/root/.azure \
+  -v $HOME/.aws:/root/.aws \
+  hol-azure:latest destroy
+----
+
+NOTE: Route53 and AWS credentials are still required when using `DOMAIN` / `HOSTEDZONEID` for Keycloak TLS and DNS automation.

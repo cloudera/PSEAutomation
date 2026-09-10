@@ -1,0 +1,133 @@
+---
+- name: Enable CDE data service
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    instance_type: "m5.2xlarge"
+    initial_instances: 10
+    minimum_instances: 10
+    maximum_instances: 40
+    spark_version: "SPARK3"
+    vc_tier: "CORE"  # Default value for vc-tier, can be "ALLP" or "CORE"
+    cde_async_timeout: 7200
+    cde_async_retries: 120
+    cde_async_delay: 30
+
+  tasks:
+    - name: Check and print variable status
+      debug:
+        msg:
+          - "instance_type: {{ instance_type }}"
+          - "initial_instances: {{ initial_instances }}"
+          - "minimum_instances: {{ minimum_instances }}"
+          - "maximum_instances: {{ maximum_instances }}"
+          - "spark_version: {{ spark_version }}"
+          - "vc_tier: {{ vc_tier }}"
+          - "workshop_name: {{ workshop_name }}"
+          - "cdp_env_name: {{ cdp_env_name }}"
+          - "number_vc_to_create: {{ number_vc_to_create | default(1) }}"
+
+    - name: Check if CDE service exists and is running
+      cloudera.cloud.de_info:
+        name: "{{ workshop_name }}-cde"
+      register: deservicestatus
+      failed_when: false
+
+    - name: Debug CDE service info
+      debug:
+        msg: "{{ deservicestatus }}"
+
+    - name: Determine if CDE service needs to be created
+      set_fact:
+        cde_service_exists: "{{ deservicestatus.services | selectattr('status', 'equalto', 'ClusterCreationCompleted') | list | length > 0 }}"
+      when: deservicestatus is defined and deservicestatus.services is defined
+
+    - name: Activate CDE service if it does not exist
+      cloudera.cloud.de:
+        name: "{{ workshop_name }}-cde"
+        env: "{{ cdp_env_name }}"
+        instance_type: "{{ instance_type }}"
+        minimum_instances: "{{ minimum_instances | int }}"
+        maximum_instances: "{{ maximum_instances | int }}"
+        initial_instances: "{{ initial_instances | int }}"
+        enable_public_endpoint: true
+        state: present
+        wait: no
+      when: not cde_service_exists
+      register: deservice
+
+    - name: Check the CDE service status
+      cloudera.cloud.de_info:
+        name: "{{ workshop_name }}-cde"
+      register: deservicestatus
+      until: deservicestatus.services[0].status == "ClusterCreationCompleted"
+      retries: 40
+      delay: 120
+
+    - name: Print the status
+      debug:
+        msg: "{{ deservicestatus }}"
+
+    - name: List existing virtual clusters
+      ansible.builtin.shell: >
+        cdp de list-vcs --cluster-id "{{ deservicestatus.services[0].clusterId }}" | jq -r '.vcs[]?.vcName // empty'
+      register: existing_vcs
+      failed_when: false
+
+    - name: Debug existing virtual clusters
+      debug:
+        msg: "Existing virtual clusters: {{ existing_vcs.stdout_lines }}"
+
+    - name: Build missing virtual cluster deployment plan
+      ansible.builtin.set_fact:
+        vc_deploy_plan_missing: >-
+          {%- set missing = [] -%}
+          {%- for i in range(1, (number_vc_to_create | default(1) | int) + 1) -%}
+          {%- set suffix = '%02d' | format(i) -%}
+          {%- set name = workshop_name ~ '-cde-vc-' ~ suffix -%}
+          {%- if name not in existing_vcs.stdout_lines -%}
+          {%- set _ = missing.append({'name': name, 'suffix': suffix}) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ missing }}
+
+    - name: Debug virtual clusters to create
+      ansible.builtin.debug:
+        msg: "Virtual clusters to create: {{ vc_deploy_plan_missing | map(attribute='name') | list }}"
+
+    - name: Start virtual cluster deployments async
+      ansible.builtin.command: >
+        cdp de create-vc
+        --name "{{ item.name }}"
+        --cluster-id "{{ deservicestatus.services[0].clusterId }}"
+        --spark-version "{{ spark_version }}"
+        --cpu-requests "20"
+        --memory-requests "80Gi"
+        --vc-tier "{{ vc_tier }}"
+      loop: "{{ vc_deploy_plan_missing }}"
+      async: "{{ cde_async_timeout }}"
+      poll: 0
+      register: vc_async_jobs
+      when: vc_deploy_plan_missing | length > 0
+      ignore_errors: true
+
+    - name: Wait for virtual cluster async provisioning jobs
+      ansible.builtin.async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: vc_async_results
+      until: vc_async_results.finished
+      retries: "{{ cde_async_retries }}"
+      delay: "{{ cde_async_delay }}"
+      loop: "{{ vc_async_jobs.results | default([]) | selectattr('ansible_job_id', 'defined') | list }}"
+      when: vc_deploy_plan_missing | length > 0
+
+    - name: Fail on unexpected virtual cluster deployment errors
+      ansible.builtin.fail:
+        msg: "Failed to create {{ item.item.item.name | default('virtual cluster') }}: {{ item.stderr | default(item.msg) }}"
+      loop: "{{ vc_async_results.results | default([]) }}"
+      when:
+        - item.finished | default(false)
+        - item.rc | default(0) != 0
+        - "'already exists' not in (item.stderr | default('') | lower)"
+        - "'ALREADY_EXISTS' not in (item.stderr | default(''))"

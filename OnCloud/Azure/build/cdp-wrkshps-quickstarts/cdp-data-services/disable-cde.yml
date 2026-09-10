@@ -1,0 +1,79 @@
+---
+- name: Disable CDE Data Service
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    cde_async_timeout: 3600
+    cde_async_retries: 60
+    cde_async_delay: 30
+  tasks:
+    - name: List CDE virtual clusters
+      cloudera.cloud.de_virtual_cluster_info:
+        cluster_name: "{{ workshop_name }}-cde"
+        environment: "{{ workshop_name }}-cdp-env"
+      register: virtualclusters
+
+    - name: Extract the virtual clusters id
+      ansible.builtin.set_fact:
+        vc_ids: "{{ virtualclusters['vcs'] | community.general.json_query(query_string) | default([]) }}"
+      vars:
+        query_string: "[].{vcId:vcId,clusterId:clusterId}"
+
+    - name: Print VC IDs
+      debug:
+        msg: "{{ vc_ids }}"
+
+    - name: Start virtual cluster deletions async
+      ansible.builtin.command: >
+        cdp de delete-vc
+        --cluster-id "{{ item.clusterId }}"
+        --vc-id "{{ item.vcId }}"
+      loop: "{{ vc_ids }}"
+      async: "{{ cde_async_timeout }}"
+      poll: 0
+      register: vc_delete_async
+      ignore_errors: true
+      when: vc_ids | length > 0
+
+    - name: Wait for virtual cluster delete async jobs
+      ansible.builtin.async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: vc_delete_async_results
+      until: vc_delete_async_results.finished
+      retries: "{{ cde_async_retries }}"
+      delay: "{{ cde_async_delay }}"
+      loop: "{{ vc_delete_async.results | default([]) | selectattr('ansible_job_id', 'defined') | list }}"
+      ignore_errors: true
+      when: vc_ids | length > 0
+
+    - name: Deactivate CDE service
+      cloudera.cloud.de:
+        name: "{{ workshop_name }}-cde"
+        env: "{{ workshop_name }}-cdp-env"
+        state: absent
+        wait: False
+      register: deactivation
+      ignore_errors: true
+
+    - name: Print Deactivation Result
+      debug:
+        msg: "Deactivation Result: {{ deactivation }}"
+
+    - name: Check status of CDE service until completely deleted
+      cloudera.cloud.de_info:
+        name: "{{ workshop_name }}-cde"
+        env: "{{ workshop_name }}-cdp-env"
+      register: serstatus
+      until: serstatus['services'] | length == 0 or serstatus['services'][0]['status'] in ["Deleting", "Error", "Failed"]
+      retries: 60
+      delay: 30
+
+    - name: Print status of CDE service
+      debug:
+        msg: "CDE Service status: {{ serstatus }}"
+
+    - name: Fail task if CDE service deletion failed
+      fail:
+        msg: "CDE Service Deletion Failed."
+      when: serstatus['services'] | length > 0 and serstatus['services'][0]['status'] in ["Error", "Failed"]
