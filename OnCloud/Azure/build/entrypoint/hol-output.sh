@@ -17,9 +17,9 @@ else
    HOL_BLUE='' HOL_MAGENTA='' HOL_CYAN='' HOL_WHITE=''
 fi
 
-# Section headers: full-width rules with centered title (15-space indent, 86-char width).
+# Section headers: left-aligned title with full-width rule lines.
 HOL_SECTION_WIDTH=86
-HOL_SECTION_INDENT=15
+HOL_SECTION_INDENT=0
 HOL_RULE_CHAR='-'
 
 _hol_rule_line() {
@@ -29,14 +29,13 @@ _hol_rule_line() {
 
 hol_section() {
    local title="$1"
-   local indent="${HOL_SECTION_INDENT}"
    local width="${HOL_SECTION_WIDTH}"
-   local rule tlen pad left right
+   local rule
 
    rule="$(_hol_rule_line)"
 
    if [[ -z "$title" ]]; then
-      printf '\n%*s%s\n' "$indent" '' "$rule"
+      printf '\n%s\n' "$rule"
       return
    fi
 
@@ -44,14 +43,9 @@ hol_section() {
       title="${title:0:$((width - 7))}..."
    fi
 
-   tlen=${#title}
-   pad=$((width - tlen))
-   left=$((pad / 2))
-   right=$((pad - left))
-
-   printf '\n%*s%s\n' "$indent" '' "$rule"
-   printf '%*s%*s%s%*s\n' "$indent" '' "$left" '' "$title" "$right" ''
-   printf '%*s%s\n' "$indent" '' "$rule"
+   printf '\n%s\n' "$rule"
+   printf '%s\n' "$title"
+   printf '%s\n' "$rule"
 }
 
 hol_divider() {
@@ -193,24 +187,29 @@ hol_provision_failed() {
    hol_fail "Infrastructure provisioning for '${workshop}' failed. Review the logs above and try again."
 }
 
+hol_destroy_failed() {
+   local workshop="${1:-workshop}"
+   hol_fail "Infrastructure destroy for '${workshop}' did not complete. Review Terraform errors above, then retry destroy or clean up remaining Azure resources manually."
+}
+
 _hol_startup_hbar() {
    local width="$1"
-   local char="${2:-━}"
+   local char="${2:--}"
    printf '%*s' "$width" '' | tr ' ' "$char"
 }
 
 _hol_startup_outer_line() {
    local left_corner="$1"
    local right_corner="$2"
-   local bar_char="${3:-━}"
+   local bar_char="${3:--}"
    local bar
    bar="$(_hol_startup_hbar $((HOL_SECTION_WIDTH - 2)) "$bar_char")"
-   printf '%*s%s%s%s\n' "$HOL_SECTION_INDENT" '' "$left_corner" "$bar" "$right_corner"
+   printf '%s%s%s\n' "$left_corner" "$bar" "$right_corner"
 }
 
 _hol_startup_outer_blank() {
    local inner=$((HOL_SECTION_WIDTH - 2))
-   printf '%*s┃%*s┃\n' "$HOL_SECTION_INDENT" '' "$inner" ''
+   printf '|%*s|\n' "$inner" ''
 }
 
 _hol_startup_outer_content() {
@@ -227,7 +226,7 @@ _hol_startup_outer_content() {
    pad=$((inner - tlen))
    left=$((pad / 2))
    right=$((pad - left))
-   printf '%*s┃%*s%s%*s┃\n' "$HOL_SECTION_INDENT" '' "$left" '' "$content" "$right" ''
+   printf '|%*s%s%*s|\n' "$left" '' "$content" "$right" ''
 }
 
 _hol_startup_inner_text() {
@@ -237,7 +236,7 @@ _hol_startup_inner_text() {
    local pad=$((inner_width - tlen - 2))
    local left=$((pad / 2))
    local right=$((pad - left))
-   printf '│ %*s%s%*s │' "$left" '' "$text" "$right" ''
+   printf '| %*s%s%*s |' "$left" '' "$text" "$right" ''
 }
 
 hol_startup_banner() {
@@ -245,22 +244,17 @@ hol_startup_banner() {
    local hline
    local title="Cloudera on Azure cloud provisioner"
    local subtitle="(AutoClouderaDeploy)"
-   local top_line mid_line sub_line bot_line
 
-   hline="$(_hol_startup_hbar "$inner_width" '─')"
-   top_line="   ☁  ╭${hline}╮"
-   mid_line="$(printf '%6s' '')$(_hol_startup_inner_text "$title" "$inner_width")"
-   sub_line="$(printf '%6s' '')$(_hol_startup_inner_text "$subtitle" "$inner_width")"
-   bot_line="$(printf '%6s' '')╰${hline}╯"
+   hline="$(_hol_startup_hbar "$inner_width" '-')"
 
    echo ""
-   _hol_startup_outer_line '┏' '┓' '━'
+   _hol_startup_outer_line '+' '+'
    _hol_startup_outer_blank
-   _hol_startup_outer_content "$top_line"
-   _hol_startup_outer_content "$mid_line"
-   _hol_startup_outer_content "$sub_line"
-   _hol_startup_outer_content "$bot_line"
+   _hol_startup_outer_content "  +${hline}+"
+   _hol_startup_outer_content "  $(_hol_startup_inner_text "$title" "$inner_width")"
+   _hol_startup_outer_content "  $(_hol_startup_inner_text "$subtitle" "$inner_width")"
+   _hol_startup_outer_content "  +${hline}+"
    _hol_startup_outer_blank
-   _hol_startup_outer_line '┗' '┛' '━'
+   _hol_startup_outer_line '+' '+'
    echo ""
 }

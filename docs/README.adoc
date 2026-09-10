@@ -1,0 +1,27 @@
+= PSEAutomation — Detailed Documentation
+:toc:
+:toclevels: 2
+:icons: font
+
+This folder holds long-form reference documentation for the repository. Each module's build directory keeps a concise runbook-style `README.adoc` for day-to-day use; detailed guides live here.
+
+== OnCloud (CDP Public Cloud HoL provisioner)
+
+link:oncloud/README.adoc[OnCloud documentation index]
+
+* link:oncloud/aws-provisioner.adoc[AWS HoL provisioner — features, Docker build, Jenkins, authentication]
+* link:oncloud/azure-provisioner.adoc[Azure HoL provisioner — features, credentials, standalone usage]
+* link:oncloud/configfile-reference.adoc[Configfile reference — all supported keys]
+* link:oncloud/aws-enhancements.adoc[AWS post-provision enhancements]
+* link:oncloud/azure-enhancements.adoc[Azure post-provision enhancements]
+
+== Other modules
+
+These modules document themselves in place; see the root link:../README.adoc[README.adoc] for the repository map.
+
+* link:../ClusterValidation/README.adoc[ClusterValidation] — smoke testing
+* link:../CDP_Validation_TPCDS/Readme.adoc[CDP_Validation_TPCDS] — TPC-DS benchmarking
+* link:../K8SOperators/README.adoc[K8SOperators] — Kubernetes operators
+* link:../Participant_amps/README.adoc[Participant_amps] — AMP onboarding automation
+* link:../PvC-InfraDeployer/README.adoc[PvC-InfraDeployer] — PVC infrastructure
+* link:../Utilities/README.adoc[Utilities] — shared helper tools

@@ -21,6 +21,11 @@ data "azurerm_resource_group" "cdp" {
   name = var.resource_group_name
 }
 
+data "azurerm_storage_account" "datalake" {
+  name                = var.data_storage_account
+  resource_group_name = var.resource_group_name
+}
+
 locals {
   cdw_role_actions = [
     "Microsoft.Resources/deployments/cancel/action",
@@ -89,4 +94,12 @@ resource "azurerm_role_assignment" "cdw" {
   principal_id       = azurerm_user_assigned_identity.cdw.principal_id
 
   description = "HoL enhancement: CDW custom role for ${var.env_prefix}-cdw-identity"
+}
+
+resource "azurerm_role_assignment" "cdw_datalake_blob_owner" {
+  scope                = data.azurerm_storage_account.datalake.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = azurerm_user_assigned_identity.cdw.principal_id
+
+  description = "HoL enhancement: CDW AKS identity datalake storage access (required for CDW activation)"
 }

@@ -1,0 +1,44 @@
+= Azure Enhancements
+:toc: preamble
+:icons: font
+
+Optional post-provision Terraform modules for CDP Azure environments.
+
+Detailed reference: link:../../../../../docs/oncloud/azure-enhancements.adoc[Azure enhancements guide]
+
+== Modules
+
+|===
+| Module | When applied | Purpose
+
+| `storage_lifecycle/`
+| Always
+| Log container lifecycle — removes objects under `logs/` after 3 days
+
+| `dladmin_log_access/`
+| Always
+| **Storage Blob Data Contributor** on log container for `${env_prefix}-dladmin-identity`
+
+| `cdw_custom_identity/`
+| `ENABLE_DATA_SERVICES` includes `CDW`
+| `${env_prefix}-cdw-identity` with CDW minimum permissions + Storage Blob Data Owner
+
+| `cde_custom_identity/`
+| `ENABLE_DATA_SERVICES` includes `CDE`
+| Cluster and virtual-cluster managed identities for CDE >= 1.25.2
+|===
+
+CAI NFS provisioning is handled via CDP Terraform patches (not a separate module here). See the link:../../../../../docs/oncloud/azure-enhancements.adoc#_cai_nfs_via_cdp_terraform[CAI NFS section] in the detailed guide.
+
+These modules are invoked automatically by the provisioner pipeline. No manual Terraform apply is required for standard HoL runs.
+
+== Directory layout
+
+[source]
+----
+azure_enhancements/
+├── storage_lifecycle/
+├── dladmin_log_access/
+├── cdw_custom_identity/
+└── cde_custom_identity/
+----

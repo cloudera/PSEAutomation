@@ -1,0 +1,61 @@
+# Copy this file to your userconfig directory as "configfile" (no extension).
+# Format: KEY:value  — no quotes, no blank line after the last entry.
+# Lines starting with # are ignored when copying; remove comments for production use.
+
+# --- Core workshop settings (required) ---
+PROVISION_KEYCLOAK:yes
+KEYCLOAK_ADMIN_PASSWORD:changeme
+PROVISION_CAII:no
+AWS_REGION:us-east-1
+CDP_DEPLOYMENT_TYPE:public
+WORKSHOP_NAME:pseworkshop
+NUMBER_OF_WORKSHOP_USERS:10
+WORKSHOP_USER_PREFIX:pseworkshop
+WORKSHOP_USER_DEFAULT_PASSWORD:changeme
+LOCAL_MACHINE_IP:203.0.113.10/32
+ENABLE_DATA_SERVICES:CDW,CAI,CDE,CDF
+DOMAIN:example.com
+HOSTEDZONEID:Z1234567890ABC
+DATALAKE_VERSION:7.3.2
+
+# --- Optional: existing EC2 key pair (omit to auto-generate) ---
+# Place <AWS_KEY_PAIR>.pem in the same userconfig directory.
+#AWS_KEY_PAIR:my-keypair
+
+# --- Optional: CDP quota overrides ---
+#CDP_SAML_PROVIDER_LIMIT:10
+#CDP_USER_LIMIT:1000
+#CDP_GROUP_LIMIT:50
+
+# --- Optional: data service sizing overrides ---
+#CDW_VRTL_WAREHOUSE_SIZE:xsmall
+#CDW_DATAVIZ_SIZE:viz-default
+#CDE_INSTANCE_TYPE:m5.2xlarge
+#CDE_INITIAL_INSTANCES:10
+#CDE_MIN_INSTANCES:10
+#CDE_MAX_INSTANCES:40
+#CDE_SPARK_VERSION:AUTO
+#CDE_VC_TIER:CORE
+#CAI_WS_INSTANCE_TYPE:m5.2xlarge
+#CAI_MIN_INSTANCES:1
+#CAI_MAX_INSTANCES:10
+#CAI_ENABLE_GPU:no
+#CAI_GPU_INSTANCE_TYPE:g4dn.xlarge
+#CAI_MIN_GPU_INSTANCES:0
+#CAI_MAX_GPU_INSTANCES:10
+#CDF_INSTANCE_TYPE:m5.2xlarge
+#CDF_MIN_NODES:3
+#CDF_MAX_NODES:10
+#CDF_USE_PUBLIC_LB:yes
+
+# --- Optional: resource tags (pse-owner is required for cost tracking) ---
+ENV_TAGS:{pse-owner=you@cloudera.com,apn-id=12345}
+
+# --- Optional: AWS credentials (use instead of mounting ~/.aws) ---
+#AWS_ACCESS_KEY_ID:AKIA...
+#AWS_SECRET_ACCESS_KEY:your-secret
+#AWS_SESSION_TOKEN:optional-for-temporary-creds
+
+# After a successful provision, workshop access details are written to:
+#   /userconfig/{WORKSHOP_NAME}.txt
+# Jenkins attaches this file to the success email when run from CI.

@@ -32,15 +32,22 @@ provision)
         destroy_cdp
         hol_provision_failed "$workshop_name"
     else
+        write_workshop_cdp_outputs
         hol_milestone "CDP Environment Provisioned" "☁️"
     fi
     if [ "$provision_keycloak" == "yes" ]; then
-        setup_keycloak_vm
-        if [ $? -ne 0 ]; then
-            hol_warn "Keycloak provisioning failed — rolling back"
-            destroy_keycloak
-            hol_provision_failed "$workshop_name"
+        if [[ -f /userconfig/keycloak_ip ]]; then
+            hol_skip "Keycloak already provisioned during CDP setup"
+            hol_milestone "Keycloak Server Provisioned" "🔐"
         else
+            setup_keycloak_vm
+            if [ $? -ne 0 ]; then
+                hol_warn "Keycloak provisioning failed — rolling back"
+                destroy_keycloak
+                hol_provision_failed "$workshop_name"
+            else
+                wait_for_keycloak_ready || hol_provision_failed "$workshop_name"
+            fi
             hol_milestone "Keycloak Server Provisioned" "🔐"
         fi
     else
@@ -70,7 +77,9 @@ provision)
         hol_provision_failed "$workshop_name"
     fi
 
+    write_workshop_data_service_outputs
     hol_milestone "Infrastructure Provisioned" "🎉"
+    hol_info "Workshop access details: /userconfig/${workshop_name}.txt (attached to Jenkins email when run from CI)"
     ;;
 destroy)
     hol_banner "HoL Destroy Pipeline" "🗑️"
@@ -86,6 +95,9 @@ destroy)
         cdp_idp_user_teardown
     fi
     destroy_hol_infra
+    if [ $? -ne 0 ]; then
+        hol_destroy_failed "$workshop_name"
+    fi
     hol_banner "Infrastructure destroyed" "✅"
     hol_ok "Workshop '${workshop_name}' teardown completed"
     ;;

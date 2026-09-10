@@ -17,8 +17,8 @@
 
     - name: Set CDW cluster facts
       ansible.builtin.set_fact:
-        cdw_cluster_exists: "{{ dwcluster is succeeded and (dwcluster.get('clusters', []) | length > 0) }}"
-        cdw_cluster_id: "{{ dwcluster.get('clusters', [{}])[0].get('id', '') }}"
+        cdw_cluster_exists: "{{ dwcluster is succeeded and ((dwcluster.clusters | default([], true)) | length > 0) }}"
+        cdw_cluster_id: "{{ (dwcluster.clusters | default([], true))[0].id if ((dwcluster.clusters | default([], true)) | length > 0) else '' }}"
 
     - name: Skip CDW teardown when cluster does not exist
       ansible.builtin.debug:
@@ -37,8 +37,8 @@
 
     - name: Set database catalog facts
       ansible.builtin.set_fact:
-        dbcatalog_id: "{{ dbcatalogstatus.get('database_catalogs', [{}])[0].get('id', '') }}"
-        dbcatalog_exists: "{{ dbcatalogstatus is succeeded and (dbcatalogstatus.get('database_catalogs', []) | length > 0) }}"
+        dbcatalog_id: "{{ (dbcatalogstatus.database_catalogs | default([], true))[0].id if ((dbcatalogstatus.database_catalogs | default([], true)) | length > 0) else '' }}"
+        dbcatalog_exists: "{{ dbcatalogstatus is succeeded and ((dbcatalogstatus.database_catalogs | default([], true)) | length > 0) }}"
 
     - name: Fetch data visualization clusters
       ansible.builtin.command: |
@@ -172,34 +172,36 @@
         env: "{{ cdp_env_name }}"
       register: dw_cluster_status
       until: >
-        (dw_cluster_status['clusters'] | length == 0) or
-        (dw_cluster_status['clusters'][0]['status'] in ["Deleting", "Running", "Error", "Failed"])
+        (dw_cluster_status.clusters | default([], true) | length == 0) or
+        (dw_cluster_status.clusters[0].status in ["Deleting", "Running", "Error", "Failed"])
       retries: 50
       delay: 30
       ignore_errors: true
+      failed_when: false
 
     - name: Check and print cluster status
       ansible.builtin.debug:
-        msg: "Cluster is in {{ dw_cluster_status['clusters'][0]['status'] }} state"
-      when: dw_cluster_status['clusters'] | length > 0
+        msg: "Cluster is in {{ dw_cluster_status.clusters[0].status }} state"
+      when: (dw_cluster_status.clusters | default([], true) | length) > 0
 
     - name: Print cluster already removed
       ansible.builtin.debug:
         msg: "CDW cluster already removed for environment {{ cdp_env_name }}."
-      when: dw_cluster_status['clusters'] | length == 0
+      when: (dw_cluster_status.clusters | default([], true) | length) == 0
 
     - name: Fail task if cluster deletion failed
       ansible.builtin.fail:
         msg: "Cluster deletion failed."
       when:
-        - dw_cluster_status['clusters'] | length > 0
-        - dw_cluster_status['clusters'][0]['status'] in ["Error", "Failed"]
+        - (dw_cluster_status.clusters | default([], true) | length) > 0
+        - dw_cluster_status.clusters[0].status in ["Error", "Failed"]
 
     - name: Deactivate CDW cluster
       cloudera.cloud.dw_cluster_info:
         env: "{{ cdp_env_name }}"
       register: deactivatedw
-      until: deactivatedw['clusters'] | length == 0
+      until: (deactivatedw.clusters | default([], true) | length) == 0
       retries: 50
       delay: 30
       ignore_errors: true
+      failed_when: false

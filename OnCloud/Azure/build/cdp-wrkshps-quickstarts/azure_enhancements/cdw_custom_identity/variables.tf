@@ -12,3 +12,8 @@ variable "azure_region" {
   description = "Azure region"
   type        = string
 }
+
+variable "data_storage_account" {
+  description = "CDP datalake storage account name"
+  type        = string
+}

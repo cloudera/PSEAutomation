@@ -4,7 +4,12 @@
   connection: local
   gather_facts: yes
   vars:
-    instance_type: "m5.2xlarge"
+    instance_type: "Standard_D8s_v5"
+    cde_instance_type_fallbacks:
+      - "Standard_D8s_v5"
+      - "Standard_D8s_v4"
+      - "Standard_D8s_v3"
+      - "Standard_D16s_v3"
     initial_instances: 10
     minimum_instances: 10
     maximum_instances: 40
@@ -27,6 +32,8 @@
           - "workshop_name: {{ workshop_name }}"
           - "cdp_env_name: {{ cdp_env_name }}"
           - "number_vc_to_create: {{ number_vc_to_create | default(1) }}"
+          - "cde_cluster_managed_identity_id: {{ cde_cluster_managed_identity_id }}"
+          - "cde_vc_managed_identity_id: {{ cde_vc_managed_identity_id }}"
 
     - name: Check if CDE service exists and is running
       cloudera.cloud.de_info:
@@ -38,22 +45,64 @@
       debug:
         msg: "{{ deservicestatus }}"
 
+    - name: Initialize CDE service existence flag
+      ansible.builtin.set_fact:
+        cde_service_exists: false
+
     - name: Determine if CDE service needs to be created
-      set_fact:
-        cde_service_exists: "{{ deservicestatus.services | selectattr('status', 'equalto', 'ClusterCreationCompleted') | list | length > 0 }}"
-      when: deservicestatus is defined and deservicestatus.services is defined
+      ansible.builtin.set_fact:
+        cde_service_exists: >-
+          {{
+            (deservicestatus.services | default([], true)
+            | selectattr('status', 'equalto', 'ClusterCreationCompleted')
+            | list | length) > 0
+          }}
+      when: deservicestatus is succeeded
+
+    - name: Skip provisioning when CDE service is already running
+      ansible.builtin.debug:
+        msg: "CDE service {{ workshop_name }}-cde is already running — skipping activation."
+      when: cde_service_exists
+
+    - name: Build CDE instance type attempt list
+      ansible.builtin.set_fact:
+        cde_instance_type_try_list: "{{ ([instance_type] + cde_instance_type_fallbacks) | unique }}"
+      when: not cde_service_exists
 
     - name: Activate CDE service if it does not exist
-      cloudera.cloud.de:
-        name: "{{ workshop_name }}-cde"
-        env: "{{ cdp_env_name }}"
-        instance_type: "{{ instance_type }}"
-        minimum_instances: "{{ minimum_instances | int }}"
-        maximum_instances: "{{ maximum_instances | int }}"
-        initial_instances: "{{ initial_instances | int }}"
-        enable_public_endpoint: true
-        state: present
-        wait: no
+      ansible.builtin.shell: |
+        set -o pipefail
+        last_err=""
+        for t in {{ cde_instance_type_try_list | default([instance_type], true) | join(' ') }}; do
+          err_file="$(mktemp)"
+          if cdp de enable-service \
+            --name "{{ workshop_name }}-cde" \
+            --env "{{ cdp_env_name }}" \
+            --instance-type "$t" \
+            --minimum-instances "{{ minimum_instances | int }}" \
+            --maximum-instances "{{ maximum_instances | int }}" \
+            --initial-instances "{{ initial_instances | int }}" \
+            --enable-public-endpoint \
+            --azure-service-managed-identity "{{ cde_cluster_managed_identity_id }}" \
+            --azure-virtual-cluster-managed-identities "{{ cde_vc_managed_identity_id }}" \
+            2>"$err_file"; then
+            echo "CDE enabled with instance type $t"
+            rm -f "$err_file"
+            exit 0
+          fi
+          last_err="$(cat "$err_file")"
+          rm -f "$err_file"
+          if grep -qi 'not able to find instance type' <<<"$last_err"; then
+            echo "CDE instance type $t not available, trying next..." >&2
+            continue
+          fi
+          echo "$last_err" >&2
+          exit 1
+        done
+        echo "$last_err" >&2
+        exit 1
+      args:
+        executable: /bin/bash
       when: not cde_service_exists
       register: deservice
 
@@ -61,9 +110,12 @@
       cloudera.cloud.de_info:
         name: "{{ workshop_name }}-cde"
       register: deservicestatus
-      until: deservicestatus.services[0].status == "ClusterCreationCompleted"
+      until: >
+        (deservicestatus.services | default([], true) | length) > 0 and
+        deservicestatus.services[0].status == "ClusterCreationCompleted"
       retries: 40
       delay: 120
+      failed_when: false
 
     - name: Print the status
       debug:
@@ -121,6 +173,7 @@
       delay: "{{ cde_async_delay }}"
       loop: "{{ vc_async_jobs.results | default([]) | selectattr('ansible_job_id', 'defined') | list }}"
       when: vc_deploy_plan_missing | length > 0
+      ignore_errors: true
 
     - name: Fail on unexpected virtual cluster deployment errors
       ansible.builtin.fail:

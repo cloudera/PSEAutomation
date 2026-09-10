@@ -1,0 +1,103 @@
+= AWS HoL Provisioner — Detailed Reference
+:imagesdir: https://github.com/cloudera/ClouderaSetup/blob/main/images
+:toc: preamble
+:icons: font
+
+Runbook: link:../../OnCloud/AWS/build/README.adoc[`OnCloud/AWS/build/README.adoc`]
+
+image::keycloak_login.png[Keycloak login,600,400]
+
+== Overview
+
+Hands-on Labs showcase Cloudera Data Platform Public Cloud to partners and customers. **AutoClouderaDeploy** is a container-based solution that provisions disposable on-demand infrastructure with a single command:
+
+1. Cloudera Environment
+2. Datalake
+3. Data Services (CAI, CDW, CDE, and CDF)
+4. Keycloak server (optional)
+5. Workshop users
+
+== Technology stack
+
+1. Ansible
+2. Terraform
+3. Cloudera.cloud
+4. CDP-tf-quickstarts
+5. CDPY
+6. CDP CLI
+7. AWS CLI
+8. Shell scripting
+
+All tools are packaged in a Docker container.
+
+== Docker image — build and publish
+
+Developer workflow (build, tag, push, local test): link:../../OnCloud/AWS/build/README.adoc#developer-guide-build-tag-and-push[`OnCloud/AWS/build/README.adoc`]
+
+=== Install Docker
+
+Follow the link:https://docs.docker.com/engine/install/[official Docker installation guide] for your platform.
+
+=== Build
+
+[source,bash]
+----
+cd OnCloud/AWS/build/
+docker build . -t hol:latest
+docker images   # verify
+----
+
+=== Tag and push to Docker Hub
+
+[source,bash]
+----
+docker login
+docker tag hol:latest clouderapartners/cdp-public-cloud-hol-provisioner:latest
+docker push clouderapartners/cdp-public-cloud-hol-provisioner:latest
+----
+
+NOTE: Images built on one platform may not run on another. For multi-platform builds, see link:https://docs.docker.com/build/building/multi-platform/[Docker multi-platform documentation].
+
+== Jenkins and configfile parameters
+
+* *OWNER* (resource tag `pse-owner`): default `pse-apac@cloudera.com`. Cannot use `owner` — CDP reserves it as a default tag.
+* *LOCAL_MACHINE_IP*: IP or CIDR to whitelist for environment access. Default `0.0.0.0/0` is allowed for most deployments.
+* *PROVISION_CAII*: when set to `YES`, `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`. Use your Jenkins agent IP or a Cloudera VPN address: `208.127.31.110/32` or `208.127.31.11/32`.
+
+The same CAII restriction is enforced in Jenkins parameter validation and in the container `configfile` check at runtime.
+
+After a successful provision, access details are written to `/userconfig/{WORKSHOP_NAME}.txt` inside the container (your mounted userconfig on the host) and attached to the Jenkins success email when run from CI.
+
+See link:configfile-reference.adoc[configfile reference] for all supported keys.
+
+== Major features
+
+1. Ubuntu Linux-based base image
+2. Optional Keycloak VM with SSO access for workshop users (HTTPS via Let's Encrypt)
+3. Workshop users mapped to CDP IAM groups with least-privilege roles
+4. Parameterized Keycloak admin password
+5. AWS and CDP prerequisite checks (VPC, Elastic IP, S3, IAM users/groups, SAML IdP quotas)
+6. Optional activation of CDW, CDE, CAI, and CDF data services
+7. Idempotent provision and destroy workflows
+8. Uses `cdp-tf-quickstarts` Terraform modules pulled at runtime
+9. Dynamic CDW virtual warehouse count based on workshop user count
+10. Optional GPU-backed CAI workspaces
+11. Configurable data service sizing and Spark version overrides
+12. CDV and Data Catalog deployment with CDW
+13. Multiple AWS authentication options (see below)
+14. Parallel data service provisioning when multiple services are selected
+15. Post-provision enhancements (link:aws-enhancements.adoc[S3 lifecycle and dladmin log policy])
+
+== AWS authentication
+
+The provisioner supports three authentication mechanisms:
+
+a) *Access key* — `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (via `~/.aws` mount or configfile)
+
+b) *AWS SSO* — via Okta/SAML profile in `~/.aws`
+
+c) *Instance role* — role assignment to the deployer EC2 instance via `sts:AssumeRole`
+
+== Changelog
+
+See link:../../OnCloud/AWS/build/CHANGELOG.md[`OnCloud/AWS/build/CHANGELOG.md`] for version history.

@@ -31,7 +31,7 @@ DATALAKE_VERSION:7.3.2
 # --- Optional: data service sizing overrides ---
 #CDW_VRTL_WAREHOUSE_SIZE:small
 #CDW_DATAVIZ_SIZE:small
-#CDE_INSTANCE_TYPE:Standard_D8s_v3
+#CDE_INSTANCE_TYPE:Standard_D8s_v5
 #CDE_INITIAL_INSTANCES:1
 #CDE_MIN_INSTANCES:1
 #CDE_MAX_INSTANCES:5
@@ -39,20 +39,34 @@ DATALAKE_VERSION:7.3.2
 #CDE_VC_TIER:CORE
 # When CAI or PROVISION_CAII is enabled, CDP Terraform also provisions a premium
 # Azure Files NFS share (secure transfer disabled) with private endpoints in the CDP VNet.
-#CAI_WS_INSTANCE_TYPE:Standard_D8s_v3
+# Each CAI workbench uses a dedicated subdirectory ({WORKSHOP_NAME}-cai-ws) with chown 8536:8536.
+# Re-run provision is idempotent: NFS share unchanged; mkdir/chown skipped if already correct.
+# The per-workbench mount path is passed to CAI as --existing-nfs (NFS v4.1).
+#CAI_NFS_VERSION:4.1
+#CAI_WS_INSTANCE_TYPE:Standard_D8s_v5
 #CAI_MIN_INSTANCES:1
 #CAI_MAX_INSTANCES:5
 #CAI_ENABLE_GPU:no
-#CDF_INSTANCE_TYPE:Standard_D8s_v3
-#CDF_MIN_NODES:1
+#CDF_INSTANCE_TYPE:Standard_D8s_v5
+#CDF_MIN_NODES:3
 #CDF_MAX_NODES:3
 #CDF_USE_PUBLIC_LB:yes
 
 # --- Optional: resource tags (pse-owner is required for cost tracking) ---
 ENV_TAGS:{pse-owner=you@cloudera.com,apn-id=12345}
 
+# After a successful provision, workshop access details are written to:
+#   /userconfig/{WORKSHOP_NAME}.txt
+# Jenkins attaches this file to the success email when run from CI.
+
 # --- Optional: Azure service principal (use instead of mounting ~/.azure) ---
 #AZURE_CLIENT_ID:00000000-0000-0000-0000-000000000000
 #AZURE_CLIENT_SECRET:your-secret
 #AZURE_TENANT_ID:00000000-0000-0000-0000-000000000000
 #AZURE_SUBSCRIPTION_ID:00000000-0000-0000-0000-000000000000
+
+# --- Optional: AWS credentials for Keycloak Route53 DNS (use instead of mounting ~/.aws) ---
+#AWS_ACCESS_KEY_ID:AKIA...
+#AWS_SECRET_ACCESS_KEY:your-secret
+#AWS_SESSION_TOKEN:optional-for-temporary-creds
+#AWS_REGION:us-east-1

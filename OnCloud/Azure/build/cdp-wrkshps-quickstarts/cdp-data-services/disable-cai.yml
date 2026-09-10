@@ -12,6 +12,8 @@
       ansible.builtin.shell: >
         cdp ml list-workspaces | jq -r '.workspaces[].instanceName'
       register: ml_list_workspaces
+      failed_when: false
+      changed_when: false
 
     - name: Set workspace exists flag
       set_fact:
@@ -20,7 +22,11 @@
     - name: Handle non-existing or deleted workspace
       debug:
         msg: "Workspace {{ workshop_name }}-cai-ws does not exist or is already deleted in environment {{ cdp_env_name }}."
-      when: not workspace_exists or 'resourceCrn should not be empty or nil' in ml_list_workspaces.stderr
+      when: not workspace_exists or 'resourceCrn should not be empty or nil' in (ml_list_workspaces.stderr | default(''))
+
+    - name: End play when workspace does not exist
+      ansible.builtin.meta: end_play
+      when: not workspace_exists
 
     - name: Delete CAI Workspace if exists
       ansible.builtin.command: >
@@ -41,14 +47,15 @@
         cdp ml list-workspaces | jq -r '.workspaces[] | select(.instanceName == "{{ workshop_name }}-cai-ws")  | .instanceStatus'
       register: ml_ws_status
       until: >
-        not workspace_exists or
-        'resourceCrn should not be empty or nil' in ml_ws_status.stderr or
+        'resourceCrn should not be empty or nil' in (ml_ws_status.stderr | default('')) or
         (ml_ws_status.rc == 0 and (ml_ws_status.stdout in [
           "", "modify:finished", "modify:failed", "installation:finished", "installation:failed",
           "provision:finished", "provision:failed", "deprovision:finished", "deprovision:failed"
         ]))
       retries: 150
       delay: 30
+      when: workspace_exists
+      ignore_errors: true
 
     - name: Print success message on workspace deletion
       debug:

@@ -1,0 +1,41 @@
+= OnCloud — CDP Public Cloud HoL Provisioner
+:toc: preamble
+:icons: font
+
+Automation for provisioning disposable Cloudera Data Platform (CDP) Public Cloud Hands-on Lab environments on AWS and Azure.
+
+== Runbooks (quick start)
+
+Use these for day-to-day provision and destroy workflows:
+
+|===
+| Cloud | Runbook | Docker image
+
+| AWS
+| link:../../OnCloud/AWS/build/README.adoc[`OnCloud/AWS/build/`]
+| `clouderapartners/cdp-public-cloud-hol-provisioner:latest`
+
+| Azure
+| link:../../OnCloud/Azure/build/README.adoc[`OnCloud/Azure/build/`]
+| `clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest`
+|===
+
+== Detailed guides
+
+=== Provisioners
+
+* link:aws-provisioner.adoc[AWS provisioner reference] — technology stack, Docker build and push, feature list, Jenkins parameters, AWS authentication options
+* link:azure-provisioner.adoc[Azure provisioner reference] — Azure-specific features, credential options, standalone usage, CAI NFS integration
+* link:configfile-reference.adoc[Configfile reference] — all supported `configfile` keys for AWS and Azure
+
+=== Post-provision enhancements
+
+Terraform modules applied after the CDP environment is created:
+
+* link:aws-enhancements.adoc[AWS enhancements] — S3 lifecycle and datalake admin log access
+* link:azure-enhancements.adoc[Azure enhancements] — storage lifecycle, managed identities (CDW, CDE), CAI NFS behavior
+
+Local runbooks for enhancement subdirectories:
+
+* link:../../OnCloud/AWS/build/cdp-wrkshps-quickstarts/aws_enhancements/README.adoc[`aws_enhancements/`]
+* link:../../OnCloud/Azure/build/cdp-wrkshps-quickstarts/azure_enhancements/README.adoc[`azure_enhancements/`]
