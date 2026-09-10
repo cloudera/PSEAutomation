@@ -235,7 +235,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             cdw_dataviz_size=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
          CDE_INSTANCE_TYPE)
-            cde_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cde_instance_type="$value"
             ;;
          CDE_INITIAL_INSTANCES)
             cde_initial_instances=$value
@@ -253,7 +253,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             cde_vc_tier=$value
             ;;
          CAI_WS_INSTANCE_TYPE)
-            cai_ws_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cai_ws_instance_type="$value"
             ;;
          CAI_MIN_INSTANCES)
             cai_min_instances=$value
@@ -265,7 +265,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             cai_enable_gpu=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
          CAI_GPU_INSTANCE_TYPE)
-            cai_gpu_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cai_gpu_instance_type="$value"
             ;;
          CAI_MIN_GPU_INSTANCES)
             cai_min_gpu_instances=$value
@@ -274,7 +274,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             cai_max_gpu_instances=$value
             ;;
          CDF_INSTANCE_TYPE)
-            cdf_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cdf_instance_type="$value"
             ;;
          CDF_MIN_NODES)
             cdf_min_nodes=$value
@@ -958,17 +958,17 @@ enable_ai_registry() {
   ')
 
   if [[ "$registry_status" == "installation:finished" ]]; then
-    echo "✅ AI Registry for environment '${workshop_name}-cdp-env' is already installed. Skipping creation."
+    hol_skip "AI Registry for environment '${workshop_name}-cdp-env' is already installed"
     return
   else
-    echo "🚀 Proceeding with AI Registry deployment"
+    hol_step "Proceeding with AI Registry deployment"
     cdp ml create-model-registry \
       --environment-crn "$environment_crn" \
       --environment-name "${workshop_name}-cdp-env" \
       --use-public-load-balancer
   fi
 
-  echo "⏳ Waiting for AI Registry installation to finish..."
+  hol_step "Waiting for AI Registry installation to finish"
   for i in {1..75}; do
     registry_status=$(cdp ml list-model-registries | jq -r --arg env_name "${workshop_name}-cdp-env" '
       .modelRegistries[]
@@ -976,24 +976,22 @@ enable_ai_registry() {
       | .status
     ')
 
-    echo "   ➤ Attempt $i: Status = $registry_status"
+    hol_info "Attempt $i: Status = $registry_status"
 
     # Normalize to lowercase for matching
     status_lower=$(echo "$registry_status" | tr '[:upper:]' '[:lower:]')
 
     if [[ "$status_lower" == "installation:finished" ]]; then
-      echo "✅ AI Registry installation finished successfully."
+      hol_ok "AI Registry installation finished successfully"
       return
     elif [[ "$status_lower" == *"failed"* ]]; then
-      echo "❌ AI Registry installation FAILED with status: $registry_status"
-      exit 1
+      hol_fail "AI Registry installation failed with status: $registry_status"
     fi
 
     sleep 60
   done
 
-  echo "❌ Timeout Error: AI Registry did not reach 'installation:finished' state."
-  exit 1
+  hol_fail "AI Registry did not reach 'installation:finished' state (timeout)"
 }
 
 provision_caii_service_app() {
@@ -1014,14 +1012,15 @@ provision_caii_service_app() {
    ')
 
    if [[ "$caii_service_status" == "installation:finished" ]]; then
-     echo "✅ CAII service for environment '${workshop_name}-cdp-env' is already installed. Skipping creation."
+     hol_skip "CAII service for environment '${workshop_name}-cdp-env' is already installed"
    else
-     echo "🚀 Proceeding with CAII service deployment"
+     hol_step "Proceeding with CAII service deployment"
       # Create model endpoint
       cdp ml create-ml-serving-app --cli-input-json file://updated-serving-app-input.json
       sleep 60
    fi
 
+   hol_step "Waiting for CAII service installation to finish"
    for i in {1..60}; do
      caii_service_status=$(cdp ml list-ml-serving-apps | jq -r --arg env_name "$env_name" '
       .apps[]
@@ -1029,15 +1028,14 @@ provision_caii_service_app() {
       | .status
      ')
 
-     echo "   ➤ Attempt $i: Status = $caii_service_status"
+     hol_info "Attempt $i: Status = $caii_service_status"
 
    # Keep looping until status is 'installation:finished'
      if [[ "$caii_service_status" == "installation:finished" ]]; then
-         echo "✅ Installation finished."
+         hol_ok "CAII service installation finished"
          break
      elif [[ "$caii_service_status" == "installation:failed" ]]; then
-         echo "❌ Installation failed."
-         exit 1
+         hol_fail "CAII service installation failed"
      fi
 
      sleep 45
@@ -1073,7 +1071,7 @@ provision_cai_inference() {
   status_cai=$?
 
   if [[ $status_compute -ne 0 || $status_ai_registry -ne 0 || $status_cai -ne 0 ]]; then
-    echo "❌ Error: One or more provisioning steps failed."
+    hol_warn "One or more CAII provisioning steps failed"
     return 1
   fi
 
@@ -1094,10 +1092,10 @@ destroy_cai_inference() {
    ')
 
    if [[ -n "$serving_app_crn" ]]; then
-     echo "🗑️ Deleting ML Serving App: $serving_app_crn"
+     hol_step "Deleting ML Serving App: $serving_app_crn"
      cdp ml delete-ml-serving-app --app-crn "$serving_app_crn"
    else
-     echo "✅ No ML Serving App found"
+     hol_skip "No ML Serving App found"
    fi
    
    # Set the data service value for cleanup
@@ -1172,6 +1170,77 @@ destroy_hol_infra() {
 }
 
 #--------------------------------------------------------------------------------------------------#
+workshop_output_file() {
+   echo "/userconfig/${workshop_name}.txt"
+}
+
+workshop_services_include() {
+   local service="$1"
+   local normalized="${enable_data_services:-}"
+   normalized="${normalized//[/}"
+   normalized="${normalized//]/}"
+   normalized=$(echo "$normalized" | tr '[:upper:]' '[:lower:]')
+   [[ ",${normalized}," == *",${service},"* ]]
+}
+
+append_workshop_output_section() {
+   local title="$1"
+   local out
+   out="$(workshop_output_file)"
+   {
+      echo ""
+      echo "==============================================================="
+      echo "     ${title}"
+      echo "==============================================================="
+   } >>"$out"
+}
+
+write_workshop_cdp_outputs() {
+   local out
+   out="$(workshop_output_file)"
+   append_workshop_output_section "CDP / AWS Infrastructure: ${workshop_name}"
+   {
+      echo "Generated (UTC): $(date -u +"%Y-%m-%d %H:%M:%S")"
+      echo "CDP Environment: ${workshop_name}-cdp-env"
+      echo "AWS Region: ${aws_region:-n/a}"
+      echo "EC2 Key Pair: ${aws_key_pair:-n/a}"
+      echo "CDP Log S3 Bucket: ${BUCKET_NAME:-n/a}"
+      echo "Public Subnets (first 3): ${ENV_PUBLIC_SUBNETS:-n/a}"
+      echo "Private Subnets (first 3): ${ENV_PRIVATE_SUBNETS:-n/a}"
+      echo "CDP Console: https://console.cdp.cloudera.com/"
+   } >>"$out"
+   hol_ok "CDP outputs appended to ${out}"
+}
+
+write_workshop_data_service_outputs() {
+   local out
+   out="$(workshop_output_file)"
+   append_workshop_output_section "Data Services: ${workshop_name}"
+   {
+      echo "Enabled Data Services: ${enable_data_services:-n/a}"
+      if workshop_services_include cdw; then
+         echo "CDW Virtual Warehouse Size: ${cdw_vrtl_warehouse_size:-n/a}"
+         echo "CDW DataViz Size: ${cdw_dataviz_size:-n/a}"
+      fi
+      if workshop_services_include cde; then
+         echo "CDE Service Name: ${workshop_name}-cde"
+         echo "CDE Instance Type: ${cde_instance_type:-n/a}"
+         echo "CDE Spark Version: ${cde_spark_version:-n/a}"
+      fi
+      if workshop_services_include cai || [[ "${provision_caii:-no}" == "yes" ]]; then
+         echo "CAI Workspace Name: ${workshop_name}-cai-ws"
+         echo "CAI WS Instance Type: ${cai_ws_instance_type:-n/a}"
+         echo "CAI GPU Enabled: ${cai_enable_gpu:-n/a}"
+      fi
+      if workshop_services_include cdf; then
+         echo "CDF Environment Service: ${workshop_name}-cdp-env"
+         echo "CDF Instance Type: ${cdf_instance_type:-n/a}"
+      fi
+   } >>"$out"
+   hol_ok "Data service outputs appended to ${out} (also emailed via Jenkins when run from CI)"
+}
+
+#--------------------------------------------------------------------------------------------------#
 # Function to configure IDP Client
 cdp_idp_setup_user() {
    # echo "keycloak__admin_password:$keycloak__admin_password"
@@ -1181,7 +1250,7 @@ cdp_idp_setup_user() {
    hol_subsection "Configuring IDP in CDP" "🔗"
    sleep 5
    cdp_region=$(cdp environments describe-environment --environment-name $workshop_name-cdp-env | jq -r .environment.crn | cut -d: -f4)
-   echo "cdp_region:$cdp_region"
+   hol_kv "CDP region" "$cdp_region"
    ansible-playbook create_keycloak_client.yml --extra-vars \
       "keycloak__admin_username=admin \
       keycloak__admin_password=$keycloak__admin_password \
@@ -1213,7 +1282,7 @@ cdp_idp_setup_user() {
          --first-name User-$workshop_user_prefix$i \
          --last-name User-$workshop_user_prefix$i 2>&1)
       if echo "$output" | grep -q "ALREADY_EXISTS"; then
-         echo "User '$workshop_user_prefix$i' already exists. Skipping..."
+         hol_skip "User '$workshop_user_prefix$i' already exists"
       fi
    done
 

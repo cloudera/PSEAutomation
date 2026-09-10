@@ -7,7 +7,27 @@
 == Overview
 The `PSEAutomation` repository contains a curated collection of automation tools, deployment assets, and utilities designed to accelerate **Cloudera PSE (Partner Solutions Engineering)** use cases.  
 
-This repository is structured into distinct modules that provide building blocks for infrastructure provisioning, Kubernetes operators, participant onboarding using AMPs, and Cloudera on-cloud deployments.  
+This repository is structured into distinct modules that provide building blocks for infrastructure provisioning, Kubernetes operators, participant onboarding using AMPs, and Cloudera on-cloud deployments.
+
+== Documentation
+
+Each module includes a concise runbook-style `README.adoc` for day-to-day use. Long-form reference material lives in link:docs/README.adoc[`docs/`].
+
+|===
+| Topic | Runbook | Detailed guide
+
+| OnCloud (AWS + Azure HoL provisioner)
+| link:OnCloud/AWS/build/README.adoc[AWS build] · link:OnCloud/Azure/build/README.adoc[Azure build]
+| link:docs/oncloud/README.adoc[OnCloud docs]
+
+| Configfile keys
+| link:OnCloud/AWS/build/configuration/configfile.example[AWS example] · link:OnCloud/Azure/build/configuration/configfile.example[Azure example]
+| link:docs/oncloud/configfile-reference.adoc[Full reference]
+
+| Post-provision enhancements
+| link:OnCloud/AWS/build/cdp-wrkshps-quickstarts/aws_enhancements/README.adoc[AWS] · link:OnCloud/Azure/build/cdp-wrkshps-quickstarts/azure_enhancements/README.adoc[Azure]
+| link:docs/oncloud/aws-enhancements.adoc[AWS guide] · link:docs/oncloud/azure-enhancements.adoc[Azure guide]
+|===
 
 == Repository Structure
 
@@ -44,22 +64,16 @@ This folder contains Kubernetes Operators and supporting manifests to streamline
 - Configurations to integrate Cloudera services with Kubernetes-native features.  
 
 === OnCloud/AWS/build
-This folder contains automation scripts, templates, and configurations for deploying Cloudera components on **AWS cloud environments**.  
+Container-based HoL provisioner for **AWS** — disposable CDP environments with CAI, CDW, CDE, CDF, and optional Keycloak SSO.
 
-**Key capabilities:**
-
-- AWS infrastructure provisioning using Infrastructure-as-Code.  
-- Build scripts for reproducible deployments.  
+* Runbook: link:OnCloud/AWS/build/README.adoc[`README.adoc`]
+* Detailed guide: link:docs/oncloud/aws-provisioner.adoc[AWS provisioner reference]
 
 === OnCloud/Azure/build
-This folder contains automation scripts, templates, and configurations for deploying Cloudera components on **Azure cloud environments**.
+Container-based HoL provisioner for **Azure** — same workshop stack as AWS, with Azure-specific managed identities and CAI NFS support.
 
-**Key capabilities:**
-
-- Azure infrastructure provisioning using Infrastructure-as-Code.
-- Containerized HoL provisioner with support for CAI, CDW, CDE, CDF, and optional Keycloak.
-- Jenkins pipelines and Ansible playbooks mirrored from the AWS automation.
-- Standalone usage via a `configfile` mounted at `/userconfig` (see `OnCloud/Azure/build/configuration/configfile.example`).
+* Runbook: link:OnCloud/Azure/build/README.adoc[`README.adoc`]
+* Detailed guide: link:docs/oncloud/azure-provisioner.adoc[Azure provisioner reference]
 
 === Participant_amps
 This folder contains **Selenium based automation** tailored for CAI project creation and deploying AMPs for workshop participants.  

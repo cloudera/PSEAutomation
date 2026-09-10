@@ -1,0 +1,243 @@
+= Configfile Reference — HoL Provisioner
+:toc: preamble
+:icons: font
+
+Both AWS and Azure provisioners read a flat `configfile` mounted at `/userconfig/configfile`. Copy the example from your build directory:
+
+* AWS: link:../../OnCloud/AWS/build/configuration/configfile.example[`OnCloud/AWS/build/configuration/configfile.example`]
+* Azure: link:../../OnCloud/Azure/build/configuration/configfile.example[`OnCloud/Azure/build/configuration/configfile.example`]
+
+== Format rules
+
+* File name must be exactly `configfile` (no extension).
+* One key per line: `KEY:value` — no quotes, no blank line after the last entry.
+* Lines starting with `#` are comments (ignored when copying; remove for production).
+
+== Core settings (required)
+
+|===
+| Key | AWS | Azure | Description
+
+| `PROVISION_KEYCLOAK`
+| yes
+| yes
+| `yes` or `no` — provision Keycloak for SSO workshop access
+
+| `KEYCLOAK_ADMIN_PASSWORD`
+| yes
+| yes
+| Keycloak admin password
+
+| `PROVISION_CAII`
+| yes
+| yes
+| `yes` or `no` — provision Cloudera AI Inference. When `yes`, `LOCAL_MACHINE_IP` cannot be `0.0.0.0/0`
+
+| `AWS_REGION` / `AZURE_REGION`
+| AWS only
+| Azure only
+| Cloud region for CDP resources
+
+| `CDP_DEPLOYMENT_TYPE`
+| yes
+| yes
+| Typically `public`
+
+| `WORKSHOP_NAME`
+| yes
+| yes
+| Unique workshop identifier (used in resource names and output file)
+
+| `NUMBER_OF_WORKSHOP_USERS`
+| yes
+| yes
+| Count of workshop users to create
+
+| `WORKSHOP_USER_PREFIX`
+| yes
+| yes
+| Username prefix for workshop accounts
+
+| `WORKSHOP_USER_DEFAULT_PASSWORD`
+| yes
+| yes
+| Default password for workshop users
+
+| `LOCAL_MACHINE_IP`
+| yes
+| yes
+| IP or CIDR to whitelist for environment access
+
+| `ENABLE_DATA_SERVICES`
+| yes
+| yes
+| Comma-separated list: `CDW`, `CAI`, `CDE`, `CDF`
+
+| `DOMAIN`
+| yes
+| yes
+| DNS domain for Keycloak TLS (Route53)
+
+| `HOSTEDZONEID`
+| yes
+| yes
+| Route53 hosted zone ID for Keycloak DNS
+
+| `DATALAKE_VERSION`
+| yes
+| yes
+| CDP datalake version (for example `7.3.2`)
+|===
+
+== SSH key (optional)
+
+|===
+| Key | AWS | Azure | Description
+
+| `AWS_KEY_PAIR`
+| yes
+| —
+| Existing EC2 key pair name; place `<name>.pem` in userconfig directory
+
+| `SSH_KEY_NAME`
+| —
+| yes
+| Existing SSH key name; also accepted as `AWS_KEY_PAIR` for parity. Place `<name>.pem` in userconfig directory
+|===
+
+If omitted, a key pair is generated automatically.
+
+== CDP quota overrides (optional)
+
+|===
+| Key | Default behavior
+
+| `CDP_SAML_PROVIDER_LIMIT`
+| Override SAML provider quota check
+
+| `CDP_USER_LIMIT`
+| Override IAM user quota check
+
+| `CDP_GROUP_LIMIT`
+| Override IAM group quota check
+|===
+
+== Data service sizing (optional)
+
+|===
+| Key | Services | Description
+
+| `CDW_VRTL_WAREHOUSE_SIZE`
+| CDW
+| Virtual warehouse size
+
+| `CDW_DATAVIZ_SIZE`
+| CDW
+| Data visualization instance size
+
+| `CDE_INSTANCE_TYPE`
+| CDE
+| CDE service cluster instance type
+
+| `CDE_INITIAL_INSTANCES` / `CDE_MIN_INSTANCES` / `CDE_MAX_INSTANCES`
+| CDE
+| CDE cluster scaling bounds
+
+| `CDE_SPARK_VERSION`
+| CDE
+| Spark version (or `AUTO`)
+
+| `CDE_VC_TIER`
+| CDE
+| Virtual cluster tier (for example `CORE`)
+
+| `CAI_WS_INSTANCE_TYPE`
+| CAI
+| CAI workspace instance type
+
+| `CAI_MIN_INSTANCES` / `CAI_MAX_INSTANCES`
+| CAI
+| CAI workspace scaling bounds
+
+| `CAI_ENABLE_GPU`
+| CAI
+| `yes` or `no`
+
+| `CAI_GPU_INSTANCE_TYPE` / `CAI_MIN_GPU_INSTANCES` / `CAI_MAX_GPU_INSTANCES`
+| CAI (AWS)
+| GPU workspace settings
+
+| `CAI_NFS_VERSION`
+| CAI (Azure)
+| NFS version for existing NFS mount (default `4.1`)
+
+| `CDF_INSTANCE_TYPE`
+| CDF
+| CDF instance type
+
+| `CDF_MIN_NODES` / `CDF_MAX_NODES`
+| CDF
+| CDF node count bounds
+
+| `CDF_USE_PUBLIC_LB`
+| CDF
+| `yes` or `no`
+|===
+
+== Resource tags (optional)
+
+|===
+| Key | Description
+
+| `ENV_TAGS`
+| Tag map for deployed resources, for example `{pse-owner=you@cloudera.com,apn-id=12345}`. `pse-owner` is required for cost tracking.
+|===
+
+== Cloud credentials (optional alternatives to volume mounts)
+
+=== AWS
+
+|===
+| Key | Description
+
+| `AWS_ACCESS_KEY_ID`
+| AWS access key
+
+| `AWS_SECRET_ACCESS_KEY`
+| AWS secret key
+
+| `AWS_SESSION_TOKEN`
+| Optional, for temporary credentials
+
+| `AWS_REGION`
+| AWS region (Azure builds only — for Route53 DNS)
+|===
+
+=== Azure
+
+|===
+| Key | Description
+
+| `AZURE_CLIENT_ID`
+| Service principal client ID
+
+| `AZURE_CLIENT_SECRET`
+| Service principal secret
+
+| `AZURE_TENANT_ID`
+| Azure AD tenant ID
+
+| `AZURE_SUBSCRIPTION_ID`
+| Azure subscription ID
+|===
+
+== Output
+
+After a successful provision, workshop access details are written to:
+
+[source]
+----
+/userconfig/{WORKSHOP_NAME}.txt
+----
+
+Jenkins attaches this file to the success email when run from CI.

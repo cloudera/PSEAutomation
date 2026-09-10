@@ -47,6 +47,7 @@ provision)
         fi
         hol_provision_failed "$workshop_name"
     else
+        write_workshop_cdp_outputs
         hol_milestone "CDP Environment Provisioned" "☁️"
     fi
     update_cdp_user_group
@@ -73,7 +74,9 @@ provision)
         hol_provision_failed "$workshop_name"
     fi
 
+    write_workshop_data_service_outputs
     hol_milestone "Infrastructure Provisioned" "🎉"
+    hol_info "Workshop access details: /userconfig/${workshop_name}.txt (attached to Jenkins email when run from CI)"
     ;;
 destroy)
     hol_banner "HoL Destroy Pipeline" "🗑️"

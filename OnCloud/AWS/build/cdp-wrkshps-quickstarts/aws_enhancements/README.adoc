@@ -1,0 +1,34 @@
+= AWS Enhancements
+:toc: preamble
+:icons: font
+
+Post-provision Terraform modules applied after the CDP environment is created.
+
+Detailed reference: link:../../../../../docs/oncloud/aws-enhancements.adoc[AWS enhancements guide]
+
+== Modules
+
+|===
+| Module | Purpose
+
+| `s3_enhancements/`
+| Lifecycle policy on the CDP log bucket — removes objects under `logs/` after 3 days
+
+| `dladmin_log_policy/`
+| Attaches `${env_prefix}-logs-policy` to `${env_prefix}-dladmin-role` for `s3:PutObject` on logs
+|===
+
+These modules are invoked automatically by the provisioner pipeline after `provision_cdp()` completes. No manual Terraform apply is required for standard HoL runs.
+
+== Directory layout
+
+[source]
+----
+aws_enhancements/
+├── s3_enhancements/
+│   ├── main.tf
+│   └── variables.tf
+└── dladmin_log_policy/
+    ├── main.tf
+    └── variables.tf
+----

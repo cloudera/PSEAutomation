@@ -20,6 +20,32 @@
           - "vw_size: {{ vw_size }}"
           - "cdvc_size: {{ cdvc_size }}"
 
+    - name: Check if CDW cluster already exists
+      cloudera.cloud.dw_cluster_info:
+        env: "{{ cdp_env_name }}"
+      register: existing_dwcluster
+      failed_when: false
+
+    - name: Set CDW cluster facts
+      ansible.builtin.set_fact:
+        cdw_cluster_running: >-
+          {{
+            existing_dwcluster is succeeded and
+            (existing_dwcluster.clusters | default([], true) | length) > 0 and
+            existing_dwcluster.clusters[0].status == "Running"
+          }}
+        cdw_cluster_id: >-
+          {{
+            (existing_dwcluster.clusters | default([], true))[0].id
+            if ((existing_dwcluster.clusters | default([], true)) | length > 0)
+            else ''
+          }}
+
+    - name: Skip activation when CDW cluster is already running
+      ansible.builtin.debug:
+        msg: "CDW cluster already running for {{ cdp_env_name }} — skipping activation."
+      when: cdw_cluster_running
+
     - name: Activating CDW cluster
       cloudera.cloud.dw_cluster:
         env: "{{ cdp_env_name }}"
@@ -30,39 +56,68 @@
         public_worker_node: True
         wait: False
       register: dwcluster
+      when: not cdw_cluster_running
+      ignore_errors: true
+
+    - name: Set cluster ID from activation result
+      ansible.builtin.set_fact:
+        cdw_cluster_id: "{{ dwcluster.cluster.id }}"
+      when:
+        - not cdw_cluster_running
+        - dwcluster is defined
+        - dwcluster.cluster is defined
+        - dwcluster.cluster.id is defined
 
     - name: Check and print cluster status
       debug:
-        msg: "Cluster is in {{ dwcluster['cluster']['status'] }} State. If Cluster is not already Running and there are no errors in the execution, usually it takes around ~18 minutes."
+        msg: "Cluster is in {{ dwcluster.cluster.status }} State. If Cluster is not already Running and there are no errors in the execution, usually it takes around ~18 minutes."
+      when:
+        - not cdw_cluster_running
+        - dwcluster is defined
+        - dwcluster.cluster is defined
 
     - name: Getting CDW cluster Status
       cloudera.cloud.dw_cluster_info:
         env: "{{ cdp_env_name }}"
       register: dw_cluster_status
-      until: dw_cluster_status['clusters'][0]['status'] in ["Running", "Error", "Failed"]
+      until: >
+        (dw_cluster_status.clusters | default([], true) | length) > 0 and
+        dw_cluster_status.clusters[0].status in ["Running", "Error", "Failed"]
       retries: 45
       delay: 30
+      failed_when: false
+
+    - name: Refresh CDW cluster ID after activation
+      ansible.builtin.set_fact:
+        cdw_cluster_id: "{{ (dw_cluster_status.clusters | default([], true))[0].id }}"
+      when: (dw_cluster_status.clusters | default([], true) | length) > 0
 
     - name: Check and print cluster status
       debug:
-        msg: "Cluster is in {{ dw_cluster_status['clusters'][0]['status'] }} State"
+        msg: "Cluster is in {{ dw_cluster_status.clusters[0].status }} State"
+      when: (dw_cluster_status.clusters | default([], true) | length) > 0
 
     - name: Fail task on Cluster Creation Failed
       fail:
         msg: "Cluster Creation Got Failed."
-      when: dw_cluster_status['clusters'][0]['status'] in ["Error", "Failed"]
+      when:
+        - (dw_cluster_status.clusters | default([], true) | length) > 0
+        - dw_cluster_status.clusters[0].status in ["Error", "Failed"]
 
     - name: Waiting for default database catalog to be running
       cloudera.cloud.dw_database_catalog_info:
-        cluster_id: "{{ dwcluster['cluster']['id'] }}"
+        cluster_id: "{{ cdw_cluster_id }}"
       register: dbcatalogstatus
-      until: dbcatalogstatus['database_catalogs'][0]['status'] == "Running"
+      until: >
+        (dbcatalogstatus.database_catalogs | default([], true) | length) > 0 and
+        dbcatalogstatus.database_catalogs[0].status == "Running"
       retries: 50
       delay: 30
+      failed_when: false
 
     - name: List existing virtual warehouses
       ansible.builtin.shell: >
-        cdp dw list-vws --cluster-id "{{ dwcluster['cluster']['id'] }}" | jq -r '.vws[]?.name // empty'
+        cdp dw list-vws --cluster-id "{{ cdw_cluster_id }}" | jq -r '.vws[]?.name // empty'
       register: existing_vws
       failed_when: false
 
@@ -86,7 +141,7 @@
 
     - name: List existing data visualizations
       ansible.builtin.shell: >
-        cdp dw list-data-visualizations --cluster-id "{{ dwcluster['cluster']['id'] }}" | jq -r '.dataVisualizations[]?.name // empty'
+        cdp dw list-data-visualizations --cluster-id "{{ cdw_cluster_id }}" | jq -r '.dataVisualizations[]?.name // empty'
       register: existing_data_visualizations
       failed_when: false
 
@@ -102,7 +157,7 @@
     - name: Start data visualization deployment async
       ansible.builtin.command: >
         cdp dw create-data-visualization
-        --cluster-id "{{ dwcluster['cluster']['id'] }}"
+        --cluster-id "{{ cdw_cluster_id }}"
         --name "{{ workshop_name }}-data-viz"
         --resource-template "{{ cdvc_size }}"
         --config adminGroups="{{ workshop_name }}-aw-cdp-user-group"
@@ -117,16 +172,16 @@
         set -euo pipefail
         if [ "{{ item.vw_type }}" = "hive" ]; then
           cdp dw create-vw \
-            --cluster-id "{{ dwcluster['cluster']['id'] }}" \
-            --dbc-id "{{ dbcatalogstatus['database_catalogs'][0]['id'] }}" \
+            --cluster-id "{{ cdw_cluster_id }}" \
+            --dbc-id "{{ dbcatalogstatus.database_catalogs[0].id }}" \
             --vw-type "hive" \
             --name "{{ item.name }}" \
             --t-shirt-size "{{ vw_size }}" \
             --autoscaling disableAutoSuspend="true"
         else
           cdp dw create-vw \
-            --cluster-id "{{ dwcluster['cluster']['id'] }}" \
-            --dbc-id "{{ dbcatalogstatus['database_catalogs'][0]['id'] }}" \
+            --cluster-id "{{ cdw_cluster_id }}" \
+            --dbc-id "{{ dbcatalogstatus.database_catalogs[0].id }}" \
             --vw-type "impala" \
             --name "{{ item.name }}" \
             --t-shirt-size "{{ vw_size }}" \
@@ -166,6 +221,7 @@
       delay: "{{ cdw_async_delay }}"
       loop: "{{ cdw_async_jobs }}"
       when: cdw_async_jobs | length > 0
+      ignore_errors: true
 
     - name: Fail on unexpected virtual warehouse deployment errors
       ansible.builtin.fail:
@@ -193,7 +249,7 @@
 
     - name: Refresh virtual warehouse list after deployment
       ansible.builtin.shell: >
-        cdp dw list-vws --cluster-id "{{ dwcluster['cluster']['id'] }}" | jq -r '.vws[]?.name // empty'
+        cdp dw list-vws --cluster-id "{{ cdw_cluster_id }}" | jq -r '.vws[]?.name // empty'
       register: final_vws
       changed_when: false
       failed_when: false

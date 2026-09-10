@@ -104,6 +104,10 @@
           (state: {{ cdf_current_state }}, detailedState: {{ cdf_current_detailed_state | default('n/a') }}).
       when: cdf_service_healthy
 
+    - name: End play when CDF is already healthy
+      ansible.builtin.meta: end_play
+      when: cdf_service_healthy
+
     - name: Wait for CDF enable or disable to complete
       cloudera.cloud.df_service_info:
         name: "{{ cdp_env_name }}"

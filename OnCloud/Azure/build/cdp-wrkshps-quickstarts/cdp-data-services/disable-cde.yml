@@ -8,11 +8,27 @@
     cde_async_retries: 60
     cde_async_delay: 30
   tasks:
+    - name: Check if CDE service exists
+      cloudera.cloud.de_info:
+        name: "{{ workshop_name }}-cde"
+      register: cde_service_info
+      failed_when: false
+
+    - name: Skip CDE teardown when service does not exist
+      ansible.builtin.debug:
+        msg: "CDE service not found for {{ workshop_name }}-cde — skipping CDE disable."
+      when: (cde_service_info.services | default([], true) | length) == 0
+
+    - name: End play when CDE service does not exist
+      ansible.builtin.meta: end_play
+      when: (cde_service_info.services | default([], true) | length) == 0
+
     - name: List CDE virtual clusters
       cloudera.cloud.de_virtual_cluster_info:
         cluster_name: "{{ workshop_name }}-cde"
         environment: "{{ workshop_name }}-cdp-env"
       register: virtualclusters
+      ignore_errors: true
 
     - name: Extract the virtual clusters id
       ansible.builtin.set_fact:
@@ -63,11 +79,25 @@
     - name: Check status of CDE service until completely deleted
       cloudera.cloud.de_info:
         name: "{{ workshop_name }}-cde"
-        env: "{{ workshop_name }}-cdp-env"
       register: serstatus
-      until: serstatus['services'] | length == 0 or serstatus['services'][0]['status'] in ["Deleting", "Error", "Failed"]
+      until: >
+        (serstatus.services | default([], true) | length) == 0
+        or (
+          (serstatus.services | default([], true) | length) > 0
+          and serstatus.services[0].status in ["Deleting", "Error", "Failed"]
+        )
       retries: 60
       delay: 30
+      ignore_errors: true
+
+    - name: Skip when CDE service was never activated
+      ansible.builtin.debug:
+        msg: "CDE service not found for {{ workshop_name }}-cde — skipping CDE disable."
+      when: (serstatus.services | default([], true) | length) == 0
+
+    - name: End play when CDE service does not exist
+      ansible.builtin.meta: end_play
+      when: (serstatus.services | default([], true) | length) == 0
 
     - name: Print status of CDE service
       debug:
@@ -76,4 +106,6 @@
     - name: Fail task if CDE service deletion failed
       fail:
         msg: "CDE Service Deletion Failed."
-      when: serstatus['services'] | length > 0 and serstatus['services'][0]['status'] in ["Error", "Failed"]
+      when:
+        - (serstatus.services | default([], true) | length) > 0
+        - serstatus.services[0].status in ["Error", "Failed"]

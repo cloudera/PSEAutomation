@@ -163,12 +163,18 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          #KEYCLOAK_SECURITY_GROUP_NAME)
          #   keycloak_sg_name=$(echo $value | tr '[:upper:]' '[:lower:]')
          #   ;;
-         # AWS_ACCESS_KEY_ID)
-         #    aws_access_key_id=$value
-         #    ;;
-         # AWS_SECRET_ACCESS_KEY)
-         #    aws_secret_access_key=$value
-         #    ;;
+         AWS_ACCESS_KEY_ID)
+            aws_access_key_id=$value
+            ;;
+         AWS_SECRET_ACCESS_KEY)
+            aws_secret_access_key=$value
+            ;;
+         AWS_SESSION_TOKEN)
+            aws_session_token=$value
+            ;;
+         AWS_REGION)
+            aws_region=$value
+            ;;
          AZURE_REGION)
             azure_region=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
@@ -247,7 +253,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             cdw_dataviz_size=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
          CDE_INSTANCE_TYPE)
-            cde_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cde_instance_type="$value"
             ;;
          CDE_INITIAL_INSTANCES)
             cde_initial_instances=$value
@@ -265,7 +271,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             cde_vc_tier=$value
             ;;
          CAI_WS_INSTANCE_TYPE)
-            cai_ws_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cai_ws_instance_type="$value"
             ;;
          CAI_MIN_INSTANCES)
             cai_min_instances=$value
@@ -277,7 +283,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             cai_enable_gpu=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
          CAI_GPU_INSTANCE_TYPE)
-            cai_gpu_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cai_gpu_instance_type="$value"
             ;;
          CAI_MIN_GPU_INSTANCES)
             cai_min_gpu_instances=$value
@@ -285,8 +291,11 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          CAI_MAX_GPU_INSTANCES)
             cai_max_gpu_instances=$value
             ;;
+         CAI_NFS_VERSION)
+            cai_nfs_version=$value
+            ;;
          CDF_INSTANCE_TYPE)
-            cdf_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cdf_instance_type="$value"
             ;;
          CDF_MIN_NODES)
             cdf_min_nodes=$value
@@ -334,6 +343,10 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
    export azure_client_secret="${azure_client_secret:-${AZURE_CLIENT_SECRET:-}}"
    export azure_tenant_id="${azure_tenant_id:-${AZURE_TENANT_ID:-}}"
    export azure_subscription_id="${azure_subscription_id:-${AZURE_SUBSCRIPTION_ID:-}}"
+   export aws_access_key_id="${aws_access_key_id:-${AWS_ACCESS_KEY_ID:-}}"
+   export aws_secret_access_key="${aws_secret_access_key:-${AWS_SECRET_ACCESS_KEY:-}}"
+   export aws_session_token="${aws_session_token:-${AWS_SESSION_TOKEN:-}}"
+   export aws_region="${aws_region:-${AWS_REGION:-us-east-1}}"
 
    # Call the function with the user-provided config file as an argument
    check_config "$USER_CONFIG_FILE"
@@ -400,15 +413,35 @@ setup_azure_cli_auth() {
          return 0
       fi
    fi
-   hol_fail "Azure CLI is not authenticated. Jenkins: -v /home/holautosa/.azure:/root/.azure  Local: -v \$HOME/.azure:/root/.azure"
+   hol_fail "Azure CLI is not authenticated. Mount a host directory that contains 'az login' credentials to /root/.azure, or set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, and AZURE_TENANT_ID in configfile or container environment variables."
 }
 
-ensure_aws_cli_for_dns() {
+setup_aws_cli_for_dns() {
    [[ "$provision_keycloak" != "yes" ]] && return 0
    if aws sts get-caller-identity --query Account --output text &>/dev/null; then
       return 0
    fi
-   hol_fail "AWS CLI required for Keycloak DNS. Jenkins: -v /home/holautosa/.aws:/root/.aws  Local: -v \$HOME/.aws:/root/.aws"
+   if [[ -n "${aws_access_key_id:-}" && -n "${aws_secret_access_key:-}" ]]; then
+      hol_step "Configuring AWS CLI from configfile/environment for Route53 DNS"
+      aws configure set aws_access_key_id "$aws_access_key_id" >/dev/null
+      aws configure set aws_secret_access_key "$aws_secret_access_key" >/dev/null
+      aws configure set default.region "${aws_region:-us-east-1}" >/dev/null
+      if [[ -n "${aws_session_token:-}" ]]; then
+         aws configure set aws_session_token "$aws_session_token" >/dev/null
+      fi
+   fi
+}
+
+ensure_aws_cli_for_dns() {
+   [[ "$provision_keycloak" != "yes" ]] && return 0
+   if ! command -v aws &>/dev/null; then
+      hol_fail "AWS CLI is not installed in the container image."
+   fi
+   setup_aws_cli_for_dns
+   if aws sts get-caller-identity --query Account --output text &>/dev/null; then
+      return 0
+   fi
+   hol_fail "AWS CLI authentication required for Keycloak DNS (Route53). Mount host AWS credentials to /root/.aws, or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in configfile or container env. Verify on the host: aws sts get-caller-identity. On Apple Silicon Macs, run the container with --platform linux/amd64."
 }
 
 # Function to verify Azure pre-requisites
@@ -567,23 +600,98 @@ destroy_keypair() {
    fi
 }
 
+save_keycloak_network_env() {
+   local env_file="/userconfig/.$USER_NAMESPACE/keycloak_network.env"
+   cat >"$env_file" <<EOF
+KC_RESOURCE_GROUP=${KC_RESOURCE_GROUP}
+KC_NETWORK_RG=${KC_NETWORK_RG}
+KC_VNET_NAME=${KC_VNET_NAME}
+KC_SUBNET_NAME=${KC_SUBNET_NAME}
+EOF
+}
+
+load_keycloak_network_env() {
+   local env_file="/userconfig/.$USER_NAMESPACE/keycloak_network.env"
+   [[ -f "$env_file" ]] && source "$env_file"
+}
+
+resolve_keycloak_subnet_from_cdp_outputs() {
+   local gateway_subnet private_subnet
+   gateway_subnet=$(terraform output -json azure_cdp_gateway_subnet_names 2>/dev/null | jq -r '.[0] // empty')
+   private_subnet=$(terraform output -json azure_cdp_subnet_names 2>/dev/null | jq -r '.[0] // empty')
+   if [[ -n "$gateway_subnet" && "$gateway_subnet" != "null" ]]; then
+      KC_SUBNET_NAME="$gateway_subnet"
+      KC_SUBNET_SOURCE="gateway"
+   elif [[ -n "$private_subnet" && "$private_subnet" != "null" ]]; then
+      KC_SUBNET_NAME="$private_subnet"
+      KC_SUBNET_SOURCE="cdp workload"
+      hol_info "Gateway subnet output empty — using first CDP workload subnet for Keycloak"
+   else
+      KC_SUBNET_NAME=""
+      KC_SUBNET_SOURCE=""
+   fi
+}
+
+wait_for_keycloak_ready() {
+   local host="${1:-}"
+   local max_attempts="${2:-90}"
+   local attempt=0 url code
+
+   if [[ -z "$host" && -f /userconfig/keycloak_ip ]]; then
+      host=$(cat /userconfig/keycloak_ip)
+   fi
+   [[ -z "$host" ]] && hol_fail "Keycloak host is not set for readiness check"
+
+   url="https://${host}/realms/master/protocol/saml/descriptor"
+   hol_step "Waiting for Keycloak HTTPS (${host}) — up to $((max_attempts * 10 / 60)) min..."
+
+   while [[ $attempt -lt $max_attempts ]]; do
+      code=$(curl -sk --connect-timeout 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || echo "000")
+      if [[ "$code" == "200" ]]; then
+         hol_ok "Keycloak is ready"
+         return 0
+      fi
+      attempt=$((attempt + 1))
+      if [[ $((attempt % 6)) -eq 0 ]]; then
+         hol_info "Keycloak not ready yet (HTTP ${code}) — waited $((attempt * 10))s"
+      fi
+      sleep 10
+   done
+   hol_fail "Keycloak did not become ready on ${host} within $((max_attempts * 10 / 60)) minutes"
+}
+
 get_cdp_network_for_keycloak() {
+   local mode="${1:-required}"
    local azure_tf_dir="/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/azure"
+
+   if load_keycloak_network_env && [[ -n "$KC_RESOURCE_GROUP" && -n "$KC_SUBNET_NAME" ]]; then
+      hol_kv "Keycloak resource group" "$KC_RESOURCE_GROUP"
+      hol_kv "Keycloak network resource group" "$KC_NETWORK_RG"
+      hol_kv "Keycloak VNet" "$KC_VNET_NAME"
+      hol_kv "Keycloak subnet" "$KC_SUBNET_NAME"
+      return 0
+   fi
+
    if [[ ! -d "${azure_tf_dir}" ]]; then
+      [[ "$mode" == "optional" ]] && return 1
       hol_fail "CDP Terraform directory not found at ${azure_tf_dir}. Provision CDP before Keycloak."
    fi
    cd "${azure_tf_dir}" || hol_fail "Unable to enter CDP Terraform directory: ${azure_tf_dir}"
-   KC_RESOURCE_GROUP=$(terraform output -raw azure_resource_group_name)
-   KC_NETWORK_RG=$(terraform output -raw azure_network_resource_group_name 2>/dev/null || terraform output -raw azure_resource_group_name)
-   KC_VNET_NAME=$(terraform output -raw azure_vnet_name)
-   KC_SUBNET_NAME=$(terraform output -json azure_cdp_gateway_subnet_names | jq -r '.[0]')
-   if [[ -z "$KC_RESOURCE_GROUP" || -z "$KC_NETWORK_RG" || -z "$KC_VNET_NAME" || -z "$KC_SUBNET_NAME" || "$KC_SUBNET_NAME" == "null" ]]; then
-      hol_fail "Unable to read CDP network outputs required for Keycloak (resource group, VNet, or gateway subnet)."
+   KC_RESOURCE_GROUP=$(terraform output -raw azure_resource_group_name 2>/dev/null || terraform output -raw azure_cdp_resource_group_name 2>/dev/null || true)
+   KC_NETWORK_RG=$(terraform output -raw azure_network_resource_group_name 2>/dev/null || terraform output -raw azure_resource_group_name 2>/dev/null || terraform output -raw azure_cdp_resource_group_name 2>/dev/null || true)
+   KC_VNET_NAME=$(terraform output -raw azure_vnet_name 2>/dev/null || true)
+   resolve_keycloak_subnet_from_cdp_outputs
+   if [[ -z "$KC_RESOURCE_GROUP" || -z "$KC_NETWORK_RG" || -z "$KC_VNET_NAME" || -z "$KC_SUBNET_NAME" ]]; then
+      [[ "$mode" == "optional" ]] && return 1
+      hol_warn "CDP network outputs: resource_group=${KC_RESOURCE_GROUP:-<empty>} network_rg=${KC_NETWORK_RG:-<empty>} vnet=${KC_VNET_NAME:-<empty>} subnet=${KC_SUBNET_NAME:-<empty>}"
+      hol_fail "Unable to read CDP network outputs required for Keycloak. Ensure CDP Terraform apply completed and outputs azure_resource_group_name, azure_vnet_name, and azure_cdp_gateway_subnet_names (or azure_cdp_subnet_names) are set."
    fi
+   save_keycloak_network_env
    hol_kv "Keycloak resource group" "$KC_RESOURCE_GROUP"
    hol_kv "Keycloak network resource group" "$KC_NETWORK_RG"
    hol_kv "Keycloak VNet" "$KC_VNET_NAME"
-   hol_kv "Keycloak gateway subnet" "$KC_SUBNET_NAME"
+   hol_kv "Keycloak subnet (${KC_SUBNET_SOURCE:-unknown})" "$KC_SUBNET_NAME"
+   return 0
 }
 
 setup_keycloak_vm() {
@@ -657,13 +765,20 @@ setup_keycloak_vm() {
    get_cdp_network_for_keycloak
 
    hol_subsection "Running Terraform for Keycloak" "🏗️"
-   # Run Terraform to provision Keycloak instance
    if check_azure_nsg_exists "$sg_name"; then
       hol_warn "Security group '$sg_name' exists — using '$sg_name-$workshop_name-sg'"
       sg_name="$sg_name-$workshop_name"
    fi
 
    terraform init
+   if terraform state list 2>/dev/null | grep -q 'azurerm_linux_virtual_machine.keycloak'; then
+      hol_skip "Keycloak VM already exists in Terraform state — skipping apply"
+      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip 2>/dev/null || true)
+      if [[ -n "$KEYCLOAK_SERVER_IP" ]]; then
+         echo "$KEYCLOAK_SERVER_IP" >/userconfig/keycloak_ip
+         hol_kv "Keycloak instance IP" "$KEYCLOAK_SERVER_IP"
+      fi
+   else
    # Extract only the first IP for Keycloak (admin access only)
    kc_ip=$(echo "$local_ip" | cut -d',' -f1)
 
@@ -688,13 +803,13 @@ setup_keycloak_vm() {
       -var "subnet_name=$KC_SUBNET_NAME"
 
    RETURN=$?
-   if [ $RETURN -eq 0 ]; then
-      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip)
-      hol_step "Saving Keycloak IP to /userconfig/keycloak_ip"
-      echo "$KEYCLOAK_SERVER_IP" >/userconfig/keycloak_ip
-      hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
-   else
+   if [ $RETURN -ne 0 ]; then
       return 1
+   fi
+   KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip)
+   hol_step "Saving Keycloak IP to /userconfig/keycloak_ip"
+   echo "$KEYCLOAK_SERVER_IP" >/userconfig/keycloak_ip
+   hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
    fi
 
    # Fetch the public IP of the created Keycloak instance
@@ -727,54 +842,89 @@ setup_keycloak_vm() {
 # Function to rollback keycloack Azure VM in case of failure during provision.
 destroy_keycloak() {
    USER_NAMESPACE=$workshop_name
+   local kc_tf_dir="/userconfig/.$USER_NAMESPACE/keycloak_terraform_config"
+
+   if [[ ! -d "$kc_tf_dir" ]]; then
+      hol_skip "Keycloak Terraform directory not found — skipping Keycloak destroy"
+      return 0
+   fi
+
    hol_subsection "Destroying Keycloak" "🔐"
    local sg_name="${workshop_name}-keyc-sg"
    if check_azure_nsg_exists "$sg_name"; then
       sg_name="${sg_name}-${workshop_name}"
    fi
-   get_cdp_network_for_keycloak
-   cd /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
-   terraform init
+
+   cd "$kc_tf_dir"
+   terraform init >/dev/null 2>&1
+   if ! terraform state list 2>/dev/null | grep -q .; then
+      hol_skip "Keycloak Terraform state is empty — skipping Keycloak destroy"
+      rm -rf "$kc_tf_dir" /userconfig/.$USER_NAMESPACE/keycloak_ansible_config /userconfig/keycloak_ip
+      return 0
+   fi
+
+   local kc_refresh_destroy=()
+   if ! get_cdp_network_for_keycloak optional; then
+      if [[ -z "${KC_RESOURCE_GROUP:-}" ]]; then
+         hol_skip "Keycloak network context unavailable — skipping Keycloak destroy (no saved config or CDP outputs)"
+         return 0
+      fi
+      hol_warn "CDP network outputs unavailable — destroying Keycloak from saved network config"
+      kc_refresh_destroy=(-refresh=false)
+   fi
+
    hol_step "Waiting 30 seconds before Keycloak teardown..."
    sleep 30
-   hol_step "Deleting Route53 DNS record"
-   # Delete Route53 DNS record to unmap subdomain to instance IP
-   aws route53 change-resource-record-sets --hosted-zone-id "$hostedzoneid" \
-      --change-batch '{
-        "Changes": [{
-            "Action": "DELETE",
-            "ResourceRecordSet": {
-                "Name": "'"$workshop_name.$domain"'",
-                "Type": "A",
-                "TTL": 300,
-                "ResourceRecords": [{"Value": "'"$(terraform output -raw elastic_ip)"'"}]
-            }
-        }]
-    }'
-   hol_ok "DNS record deleted for $workshop_name.$domain"
 
-   # Extract only the first IP for Keycloak (admin access only)
+   local keycloak_ip=""
+   keycloak_ip=$(terraform output -raw elastic_ip 2>/dev/null || true)
+   if [[ -n "$keycloak_ip" && -n "${hostedzoneid:-}" ]]; then
+      hol_step "Deleting Route53 DNS record"
+      aws route53 change-resource-record-sets --hosted-zone-id "$hostedzoneid" \
+         --change-batch '{
+           "Changes": [{
+               "Action": "DELETE",
+               "ResourceRecordSet": {
+                   "Name": "'"$workshop_name.$domain"'",
+                   "Type": "A",
+                   "TTL": 300,
+                   "ResourceRecords": [{"Value": "'"$keycloak_ip"'"}]
+               }
+           }]
+       }' && hol_ok "DNS record deleted for $workshop_name.$domain"
+   else
+      hol_skip "No Keycloak IP or hosted zone — skipping Route53 cleanup"
+   fi
+
+   local kc_ip destroy_args
    kc_ip=$(echo "$local_ip" | cut -d',' -f1)
-   terraform destroy -auto-approve \
-      -var "workshop_name=$workshop_name" \
-      -var "local_ip=$kc_ip" \
-      -var "ssh_key_name=$ssh_key_name" \
-      -var "ssh_public_key=${ssh_public_key:-placeholder}" \
-      -var "azure_region=$azure_region" \
-      -var "domain=${domain:-example.com}" \
-      -var "wildcard_fullchain=placeholder" \
-      -var "wildcard_privkey=placeholder" \
-      -var "kc_security_group=$sg_name" \
-      -var "keycloak_admin_password=$keycloak__admin_password" \
-      -var "resource_group_name=$KC_RESOURCE_GROUP" \
-      -var "network_resource_group_name=$KC_NETWORK_RG" \
-      -var "vnet_name=$KC_VNET_NAME" \
-      -var "subnet_name=$KC_SUBNET_NAME"
+   destroy_args=(
+      -auto-approve
+      "${kc_refresh_destroy[@]}"
+      -var "workshop_name=$workshop_name"
+      -var "local_ip=$kc_ip"
+      -var "ssh_key_name=${ssh_key_name:-placeholder}"
+      -var "ssh_public_key=${ssh_public_key:-placeholder}"
+      -var "azure_region=$azure_region"
+      -var "domain=${domain:-example.com}"
+      -var "wildcard_fullchain=placeholder"
+      -var "wildcard_privkey=placeholder"
+      -var "kc_security_group=$sg_name"
+      -var "keycloak_admin_password=${keycloak__admin_password:-placeholder}"
+   )
+   if [[ -n "${KC_RESOURCE_GROUP:-}" ]]; then
+      destroy_args+=(
+         -var "resource_group_name=$KC_RESOURCE_GROUP"
+         -var "network_resource_group_name=$KC_NETWORK_RG"
+         -var "vnet_name=$KC_VNET_NAME"
+         -var "subnet_name=$KC_SUBNET_NAME"
+      )
+   fi
+
+   terraform destroy "${destroy_args[@]}"
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
-      rm -rf /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
-      rm -rf /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
-      rm -rf /userconfig/keycloak_ip
+      rm -rf "$kc_tf_dir" /userconfig/.$USER_NAMESPACE/keycloak_ansible_config /userconfig/keycloak_ip /userconfig/.$USER_NAMESPACE/keycloak_network.env
       return 0
    else
       return 1
@@ -863,6 +1013,13 @@ should_provision_cdw() {
    [[ ",${selected_services}," == *",cdw,"* ]]
 }
 
+should_provision_cde() {
+   local selected_services="${enable_data_services//[/}"
+   selected_services="${selected_services//]/}"
+   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
+   [[ ",${selected_services}," == *",cde,"* ]]
+}
+
 # Return 0 when CAI or CAII is selected and Azure NFS should be provisioned.
 should_provision_cai_nfs() {
    [[ "${provision_caii:-no}" == "yes" ]] && return 0
@@ -931,8 +1088,248 @@ output "nfs_storage_account_name" {
   description = "Premium NFS storage account name for CAI"
   value       = module.cdp_azure_prereqs.nfs_storage_account_name
 }
+output "nfs_existing_nfs_mount" {
+  description = "NFS mount path for CAI workspace provisioning (nfs:// format)"
+  value = (
+    module.cdp_azure_prereqs.nfs_storage_account_name != null &&
+    module.cdp_azure_prereqs.nfs_file_share_url != null
+  ) ? format(
+    "nfs://%s.file.core.windows.net:/%s/%s",
+    module.cdp_azure_prereqs.nfs_storage_account_name,
+    module.cdp_azure_prereqs.nfs_storage_account_name,
+    trimprefix(
+      module.cdp_azure_prereqs.nfs_file_share_url,
+      format("https://%s.file.core.windows.net/", module.cdp_azure_prereqs.nfs_storage_account_name)
+    )
+  ) : null
+}
 EOF
    fi
+}
+
+cai_workbench_name() {
+   echo "${workshop_name}-cai-ws"
+}
+
+# Parse Azure Files share name from terraform/azurerm share URL (not a hostname).
+extract_nfs_share_name_from_url() {
+   local share_url="$1"
+   local share_name=""
+
+   [[ -n "$share_url" ]] || return 1
+
+   if [[ "$share_url" == *"file.core.windows.net/"* ]]; then
+      share_name="${share_url#*file.core.windows.net/}"
+   elif [[ "$share_url" == nfs://* ]]; then
+      share_name="${share_url#*:/}"
+      share_name="${share_name#*/}"
+   else
+      share_name="${share_url##*/}"
+   fi
+   share_name="${share_name%%/*}"
+   share_name="${share_name%%\?*}"
+   [[ -n "$share_name" && "$share_name" != *"file.core.windows.net"* ]] || return 1
+   echo "$share_name"
+}
+
+# Resolve storage account + share for NFS export /{account}/{share}.
+resolve_cai_nfs_export_components() {
+   local mount_path="${1:-${CAI_EXISTING_NFS:-}}"
+   local workbench_name nfs_export
+
+   CAI_NFS_EXPORT_STORAGE_ACCOUNT="${CAI_NFS_STORAGE_ACCOUNT:-}"
+   CAI_NFS_EXPORT_SHARE_NAME="${CAI_NFS_SHARE_NAME:-}"
+
+   if [[ -n "${CAI_NFS_EXPORT_STORAGE_ACCOUNT:-}" && -n "${CAI_NFS_EXPORT_SHARE_NAME:-}" ]]; then
+      return 0
+   fi
+
+   [[ -n "$mount_path" ]] || return 1
+   workbench_name=$(cai_workbench_name)
+   if [[ "$mount_path" == *"/${workbench_name}" ]]; then
+      mount_path="${mount_path%/${workbench_name}}"
+   fi
+
+   nfs_export="${mount_path#*:/}"
+   CAI_NFS_EXPORT_STORAGE_ACCOUNT="${nfs_export%%/*}"
+   CAI_NFS_EXPORT_SHARE_NAME="${nfs_export#*/}"
+   CAI_NFS_EXPORT_SHARE_NAME="${CAI_NFS_EXPORT_SHARE_NAME%%/*}"
+   [[ -n "$CAI_NFS_EXPORT_STORAGE_ACCOUNT" && -n "$CAI_NFS_EXPORT_SHARE_NAME" ]] || return 1
+   [[ "$CAI_NFS_EXPORT_SHARE_NAME" != *"file.core.windows.net"* ]] || return 1
+}
+
+# Build nfs:// mount path for Azure Files NFS (Cloudera CAI format).
+# Optional third argument appends a per-workbench subdirectory on the share.
+build_cai_existing_nfs_mount() {
+   local storage_account="$1"
+   local share_url="$2"
+   local workbench_subdir="${3:-}"
+   local share_name=""
+   local mount_path=""
+
+   [[ -n "$storage_account" && -n "$share_url" ]] || return 1
+
+   share_name=$(extract_nfs_share_name_from_url "$share_url") || return 1
+
+   mount_path="nfs://${storage_account}.file.core.windows.net:/${storage_account}/${share_name}"
+   if [[ -n "$workbench_subdir" ]]; then
+      mount_path="${mount_path}/${workbench_subdir}"
+   fi
+   echo "$mount_path"
+}
+
+# Ensure CAI_EXISTING_NFS includes the dedicated workbench subdirectory
+# (e.g. nfs://acct.file.core.windows.net:/acct/share/whreply-cai-ws).
+# Safe to call on every deploy/re-run; only appends when missing.
+finalize_cai_nfs_mount_path() {
+   local workbench_name
+   workbench_name=$(cai_workbench_name)
+
+   [[ -n "${CAI_EXISTING_NFS:-}" ]] || return 1
+   if [[ "$CAI_EXISTING_NFS" != *"/${workbench_name}" ]]; then
+      CAI_EXISTING_NFS="${CAI_EXISTING_NFS%/}/${workbench_name}"
+      export CAI_EXISTING_NFS
+   fi
+}
+
+# Create workbench NFS subdirectory and chown 8536:8536 (Cloudera cdsW user).
+# Re-run safe: skips when the directory already exists with uid/gid 8536:8536; fixes wrong ownership.
+prepare_cai_nfs_workbench_mount() {
+   local workbench_name storage_account share_name mount_path
+   local keycloak_host pem_path remote_rc
+
+   should_provision_cai_nfs || return 0
+   [[ -n "${CAI_EXISTING_NFS:-}" ]] || return 0
+   finalize_cai_nfs_mount_path
+
+   workbench_name=$(cai_workbench_name)
+   mount_path="$CAI_EXISTING_NFS"
+   resolve_cai_nfs_export_components "$mount_path" || \
+      hol_fail "Could not parse CAI NFS export for workbench prep: $mount_path"
+   storage_account="$CAI_NFS_EXPORT_STORAGE_ACCOUNT"
+   share_name="$CAI_NFS_EXPORT_SHARE_NAME"
+
+   if [[ -f /userconfig/keycloak_ip ]]; then
+      keycloak_host=$(cat /userconfig/keycloak_ip)
+   fi
+   [[ -n "${keycloak_host:-}" ]] || hol_fail \
+      "CAI NFS workbench prep requires Keycloak VM in the CDP VNet (PROVISION_KEYCLOAK=yes). Or manually mkdir/chown 8536:8536 on .../${workbench_name}."
+
+   pem_path="/userconfig/.${workshop_name}/${ssh_key_name}.pem"
+   if [[ ! -f "$pem_path" && -f "/userconfig/${ssh_key_name}.pem" ]]; then
+      pem_path="/userconfig/${ssh_key_name}.pem"
+   fi
+   [[ -f "$pem_path" ]] || hol_fail "SSH key not found for CAI NFS prep: $pem_path"
+
+   hol_subsection "Preparing CAI NFS workbench directory (${workbench_name})" "📁"
+   hol_kv "NFS mount path" "$mount_path"
+   hol_kv "Prep host" "$keycloak_host"
+
+   remote_rc=0
+   ssh -i "$pem_path" \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=30 \
+      -o BatchMode=yes \
+      "ubuntu@${keycloak_host}" \
+      "sudo bash -s" -- "$storage_account" "$share_name" "$workbench_name" <<'EOF' || remote_rc=$?
+set -euo pipefail
+STORAGE_ACCOUNT="$1"
+SHARE_NAME="$2"
+WORKBENCH_NAME="$3"
+MOUNT_BASE="/mnt/cai-nfs-${SHARE_NAME}"
+WB_PATH="${MOUNT_BASE}/${WORKBENCH_NAME}"
+NFS_SERVER="${STORAGE_ACCOUNT}.file.core.windows.net"
+NFS_EXPORT="/${STORAGE_ACCOUNT}/${SHARE_NAME}"
+CAI_UID=8536
+CAI_GID=8536
+
+if ! dpkg -s nfs-common >/dev/null 2>&1; then
+   export DEBIAN_FRONTEND=noninteractive
+   apt-get update -qq
+   apt-get install -y -qq nfs-common
+fi
+
+mkdir -p "$MOUNT_BASE"
+if ! mountpoint -q "$MOUNT_BASE"; then
+   mount -t nfs -o vers=4.1,minorversion=1,sec=sys "${NFS_SERVER}:${NFS_EXPORT}" "$MOUNT_BASE"
+fi
+
+cleanup() {
+   if mountpoint -q "$MOUNT_BASE"; then
+      umount "$MOUNT_BASE" || true
+   fi
+}
+trap cleanup EXIT
+
+if [[ -d "$WB_PATH" ]]; then
+   owner=$(stat -c '%u:%g' "$WB_PATH")
+   if [[ "$owner" == "${CAI_UID}:${CAI_GID}" ]]; then
+      echo "CAI NFS workbench directory already prepared (${WORKBENCH_NAME}, ${owner})"
+      exit 0
+   fi
+   echo "CAI NFS workbench directory exists with ownership ${owner}; setting ${CAI_UID}:${CAI_GID}"
+   chown "${CAI_UID}:${CAI_GID}" "$WB_PATH"
+   exit 0
+fi
+
+mkdir -p "$WB_PATH"
+chown "${CAI_UID}:${CAI_GID}" "$WB_PATH"
+echo "Created CAI NFS workbench directory ${WORKBENCH_NAME} with ownership ${CAI_UID}:${CAI_GID}"
+EOF
+
+   [[ $remote_rc -eq 0 ]] || \
+      hol_fail "CAI NFS workbench prep failed on ${keycloak_host}. Ensure Keycloak VM can reach Azure Files NFS private endpoints."
+
+   hol_ok "CAI NFS workbench directory ready: ${mount_path}"
+}
+
+load_cdp_subnet_outputs_from_terraform() {
+   local azure_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/azure"
+   local public_subnets private_subnets
+
+   [[ -d "$azure_tf_dir" ]] || return 1
+   cd "$azure_tf_dir" || return 1
+
+   public_subnets=$(terraform output -json azure_cdp_gateway_subnet_names 2>/dev/null | jq -c '.[0:3]' || true)
+   private_subnets=$(terraform output -json azure_cdp_subnet_names 2>/dev/null | jq -c '.[0:3]' || true)
+   [[ -z "$public_subnets" || "$public_subnets" == "null" ]] && return 1
+   [[ -z "$private_subnets" || "$private_subnets" == "null" ]] && return 1
+
+   export ENV_PUBLIC_SUBNETS="$public_subnets"
+   export ENV_PRIVATE_SUBNETS="$private_subnets"
+}
+
+load_cai_nfs_from_terraform() {
+   local azure_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/azure"
+
+   [[ -d "$azure_tf_dir" ]] || return 1
+   cd "$azure_tf_dir" || return 1
+
+   NFS_FILE_SHARE_URL=$(terraform output -raw nfs_file_share_url 2>/dev/null || true)
+   CAI_NFS_STORAGE_ACCOUNT=$(terraform output -raw nfs_storage_account_name 2>/dev/null || true)
+   CAI_NFS_SHARE_NAME=$(extract_nfs_share_name_from_url "$NFS_FILE_SHARE_URL" 2>/dev/null || true)
+   CAI_EXISTING_NFS=$(build_cai_existing_nfs_mount "$CAI_NFS_STORAGE_ACCOUNT" "$NFS_FILE_SHARE_URL" 2>/dev/null || true)
+
+   if [[ -n "${CAI_EXISTING_NFS:-}" ]]; then
+      finalize_cai_nfs_mount_path
+      export CAI_EXISTING_NFS CAI_NFS_STORAGE_ACCOUNT CAI_NFS_SHARE_NAME NFS_FILE_SHARE_URL
+      return 0
+   fi
+   return 1
+}
+
+# Cloudera prereqs passes all CDP subnets to terraform-azure-nfs (one PE per subnet).
+# HoL CAI needs only one workbench subnet — use the first private subnet.
+patch_cdp_prereqs_nfs_single_private_endpoint() {
+   local azure_tf_dir="$1"
+   local prereqs_main
+   prereqs_main=$(find "${azure_tf_dir}/.terraform/modules" -path '*/terraform-cdp-azure-pre-reqs/main.tf' 2>/dev/null | head -1)
+   [[ -z "$prereqs_main" ]] && return 0
+   if grep -q 'HoL: single NFS private endpoint' "$prereqs_main"; then
+      return 0
+   fi
+   sed -i 's/nfs_private_endpoint_target_subnet_names = local.cdp_subnet_names/nfs_private_endpoint_target_subnet_names = [local.cdp_subnet_names[0]] # HoL: single NFS private endpoint for first CAI workbench subnet/' "$prereqs_main"
 }
 
 append_cdp_nfs_tf_args() {
@@ -1016,6 +1413,10 @@ output "azure_resource_group_name" {
   description = "Azure resource group for CDP resources"
   value       = module.cdp_azure_prereqs.azure_cdp_resource_group_name
 }
+output "azure_data_storage_account" {
+  description = "Azure datalake storage account name"
+  value       = module.cdp_azure_prereqs.azure_data_storage_account
+}
 EOF
    fi
    if [ -z "$vnet_name_output" ]; then
@@ -1036,10 +1437,13 @@ EOF
    fi
    if should_provision_cai_nfs; then
       hol_subsection "CDP Terraform: enable CAI NFS in prereqs module" "📁"
-      hol_info "NFS is provisioned with CDP infra (same RG/VNet) — premium FileStorage, private endpoints, secure transfer disabled"
+      hol_info "NFS is provisioned with CDP infra (same RG/VNet) — premium FileStorage, one private endpoint in the first CDP subnet, secure transfer disabled"
       patch_cdp_quickstart_for_cai_nfs "${azure_tf_dir}"
    fi
    terraform init
+   if should_provision_cai_nfs; then
+      patch_cdp_prereqs_nfs_single_private_endpoint "${azure_tf_dir}"
+   fi
 
    # Default to empty map if ENV_TAGS not provided in configfile
    env_tags="${env_tags:-{}}"
@@ -1091,6 +1495,8 @@ EOF
    )
    append_cdp_nfs_tf_args cdp_tf_apply_args
 
+   export TF_INPUT=0
+
    hol_subsection "Running Terraform for CDP environment & datalake" "☁️"
    terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
 
@@ -1115,14 +1521,19 @@ EOF
 
       export LOG_STORAGE_CONTAINER=$(terraform output -raw log_storage_container_name)
       export LOG_STORAGE_ACCOUNT=$(terraform output -raw log_storage_account_name)
+      export DATA_STORAGE_ACCOUNT=$(terraform output -raw azure_data_storage_account 2>/dev/null || true)
       export AZURE_RESOURCE_GROUP=$(terraform output -raw azure_resource_group_name)
 
+      if [[ -n "${DATA_STORAGE_ACCOUNT:-}" ]]; then
+         hol_kv "Datalake storage account" "$DATA_STORAGE_ACCOUNT"
+      fi
+
       if should_provision_cai_nfs; then
-         NFS_FILE_SHARE_URL=$(terraform output -raw nfs_file_share_url 2>/dev/null || true)
-         NFS_STORAGE_ACCOUNT=$(terraform output -raw nfs_storage_account_name 2>/dev/null || true)
-         if [[ -n "$NFS_FILE_SHARE_URL" ]]; then
-            hol_kv "CAI NFS share URL" "$NFS_FILE_SHARE_URL"
-            hol_kv "CAI NFS storage account" "$NFS_STORAGE_ACCOUNT"
+         if load_cai_nfs_from_terraform; then
+            hol_kv "CAI NFS mount" "$CAI_EXISTING_NFS"
+            hol_kv "CAI NFS storage account" "$CAI_NFS_STORAGE_ACCOUNT"
+         else
+            hol_warn "CAI NFS outputs are missing — CAI workspace provisioning will fail until NFS is created"
          fi
       fi
 
@@ -1141,6 +1552,13 @@ EOF
       hol_kv "Final public subnets" "$ENV_PUBLIC_SUBNETS"
       hol_kv "Final private subnets" "$ENV_PRIVATE_SUBNETS"
 
+      get_cdp_network_for_keycloak || hol_warn "Could not cache CDP network outputs for Keycloak — will retry before Keycloak provision"
+
+      # Start Keycloak while Azure enhancements run (same pattern as AWS: KC boots during long CDP work).
+      if [[ "${provision_keycloak:-no}" == "yes" ]]; then
+         setup_keycloak_vm || return 1
+      fi
+
       azure_enhancements #calling azure_enhancements function
       azure_enhancements_status=$?
       if [ $azure_enhancements_status -ne 0 ]; then
@@ -1148,6 +1566,10 @@ EOF
       fi
       if [[ -n "${CDW_MANAGED_IDENTITY_ID:-}" ]]; then
          export CDW_MANAGED_IDENTITY_ID
+      fi
+
+      if [[ "${provision_keycloak:-no}" == "yes" ]]; then
+         wait_for_keycloak_ready || return 1
       fi
 
       return 0
@@ -1163,8 +1585,19 @@ azure_enhancements() {
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
 
-   if [ ! -d "/userconfig/.$USER_NAMESPACE/$ENHANCEMENTS_TF_CONFIG_DIR" ]; then
+   if [ ! -d "/userconfig/.$USER_NAMESPACE/azure_enhancements" ]; then
       cp -R "$ENHANCEMENTS_TF_CONFIG_DIR" "/userconfig/.$USER_NAMESPACE/"
+   else
+      for module_dir in "$ENHANCEMENTS_TF_CONFIG_DIR"*/; do
+         module_name=$(basename "$module_dir")
+         target_dir="/userconfig/.$USER_NAMESPACE/azure_enhancements/$module_name"
+         if [ ! -d "$target_dir" ]; then
+            cp -R "$module_dir" "/userconfig/.$USER_NAMESPACE/azure_enhancements/"
+         else
+            # Refresh module *.tf from image so prereq fixes apply without wiping .terraform state.
+            cp -f "$module_dir"/*.tf "$target_dir/" 2>/dev/null || true
+         fi
+      done
    fi
 
    cd /userconfig/.$USER_NAMESPACE/azure_enhancements/storage_lifecycle
@@ -1186,15 +1619,43 @@ azure_enhancements() {
       -var="azure_region=$azure_region"
 
    if should_provision_cdw; then
+      if [[ -z "${DATA_STORAGE_ACCOUNT:-}" ]]; then
+         local azure_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/azure"
+         if [[ -d "$azure_tf_dir" ]]; then
+            DATA_STORAGE_ACCOUNT=$(cd "$azure_tf_dir" && terraform output -raw azure_data_storage_account 2>/dev/null || true)
+            export DATA_STORAGE_ACCOUNT
+         fi
+      fi
+      if [[ -z "${DATA_STORAGE_ACCOUNT:-}" ]]; then
+         hol_fail "Datalake storage account is not set. CDW identity requires Storage Blob Data Owner on the datalake account."
+      fi
+
       hol_subsection "Provisioning CDW custom identity and role" "🏢"
       cd /userconfig/.$USER_NAMESPACE/azure_enhancements/cdw_custom_identity
       terraform init
       terraform apply -auto-approve \
          -var="env_prefix=$workshop_name" \
          -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
+         -var="data_storage_account=$DATA_STORAGE_ACCOUNT" \
          -var="azure_region=$azure_region"
       export CDW_MANAGED_IDENTITY_ID=$(terraform output -raw cdw_managed_identity_id)
       hol_kv "CDW managed identity" "$CDW_MANAGED_IDENTITY_ID"
+   fi
+
+   if should_provision_cde; then
+      hol_subsection "Provisioning CDE custom identities" "🏢"
+      cd /userconfig/.$USER_NAMESPACE/azure_enhancements/cde_custom_identity
+      terraform init
+      terraform apply -auto-approve \
+         -var="env_prefix=$workshop_name" \
+         -var="log_storage_account=$LOG_STORAGE_ACCOUNT" \
+         -var="log_storage_container=$LOG_STORAGE_CONTAINER" \
+         -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
+         -var="azure_region=$azure_region"
+      export CDE_CLUSTER_MANAGED_IDENTITY_ID=$(terraform output -raw cde_cluster_managed_identity_id)
+      export CDE_VC_MANAGED_IDENTITY_ID=$(terraform output -raw cde_vc_managed_identity_id)
+      hol_kv "CDE cluster managed identity" "$CDE_CLUSTER_MANAGED_IDENTITY_ID"
+      hol_kv "CDE VC managed identity" "$CDE_VC_MANAGED_IDENTITY_ID"
    fi
 }
 
@@ -1408,6 +1869,175 @@ destroy_cai_inference() {
 update_cdp_user_group() {
    cdp iam update-group --group-name $workshop_name-az-cdp-user-group --sync-membership-on-user-login
 }
+terraform_output_benign_destroy_error() {
+   grep -qiE 'ResourceNotFound|Request_ResourceNotFound|was not found|does not exist|could not be found|does not exist or one of its queried reference-property objects are not present|No password credential found|404 \(404 Not Found\)|unexpected status 404|status 404|StatusCode=404' <<<"$1"
+}
+
+terraform_output_resource_not_found() {
+   terraform_output_benign_destroy_error "$1"
+}
+
+terraform_benign_destroy_summary() {
+   local block="$1"
+   if grep -qi 'password credential' <<<"$block"; then
+      echo "Entra ID app password already removed — continuing destroy"
+   elif grep -qi 'Service Principal' <<<"$block"; then
+      echo "Entra ID service principal already deleted — continuing destroy"
+   else
+      echo "Resource already deleted or does not exist in Azure — continuing destroy"
+   fi
+}
+
+# Replace Terraform error boxes for already-deleted resources with a skip message.
+terraform_filter_benign_destroy_output() {
+   local in_block=0 buffer="" line
+   while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "╷" ]]; then
+         in_block=1
+         buffer="$line"
+         continue
+      fi
+      if [[ $in_block -eq 1 ]]; then
+         buffer="${buffer}"$'\n'"${line}"
+         if [[ "$line" == "╵" ]]; then
+            if terraform_output_benign_destroy_error "$buffer"; then
+               hol_skip "$(terraform_benign_destroy_summary "$buffer")"
+            else
+               printf '%s\n' "$buffer"
+            fi
+            in_block=0
+            buffer=""
+         fi
+         continue
+      fi
+      printf '%s\n' "$line"
+   done
+   [[ -n "$buffer" ]] && printf '%s\n' "$buffer"
+}
+
+terraform_output_resource_addresses() {
+   grep -oE 'with [^,]+' <<<"$1" | sed 's/^with //' | sort -u
+}
+
+azuread_app_password_gone_in_azure() {
+   local addr="$1" app_id key_id
+   app_id=$(terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*application_id / { print $2; exit }' | tr -d '" ')
+   key_id=$(terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*key_id / { print $2; exit }' | tr -d '" ')
+   [[ -z "$app_id" || -z "$key_id" ]] && return 1
+   ! az ad app credential list --id "$app_id" --query "[?keyId=='${key_id}']" -o tsv 2>/dev/null | grep -q .
+}
+
+azuread_service_principal_gone_in_azure() {
+   local addr="$1" lookup_id
+   lookup_id=$(terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*object_id / { print $2; exit }' | tr -d '" ')
+   [[ -z "$lookup_id" ]] && lookup_id=$(terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*client_id / { print $2; exit }' | tr -d '" ')
+   [[ -z "$lookup_id" ]] && return 1
+   ! az ad sp show --id "$lookup_id" >/dev/null 2>&1
+}
+
+# Drop one address from state only when Azure confirms it is already gone (never deletes in Azure).
+remove_gone_resource_from_state() {
+   local addr="$1"
+   [[ -z "$addr" ]] && return 1
+   if [[ "$addr" == *azuread_application_password* ]]; then
+      azuread_app_password_gone_in_azure "$addr" || return 1
+   elif [[ "$addr" == *azuread_service_principal* ]]; then
+      azuread_service_principal_gone_in_azure "$addr" || return 1
+   fi
+   hol_skip "Resource already gone in Azure — updating Terraform state only: ${addr}"
+   terraform state rm "$addr" >/dev/null 2>&1
+}
+
+remove_stale_resources_from_terraform_output() {
+   local output="$1"
+   local addr removed=0
+
+   if ! terraform_output_benign_destroy_error "$output"; then
+      return 1
+   fi
+
+   # Only the exact resource Terraform failed on (`with ...` line) — does not touch anything else.
+   while IFS= read -r addr; do
+      [[ -z "$addr" ]] && continue
+      hol_skip "Resource already gone in Azure — updating Terraform state only: ${addr}"
+      terraform state rm "$addr" >/dev/null 2>&1 && removed=1
+   done < <(terraform_output_resource_addresses "$output")
+
+   # Fallback: only remove Entra ID entries verified absent (never bulk-drop live resources).
+   if [[ $removed -eq 0 ]] && grep -qi 'Deleting Service Principal' <<<"$output"; then
+      while IFS= read -r addr; do
+         remove_gone_resource_from_state "$addr" && removed=1
+      done < <(terraform state list 2>/dev/null | grep 'azuread_service_principal' || true)
+   fi
+   if [[ $removed -eq 0 ]] && grep -qi 'password credential' <<<"$output"; then
+      while IFS= read -r addr; do
+         remove_gone_resource_from_state "$addr" && removed=1
+      done < <(terraform state list 2>/dev/null | grep 'azuread_application_password' || true)
+   fi
+
+   [[ $removed -eq 1 ]] && return 0
+   return 1
+}
+
+# Azure 404 / ResourceNotFound during refresh means the resource is already gone — drop it from state.
+repair_cdp_missing_resources_in_state() {
+   local -a tf_args=("$@")
+   local max_passes=50
+   local pass=0 output status log
+
+   if ! terraform state list 2>/dev/null | grep -q .; then
+      return 0
+   fi
+
+   while [[ $pass -lt $max_passes ]]; do
+      pass=$((pass + 1))
+      log=$(mktemp)
+      hol_step "Reconciling Terraform state with Azure (${pass}/${max_passes})..."
+      terraform refresh "${tf_args[@]}" 2>&1 | tee "$log"
+      status=${PIPESTATUS[0]}
+      output=$(cat "$log")
+      rm -f "$log"
+      if [[ $status -eq 0 ]]; then
+         return 0
+      fi
+      if remove_stale_resources_from_terraform_output "$output"; then
+         continue
+      fi
+      return 1
+   done
+   hol_warn "Stopped after ${max_passes} stale-resource repairs; Terraform state may still be inconsistent"
+   return 1
+}
+
+# Backwards-compatible alias (older image layers called this name).
+repair_cdp_stale_storage_in_state() {
+   repair_cdp_missing_resources_in_state "$@"
+}
+
+run_cdp_terraform_destroy() {
+   local -n destroy_args=$1
+   local max_attempts=50 attempt=0 output status log
+
+   # Let Terraform drive destroy order; only reconcile state after a benign 404/400 on retry.
+   while [[ $attempt -lt $max_attempts ]]; do
+      attempt=$((attempt + 1))
+      log=$(mktemp)
+      hol_step "Running terraform destroy (${attempt}/${max_attempts})..."
+      terraform destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log" | terraform_filter_benign_destroy_output
+      status=${PIPESTATUS[0]}
+      output=$(cat "$log")
+      rm -f "$log"
+      [[ $status -eq 0 ]] && return 0
+      if remove_stale_resources_from_terraform_output "$output"; then
+         hol_ok "Terraform state reconciled — retrying destroy"
+         hol_info "Terraform will continue destroying remaining resources in dependency order"
+         continue
+      fi
+      return $status
+   done
+   return 1
+}
+
 #--------------------------------------------------------------------------------------------------#
 # Function to destroy CDP Environment.
 destroy_cdp() {
@@ -1427,6 +2057,7 @@ destroy_cdp() {
    terraform init
    if should_provision_cai_nfs || cdp_nfs_enabled_in_state; then
       patch_cdp_quickstart_for_cai_nfs "${azure_tf_dir}"
+      patch_cdp_prereqs_nfs_single_private_endpoint "${azure_tf_dir}"
    fi
    local cdp_tf_destroy_args=(
       -var "env_prefix=${workshop_name}"
@@ -1436,8 +2067,9 @@ destroy_cdp() {
       -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
    )
    append_cdp_nfs_tf_args cdp_tf_destroy_args
-   terraform destroy --auto-approve "${cdp_tf_destroy_args[@]}"
-      
+   export TF_INPUT=0
+   hol_info "Destroying CDP Terraform resources (already deleted or missing Azure resources are removed from state)"
+   run_cdp_terraform_destroy cdp_tf_destroy_args
    cdp_destroy_status=$?
    if [ "${cdp_destroy_status:-1}" -eq 0 ]; then
       rm -rf /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/
@@ -1474,6 +2106,79 @@ destroy_hol_infra() {
 }
 
 #--------------------------------------------------------------------------------------------------#
+workshop_output_file() {
+   echo "/userconfig/${workshop_name}.txt"
+}
+
+workshop_services_include() {
+   local service="$1"
+   local normalized="${enable_data_services:-}"
+   normalized="${normalized//[/}"
+   normalized="${normalized//]/}"
+   normalized=$(echo "$normalized" | tr '[:upper:]' '[:lower:]')
+   [[ ",${normalized}," == *",${service},"* ]]
+}
+
+append_workshop_output_section() {
+   local title="$1"
+   local out
+   out="$(workshop_output_file)"
+   {
+      echo ""
+      echo "==============================================================="
+      echo "     ${title}"
+      echo "==============================================================="
+   } >>"$out"
+}
+
+write_workshop_cdp_outputs() {
+   local out
+   out="$(workshop_output_file)"
+   append_workshop_output_section "CDP / Azure Infrastructure: ${workshop_name}"
+   {
+      echo "Generated (UTC): $(date -u +"%Y-%m-%d %H:%M:%S")"
+      echo "CDP Environment: ${workshop_name}-cdp-env"
+      echo "Azure Region: ${azure_region:-n/a}"
+      echo "Azure Resource Group: ${AZURE_RESOURCE_GROUP:-n/a}"
+      echo "Datalake Storage Account: ${DATA_STORAGE_ACCOUNT:-n/a}"
+      echo "Log Storage Account: ${LOG_STORAGE_ACCOUNT:-n/a}"
+      echo "Log Storage Container: ${LOG_STORAGE_CONTAINER:-n/a}"
+      echo "CDP Console: https://console.cdp.cloudera.com/"
+   } >>"$out"
+   hol_ok "CDP outputs appended to ${out}"
+}
+
+write_workshop_data_service_outputs() {
+   local out
+   out="$(workshop_output_file)"
+   append_workshop_output_section "Data Services & Identities: ${workshop_name}"
+   {
+      echo "Enabled Data Services: ${enable_data_services:-n/a}"
+      if workshop_services_include cdw; then
+         echo "CDW Managed Identity: ${CDW_MANAGED_IDENTITY_ID:-n/a}"
+      fi
+      if workshop_services_include cde; then
+         echo "CDE Service Name: ${workshop_name}-cde"
+         echo "CDE Instance Type: ${cde_instance_type:-n/a}"
+         echo "CDE Cluster Managed Identity: ${CDE_CLUSTER_MANAGED_IDENTITY_ID:-n/a}"
+         echo "CDE VC Managed Identity: ${CDE_VC_MANAGED_IDENTITY_ID:-n/a}"
+      fi
+      if workshop_services_include cai || [[ "${provision_caii:-no}" == "yes" ]]; then
+         echo "CAI Workspace Name: ${workshop_name}-cai-ws"
+         echo "CAI WS Instance Type: ${cai_ws_instance_type:-n/a}"
+         echo "CAI NFS Mount Path: ${CAI_EXISTING_NFS:-n/a}"
+         echo "CAI NFS Storage Account: ${CAI_NFS_STORAGE_ACCOUNT:-n/a}"
+         echo "CAI NFS Share: ${CAI_NFS_SHARE_NAME:-n/a}"
+      fi
+      if workshop_services_include cdf; then
+         echo "CDF Environment Service: ${workshop_name}-cdp-env"
+         echo "CDF Instance Type: ${cdf_instance_type:-n/a}"
+      fi
+   } >>"$out"
+   hol_ok "Data service outputs appended to ${out} (also emailed via Jenkins when run from CI)"
+}
+
+#--------------------------------------------------------------------------------------------------#
 # Function to configure IDP Client
 cdp_idp_setup_user() {
    # echo "keycloak__admin_password:$keycloak__admin_password"
@@ -1481,7 +2186,7 @@ cdp_idp_setup_user() {
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
    hol_subsection "Configuring IDP in CDP" "🔗"
-   sleep 5
+   wait_for_keycloak_ready "$KEYCLOAK_SERVER_IP" 30 || return 1
    cdp_region=$(cdp environments describe-environment --environment-name $workshop_name-cdp-env | jq -r .environment.crn | cut -d: -f4)
    echo "cdp_region:$cdp_region"
    ansible-playbook create_keycloak_client.yml --extra-vars \
@@ -1592,6 +2297,67 @@ count_elements() {
    echo "$count"
 }
 #--------------------------------------------------------------------------------------------------#
+azure_vm_sku_available() {
+   local sku="$1"
+   local region="${azure_region:-}"
+
+   [[ -n "$sku" ]] || return 1
+   if [[ -z "$region" ]] || ! command -v az >/dev/null 2>&1; then
+      return 0
+   fi
+
+   local count
+   count=$(az vm list-skus --location "$region" --size "$sku" \
+      --query "length([?name=='${sku}'])" -o tsv 2>/dev/null || echo 0)
+   [[ "${count:-0}" -gt 0 ]]
+}
+
+resolve_azure_instance_type() {
+   local requested="${1:-}"
+   shift
+   local candidates=()
+   local sku existing seen
+
+   if [[ -n "$requested" ]]; then
+      candidates+=("$requested")
+   fi
+   while [[ $# -gt 0 ]]; do
+      candidates+=("$1")
+      shift
+   done
+
+   local deduped=()
+   for sku in "${candidates[@]}"; do
+      [[ -z "$sku" ]] && continue
+      seen=0
+      for existing in "${deduped[@]}"; do
+         [[ "$existing" == "$sku" ]] && seen=1 && break
+      done
+      ((seen)) || deduped+=("$sku")
+   done
+
+   if [[ ${#deduped[@]} -eq 0 ]]; then
+      return 1
+   fi
+
+   for sku in "${deduped[@]}"; do
+      if azure_vm_sku_available "$sku"; then
+         if [[ -n "$requested" && "$sku" != "$requested" ]]; then
+            hol_warn "Requested instance type '${requested}' unavailable in ${azure_region}; using ${sku}"
+         else
+            hol_info "Using Azure instance type ${sku}"
+         fi
+         echo "$sku"
+         return 0
+      fi
+      hol_warn "Azure instance type ${sku} is not offered in ${azure_region}"
+   done
+
+   hol_warn "No preferred instance type verified in ${azure_region}; defaulting to ${deduped[0]}"
+   echo "${deduped[0]}"
+}
+
+#--------------------------------------------------------------------------------------------------#
 deploy_cdw() {
    number_vw_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
    azure_cdw_subnet=$(echo "$ENV_PRIVATE_SUBNETS" | jq -r '.[0]')
@@ -1624,11 +2390,23 @@ disable_cdw() {
 #--------------------------------------------------------------------------------------------------#
 deploy_cde() {
    number_vc_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
-   DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v3"
+   DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
    if [ -z "${CDE_INSTANCE_TYPE+x}" ] || [ -z "$CDE_INSTANCE_TYPE" ]; then
       cde_instance_type=$DEFAULT_CDE_INSTANCE_TYPE
    else
       cde_instance_type=$CDE_INSTANCE_TYPE
+   fi
+   cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
+      Standard_D8s_v5 Standard_D8s_v4 Standard_D8s_v3 Standard_D16s_v3)
+
+   if [[ -z "${CDE_CLUSTER_MANAGED_IDENTITY_ID:-}" && -d "/userconfig/.$workshop_name/azure_enhancements/cde_custom_identity" ]]; then
+      cd "/userconfig/.$workshop_name/azure_enhancements/cde_custom_identity"
+      CDE_CLUSTER_MANAGED_IDENTITY_ID=$(terraform output -raw cde_cluster_managed_identity_id 2>/dev/null || true)
+      CDE_VC_MANAGED_IDENTITY_ID=$(terraform output -raw cde_vc_managed_identity_id 2>/dev/null || true)
+      export CDE_CLUSTER_MANAGED_IDENTITY_ID CDE_VC_MANAGED_IDENTITY_ID
+   fi
+   if [[ -z "${CDE_CLUSTER_MANAGED_IDENTITY_ID:-}" || -z "${CDE_VC_MANAGED_IDENTITY_ID:-}" ]]; then
+      hol_fail "CDE managed identities are not set. Ensure CDE is enabled and CDP/Azure enhancements completed successfully."
    fi
 
    ansible-playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
@@ -1640,7 +2418,9 @@ deploy_cde() {
       maximum_instances=$cde_max_instances \
       spark_version=$cde_spark_version \
       vc_tier=$cde_vc_tier \
-      number_vc_to_create=$number_vc_to_create"
+      number_vc_to_create=$number_vc_to_create \
+      cde_cluster_managed_identity_id=$CDE_CLUSTER_MANAGED_IDENTITY_ID \
+      cde_vc_managed_identity_id=$CDE_VC_MANAGED_IDENTITY_ID"
 
 }
 #--------------------------------------------------------------------------------------------------#
@@ -1652,7 +2432,17 @@ disable_cde() {
 #--------------------------------------------------------------------------------------------------#
 #--------------------------------------------------------------------------------------------------#
 deploy_cai() {
-   #number_vws_to_create=$(( ($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0) ))
+   if should_provision_cai_nfs; then
+      if [[ -z "${CAI_EXISTING_NFS:-}" ]]; then
+         load_cai_nfs_from_terraform || true
+      fi
+      if [[ -z "${CAI_EXISTING_NFS:-}" ]]; then
+         hol_fail "CAI requires Azure NFS but mount path is not set. Re-run CDP provision with CAI enabled."
+      fi
+      finalize_cai_nfs_mount_path
+      prepare_cai_nfs_workbench_mount || return 1
+   fi
+
    ansible-playbook $DS_CONFIG_DIR/enable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
@@ -1663,8 +2453,9 @@ deploy_cai() {
       enable_gpu=$cai_enable_gpu \
       gpu_instance_type=$cai_gpu_instance_type \
       minimum_gpu_instances=$cai_min_gpu_instances \
-      maximum_gpu_instances=$cai_max_gpu_instances"
-   #number_vws_to_create=$number_vws_to_create"
+      maximum_gpu_instances=$cai_max_gpu_instances \
+      cai_existing_nfs=${CAI_EXISTING_NFS:-} \
+      cai_nfs_version=${cai_nfs_version:-4.1}"
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cai() {
@@ -1675,9 +2466,11 @@ disable_cai() {
 }
 #--------------------------------------------------------------------------------------------------#
 deploy_cdf() {
-   if [[ -z "${ENV_PUBLIC_SUBNETS}" || -z "${ENV_PRIVATE_SUBNETS}" ]]; then
-      hol_warn "ENV_PUBLIC_SUBNETS/ENV_PRIVATE_SUBNETS are not set — cannot deploy CDF"
-      return 1
+   if [[ -z "${ENV_PUBLIC_SUBNETS:-}" || -z "${ENV_PRIVATE_SUBNETS:-}" ]]; then
+      load_cdp_subnet_outputs_from_terraform || true
+   fi
+   if [[ -z "${ENV_PUBLIC_SUBNETS:-}" || -z "${ENV_PRIVATE_SUBNETS:-}" ]]; then
+      hol_fail "CDF requires public and private subnet outputs from CDP Terraform. Re-run CDP provision or ensure azure_cdp_gateway_subnet_names and azure_cdp_subnet_names exist."
    fi
 
    local extra_vars_file="/tmp/cdf_extra_vars_${workshop_name}.json"
@@ -1851,13 +2644,15 @@ deploy_single_data_service() {
       ;;
    cde)
       hol_init_service "cde"
-      DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v3"
+      DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
       DEFAULT_CDE_INITIAL_INSTANCES=10
       DEFAULT_CDE_MIN_INSTANCES=10
       DEFAULT_CDE_MAX_INSTANCES=40
       DEFAULT_CDE_SPARK_VERSION="AUTO"
       DEFAULT_CDE_VC_TIER="CORE"
       cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
+      cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
+         Standard_D8s_v5 Standard_D8s_v4 Standard_D8s_v3 Standard_D16s_v3)
       cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
       cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
       cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
@@ -1879,14 +2674,16 @@ deploy_single_data_service() {
       ;;
    cai)
       hol_init_service "cai"
-      DEFAULT_CAI_WS_INSTANCE_TYPE="m5.2xlarge"
+      DEFAULT_CAI_WS_INSTANCE_TYPE="Standard_D8s_v5"
       DEFAULT_CAI_MIN_INSTANCES=1
       DEFAULT_CAI_MAX_INSTANCES=10
       DEFAULT_CAI_ENABLE_GPU="false"
-      DEFAULT_CAI_GPU_INSTANCE_TYPE="g4dn.xlarge"
+      DEFAULT_CAI_GPU_INSTANCE_TYPE="Standard_NC4as_T4_v3"
       DEFAULT_CAI_MIN_GPU_INSTANCES=0
       DEFAULT_CAI_MAX_GPU_INSTANCES=10
       cai_ws_instance_type="${cai_ws_instance_type:-$DEFAULT_CAI_WS_INSTANCE_TYPE}"
+      cai_ws_instance_type=$(resolve_azure_instance_type "$cai_ws_instance_type" \
+         Standard_D8s_v5 Standard_D8s_v4 Standard_D8s_v3)
       cai_min_instances="${cai_min_instances:-$DEFAULT_CAI_MIN_INSTANCES}"
       cai_max_instances="${cai_max_instances:-$DEFAULT_CAI_MAX_INSTANCES}"
       cai_enable_gpu="${cai_enable_gpu:-$DEFAULT_CAI_ENABLE_GPU}"
@@ -1910,11 +2707,13 @@ deploy_single_data_service() {
       ;;
    cdf)
       hol_init_service "cdf"
-      DEFAULT_CDF_INSTANCE_TYPE=""
+      DEFAULT_CDF_INSTANCE_TYPE="Standard_D8s_v5"
       DEFAULT_CDF_MIN_NODES=3
       DEFAULT_CDF_MAX_NODES=10
       DEFAULT_CDF_USE_PUBLIC_LB="true"
       cdf_instance_type="${cdf_instance_type:-$DEFAULT_CDF_INSTANCE_TYPE}"
+      cdf_instance_type=$(resolve_azure_instance_type "$cdf_instance_type" \
+         Standard_D8s_v5 Standard_D8s_v4 Standard_D8s_v3)
       cdf_min_nodes="${cdf_min_nodes:-$DEFAULT_CDF_MIN_NODES}"
       cdf_max_nodes="${cdf_max_nodes:-$DEFAULT_CDF_MAX_NODES}"
       cdf_use_public_lb="${cdf_use_public_lb:-$DEFAULT_CDF_USE_PUBLIC_LB}"
@@ -1989,9 +2788,17 @@ enable_data_services() {
    hol_info "Services: ${services_to_deploy[*]}"
 
    local pids=()
+   local delay=0
+   local service
    for service in "${services_to_deploy[@]}"; do
-      deploy_single_data_service "$service" &
+      (
+         if (( delay > 0 )); then
+            sleep "$delay"
+         fi
+         deploy_single_data_service "$service"
+      ) &
       pids+=($!)
+      delay=$((delay + 25))
    done
 
    wait_for_pids "${pids[@]}"

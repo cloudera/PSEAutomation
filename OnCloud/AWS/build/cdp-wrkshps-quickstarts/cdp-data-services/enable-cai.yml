@@ -33,15 +33,39 @@
       ansible.builtin.shell: >
         cdp ml list-workspaces | jq -r '.workspaces[].instanceName'
       register: ml_list_workspaces
+      failed_when: false
+      changed_when: false
 
     - name: Set workspace exists flag
       set_fact:
         workspace_exists: "{{ ml_list_workspaces.rc == 0 and (workshop_name + '-cai-ws' in ml_list_workspaces.stdout_lines) }}"
 
+    - name: Get existing workspace status
+      ansible.builtin.shell: >
+        cdp ml list-workspaces | jq -r '.workspaces[] | select(.instanceName == "{{ workshop_name }}-cai-ws") | .instanceStatus'
+      register: existing_ws_status
+      failed_when: false
+      changed_when: false
+      when: workspace_exists
+
+    - name: Set workspace healthy flag
+      ansible.builtin.set_fact:
+        workspace_healthy: >-
+          {{
+            existing_ws_status.stdout in [
+              'installation:finished', 'modify:finished', 'provision:finished', 'resume:finished'
+            ]
+          }}
+      when: workspace_exists
+
     - name: Skip provisioning if workspace already exists
       debug:
-        msg: "Workspace {{ workshop_name }}-cai-ws already exists in environment {{ cdp_env_name }}."
+        msg: "Workspace {{ workshop_name }}-cai-ws already exists in environment {{ cdp_env_name }} (status: {{ existing_ws_status.stdout | default('unknown') }})."
       when: workspace_exists
+
+    - name: End play when workspace already exists and is healthy
+      ansible.builtin.meta: end_play
+      when: workspace_exists and (workspace_healthy | default(false))
 
     - name: Generate JSON for provision-k8s-request
       set_fact:
@@ -109,6 +133,8 @@
         ]))
       retries: 50
       delay: 120
+      when: not workspace_exists
+      failed_when: false
 
     - name: Print ML Workspace Status
       debug:

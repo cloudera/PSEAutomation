@@ -38,10 +38,24 @@
       debug:
         msg: "{{ deservicestatus }}"
 
+    - name: Initialize CDE service existence flag
+      ansible.builtin.set_fact:
+        cde_service_exists: false
+
     - name: Determine if CDE service needs to be created
-      set_fact:
-        cde_service_exists: "{{ deservicestatus.services | selectattr('status', 'equalto', 'ClusterCreationCompleted') | list | length > 0 }}"
-      when: deservicestatus is defined and deservicestatus.services is defined
+      ansible.builtin.set_fact:
+        cde_service_exists: >-
+          {{
+            (deservicestatus.services | default([], true)
+            | selectattr('status', 'equalto', 'ClusterCreationCompleted')
+            | list | length) > 0
+          }}
+      when: deservicestatus is succeeded
+
+    - name: Skip provisioning when CDE service is already running
+      ansible.builtin.debug:
+        msg: "CDE service {{ workshop_name }}-cde is already running — skipping activation."
+      when: cde_service_exists
 
     - name: Activate CDE service if it does not exist
       cloudera.cloud.de:
@@ -61,9 +75,12 @@
       cloudera.cloud.de_info:
         name: "{{ workshop_name }}-cde"
       register: deservicestatus
-      until: deservicestatus.services[0].status == "ClusterCreationCompleted"
+      until: >
+        (deservicestatus.services | default([], true) | length) > 0 and
+        deservicestatus.services[0].status == "ClusterCreationCompleted"
       retries: 40
       delay: 120
+      failed_when: false
 
     - name: Print the status
       debug:
@@ -121,6 +138,7 @@
       delay: "{{ cde_async_delay }}"
       loop: "{{ vc_async_jobs.results | default([]) | selectattr('ansible_job_id', 'defined') | list }}"
       when: vc_deploy_plan_missing | length > 0
+      ignore_errors: true
 
     - name: Fail on unexpected virtual cluster deployment errors
       ansible.builtin.fail:

@@ -1,0 +1,80 @@
+= Azure Post-Provision Enhancements
+:toc: preamble
+:icons: font
+
+Optional Terraform modules under `OnCloud/Azure/build/cdp-wrkshps-quickstarts/azure_enhancements/` applied after the CDP environment is created.
+
+Runbook: link:../../OnCloud/Azure/build/cdp-wrkshps-quickstarts/azure_enhancements/README.adoc[`azure_enhancements/README.adoc`]
+
+== storage_lifecycle
+
+Applies a lifecycle management policy to the CDP log storage container so objects under `logs/` are removed after three days.
+
+== dladmin_log_access
+
+Assigns **Storage Blob Data Contributor** on the CDP log container to the `${env_prefix}-dladmin-identity` managed identity. This mirrors the log identity write access and ensures datalake admin can PutBlob on the logs path when needed.
+
+== cdw_custom_identity
+
+When `ENABLE_DATA_SERVICES` includes `CDW`, creates `${env_prefix}-cdw-identity` and assigns:
+
+* A custom role with link:https://docs.cloudera.com/data-warehouse/cloud/azure-environments/topics/dw-azure-environments-minimum-permissions.html[CDW minimum permissions] on the CDP resource group
+* **Storage Blob Data Owner** on the CDP datalake storage account (link:https://docs.cloudera.com/data-warehouse/cloud/azure-environments/topics/dw-azure-environment-requirements-checklist.html[CDW Azure checklist])
+
+The following legacy single-server PostgreSQL actions are excluded because they are not available on Azure today:
+
+* `Microsoft.DBforPostgreSQL/servers/virtualNetworkRules/write`
+* `Microsoft.DBforPostgreSQL/servers/databases/write`
+
+The managed identity resource ID is passed to `enable-cdw.yml` as `azure.managed_identity`.
+
+== cde_custom_identity
+
+When `ENABLE_DATA_SERVICES` includes `CDE`, creates two user-assigned identities:
+
+* `${env_prefix}-cde-cluster-identity` — CDE service cluster
+* `${env_prefix}-cde-vc-identity` — CDE virtual clusters
+
+Both identities are granted **Storage Blob Data Contributor** on the CDP log container. Their resource IDs are passed to `enable-cde.yml` and used with `cdp de enable-service --azure-service-managed-identity` and `--azure-virtual-cluster-managed-identities` (required for CDE >= 1.25.2 on Azure).
+
+The CDP Terraform quickstart assigns **Contributor** to the environment credential (`${env_prefix}-xaccount-app`) by default, which satisfies the link:https://docs.cloudera.com/data-engineering/cloud/enable-data-engineering/topics/cde-adding-required-permissions-for-azure-env-credentials.html[CDE Workload Identity FIC manager] requirement. No extra HoL Terraform is applied unless you switch to minimal environment-credential permissions.
+
+== CAI NFS (via CDP Terraform)
+
+When `ENABLE_DATA_SERVICES` includes `CAI` or `PROVISION_CAII` is `yes`, `provision_cdp()` patches `cdp-tf-quickstarts/azure` to enable `create_azure_cml_nfs` on the prereqs module. This uses Cloudera's `terraform-azure-nfs` module to create:
+
+* Premium `FileStorage` account with secure transfer disabled (required for NFS v4.1)
+* NFS file share with one private endpoint in the first CDP workload subnet (Cloudera defaults to one per subnet; HoL patches this down for a single CAI workbench)
+* Private DNS zone `privatelink.file.core.windows.net` linked to the CDP VNet
+
+Each CAI workbench gets a dedicated NFS subdirectory and mount path:
+
+* Share root (Terraform): `nfs://{account}.file.core.windows.net:/{account}/{share}`
+* Workbench path (`CAI_EXISTING_NFS`): `nfs://{account}.file.core.windows.net:/{account}/{share}/{workshop_name}-cai-ws`
+
+`finalize_cai_nfs_mount_path()` appends `/{workshop_name}-cai-ws` before CAI deploy. The path is passed to `enable-cai.yml` as `--existing-nfs` with `--nfs-version 4.1`.
+
+HoL sets `create_vm_mounting_nfs=false` and uses `prepare_cai_nfs_workbench_mount()` instead: it SSHs to the Keycloak VM (same VNet), temporarily mounts the share, runs `mkdir` and `chown 8536:8536` on the workbench subdirectory, then unmounts.
+
+=== Re-run behavior
+
+|===
+| Step | Re-run behavior
+
+| CDP Terraform (`provision_cdp`)
+| NFS share already exists — no change
+
+| `azure_enhancements`
+| CDW/CDE identities idempotent
+
+| `prepare_cai_nfs_workbench_mount`
+| Skips if subdirectory exists with `8536:8536`; fixes ownership if wrong
+
+| `enable-cai.yml`
+| Skips `cdp ml create-workspace` if `{workshop_name}-cai-ws` already exists and is healthy
+
+| Failed partial CAI
+| Re-run `provision` retries NFS prep and workspace create with the same workbench path
+|===
+
+If Keycloak is disabled (`PROVISION_KEYCLOAK=no`), CAI NFS prep cannot run automatically. Create the workbench subdirectory and `chown 8536:8536` manually, or enable the Cloudera mount VM (`create_vm_mounting_nfs=true`) per link:https://docs.cloudera.com/machine-learning/cloud/requirements-azure/topics/ml-azure-setup-2.5.html[Cloudera Azure CAI requirements].

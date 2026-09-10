@@ -1,61 +1,121 @@
-= AutoClouderaDeploy (Hands On Labs Infrastructure Provisioner) — Azure
-:imagesdir: https://github.com/cloudera/ClouderaSetup/blob/main/images
-:toc:
+= AutoClouderaDeploy — Azure HoL Provisioner
+:toc: preamble
+:icons: font
 
-Author: **Kuldeep Sahu**
+Container-based automation that provisions a **disposable** Cloudera Data Platform Public Cloud Hands-on Lab stack on Azure — environment, datalake, data services (CAI, CDW, CDE, CDF), optional Keycloak SSO, and workshop users.
 
-Email: **ksahu@cloudera.com**
+Detailed reference: link:../../../docs/oncloud/azure-provisioner.adoc[Azure provisioner guide] · link:../../../docs/oncloud/configfile-reference.adoc[configfile reference]
 
-Author: **Avanish Tiwari**
+== Quick start
 
-Email: **aktiwari@cloudera.com**
+=== 1. Prerequisites
 
----
+[source,bash]
+----
+az login
+cdp configure
+aws configure    # Route53 DNS for Keycloak when using DOMAIN/HOSTEDZONEID
+----
 
-== Overview
+Pull the published image (or link:#_developer_guide_build_tag_and_push[build locally]):
 
-**AutoClouderaDeploy** for Azure is a container-based solution that provisions disposable on-demand Hands-on Lab infrastructure on Microsoft Azure with minimal manual effort. A single `provision` or `destroy` command creates or tears down:
+[source,bash]
+----
+docker pull clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest
+----
 
-1. Cloudera Environment
-2. Datalake
-3. Data Services (CAI, CDW, CDE, and CDF)
-4. Optional `Keycloak` server
-5. Workshop users
+=== 2. Prepare userconfig
 
-=== Jenkins / configfile parameters
+[source,bash]
+----
+mkdir -p ~/hol-userconfig
+cp configuration/configfile.example ~/hol-userconfig/configfile
+# Edit required keys: AZURE_REGION, WORKSHOP_NAME, DOMAIN, HOSTEDZONEID, etc.
+# Optional: place <SSH_KEY_NAME>.pem in the same directory
+----
 
-* *OWNER* (resource tag `pse-owner`): default `pse-apac@cloudera.com`
-* *LOCAL_MACHINE_IP*: IP or CIDR to whitelist for environment access
-* *PROVISION_CAII*: when set to `YES`, `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`
-* *AZURE_REGION*: Azure region for CDP and Keycloak resources (for example, `eastus`)
-* *SSH_KEY_NAME*: optional existing SSH key name; if omitted, a key pair is generated automatically
+=== 3. Provision
 
-== Technology Stack
+[source,bash]
+----
+docker run --rm --platform linux/amd64 \
+  -v ~/hol-userconfig:/userconfig \
+  -v $HOME/.cdp:/root/.cdp \
+  -v $HOME/.azure:/root/.azure \
+  -v $HOME/.aws:/root/.aws \
+  clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest provision
+----
 
-1. `Ansible`
-2. `Terraform`
-3. `Cloudera.cloud`
-4. `CDP-tf-quickstarts` (Azure quickstart)
-5. `CDPY`
-6. `CDP CLI`
-7. `Azure CLI`
-8. `AWS CLI` (Route53 DNS and Let's Encrypt DNS challenge only)
-9. `Shell Scripting`
+Workshop access details are written to `~/hol-userconfig/{WORKSHOP_NAME}.txt`.
 
-All tools are packaged in a Docker container.
+=== 4. Destroy
 
----
+Use the same `userconfig` directory (state is stored under `~/hol-userconfig/.{WORKSHOP_NAME}/`):
 
-== Build the Docker Image
+[source,bash]
+----
+docker run --rm \
+  -v ~/hol-userconfig:/userconfig \
+  -v $HOME/.cdp:/root/.cdp \
+  -v $HOME/.azure:/root/.azure \
+  -v $HOME/.aws:/root/.aws \
+  clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest destroy
+----
+
+NOTE: Image is `linux/amd64`. On Apple Silicon, always include `--platform linux/amd64`.
+
+== Key constraints
+
+|===
+| Setting | Rule
+
+| `PROVISION_CAII:yes`
+| `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`
+
+| `pse-owner` tag
+| Required for cost tracking via `ENV_TAGS` (default Jenkins OWNER: `pse-apac@cloudera.com`)
+
+| AWS credentials
+| Required for Keycloak Route53 DNS even on Azure deployments
+
+| Credentials
+| Mount `~/.cdp`, `~/.azure`, and `~/.aws`, or pass via configfile (see link:../../../docs/oncloud/configfile-reference.adoc[configfile reference])
+|===
+
+[[developer-guide-build-tag-and-push]]
+== Developer guide — build, tag, and push
+
+This directory is the working tree for image development. Use these steps when you change provisioner code, entrypoint scripts, or Ansible playbooks.
+
+=== Install Docker
+
+Follow the link:https://docs.docker.com/engine/install/[official Docker installation guide] for your platform.
+
+=== Build
+
+From the repository root (or `cd` into this directory):
 
 [source,bash]
 ----
 cd OnCloud/Azure/build/
-# docker build . -t <reponame>/<imagename>:<tagname>
-docker build . -t hol-azure:latest
+docker build --platform linux/amd64 \
+  --build-arg TF_QUICKSTART_VERSION=v0.15.0 \
+  -t hol-azure:latest .
+docker images | grep hol-azure
 ----
 
-Tag and push to Docker Hub:
+`TF_QUICKSTART_VERSION` pins the `cdp-tf-quickstarts` tag baked into the image (see `Dockerfile`). Override it when testing a newer quickstart release.
+
+=== Log in to Docker Hub
+
+[source,bash]
+----
+docker login
+----
+
+Use a Docker Hub account with push access to `clouderapartners/cdp-public-cloud-hol-provisioner-azure`.
+
+=== Tag and push
 
 [source,bash]
 ----
@@ -63,75 +123,21 @@ docker tag hol-azure:latest clouderapartners/cdp-public-cloud-hol-provisioner-az
 docker push clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest
 ----
 
----
-
-== Major Features for Azure
-
-1. Ubuntu Linux-based base image
-2. Optional Keycloak VM provisioning with SSO access for workshop users
-3. Workshop users are mapped to CDP IAM groups with least-privilege roles
-4. Parameterized Keycloak admin password
-5. Azure and CDP prerequisite checks for VNet, public IP, storage account, IAM, and SAML provider quotas
-6. Optional activation of CDW, CDE, CAI, and CDF data services
-7. Idempotent provision and destroy workflows
-8. Uses `cdp-tf-quickstarts` Azure Terraform modules pulled at runtime
-9. Dynamic CDW virtual warehouse count based on workshop user count
-10. Optional GPU-backed CAI workspaces
-11. When CAI or CAII is enabled, provisions Azure Files NFS (premium storage, private endpoints, secure transfer disabled) in the CDP VNet via `terraform-azure-nfs`
-12. Configurable data service sizing and Spark version overrides
-13. CDV and Data Catalog deployment with CDW
-14. Azure authentication via `az login`, service principal, or managed identity on the deployer host
-
----
-
-== Usage (standalone, without Jenkins)
-
-The Azure provisioner uses the same `configfile` workflow as the AWS automation. Jenkins generates this file at deploy time; for local runs you create it yourself.
-
-=== Step 1: Prerequisites on the host
-
-1. Install and authenticate the CLIs on your machine:
+To publish an additional version tag:
 
 [source,bash]
 ----
-az login
-cdp configure
-aws configure
+docker tag hol-azure:latest clouderapartners/cdp-public-cloud-hol-provisioner-azure:<version>
+docker push clouderapartners/cdp-public-cloud-hol-provisioner-azure:<version>
 ----
 
-2. Pull or build the Docker image:
+NOTE: The runtime image is `linux/amd64`. On Apple Silicon, always pass `--platform linux/amd64` for build and run. For multi-arch publish (as in `Jenkinsfile.Build`), use link:https://docs.docker.com/build/building/multi-platform/[Docker multi-platform builds] (`docker buildx`).
+
+=== Run your local image
 
 [source,bash]
 ----
-docker pull clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest
-# or: docker build . -t hol-azure:latest
-----
-
-=== Step 2: Prepare userconfig
-
-Create a directory (for example `~/hol-userconfig`) and copy the example config:
-
-[source,bash]
-----
-mkdir -p ~/hol-userconfig
-cp configuration/configfile.example ~/hol-userconfig/configfile
-----
-
-Edit `~/hol-userconfig/configfile`:
-
-* The file must be named exactly `configfile` (no extension).
-* Use `KEY:value` format — no quotes, no blank line after the last entry.
-* Set `AZURE_REGION`, workshop details, `DOMAIN`, `HOSTEDZONEID`, and other required keys.
-* Optional `SSH_KEY_NAME` (or `AWS_KEY_PAIR` for AWS-style configs): place `<name>.pem` in the same directory.
-* Optional `ENV_TAGS` for resource tagging, for example `{pse-owner=you@cloudera.com,apn-id=12345}`.
-
-See `configuration/configfile.example` for the full list of supported keys.
-
-=== Step 3: Provision
-
-[source,bash]
-----
-docker run --rm \
+docker run --rm --platform linux/amd64 \
   -v ~/hol-userconfig:/userconfig \
   -v $HOME/.cdp:/root/.cdp \
   -v $HOME/.azure:/root/.azure \
@@ -139,26 +145,15 @@ docker run --rm \
   hol-azure:latest provision
 ----
 
-The container writes workshop state under `/userconfig/.<WORKSHOP_NAME>/` (generated keys, Terraform state). Use the same `userconfig` directory for destroy.
+== Post-provision enhancements
 
-=== Step 4: Destroy
+Storage lifecycle, CDW/CDE managed identities, and CAI NFS: link:cdp-wrkshps-quickstarts/azure_enhancements/README.adoc[`azure_enhancements/`] · link:../../../docs/oncloud/azure-enhancements.adoc[detailed guide]
 
-[source,bash]
-----
-docker run --rm \
-  -v ~/hol-userconfig:/userconfig \
-  -v $HOME/.cdp:/root/.cdp \
-  -v $HOME/.azure:/root/.azure \
-  -v $HOME/.aws:/root/.aws \
-  hol-azure:latest destroy
-----
+== Further reading
 
-=== Credential options
+* link:../../../docs/oncloud/README.adoc[OnCloud documentation index]
+* link:../../../docs/oncloud/azure-provisioner.adoc[Features, credentials, standalone usage details]
 
-| Credential | Recommended approach | Alternative |
-|------------|---------------------|-------------|
-| CDP | Mount `-v $HOME/.cdp:/root/.cdp` after `cdp configure` | — |
-| Azure | Mount `-v $HOME/.azure:/root/.azure` after `az login` | `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` in configfile or docker `-e` |
-| AWS (Keycloak DNS only) | Mount `-v $HOME/.aws:/root/.aws` after `aws configure` | Required when `PROVISION_KEYCLOAK:yes` |
+---
 
-NOTE: Route53 and AWS credentials are required when using `DOMAIN` / `HOSTEDZONEID` for Keycloak TLS and DNS automation, even on Azure deployments.
+Authors: **Kuldeep Sahu** (ksahu@cloudera.com) · **Avanish Tiwari** (aktiwari@cloudera.com)
