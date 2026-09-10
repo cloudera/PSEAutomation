@@ -60,3 +60,23 @@ variable "keycloak_admin_password" {
   description = "Admin password for Keycloak"
   type        = string
 }
+
+variable "resource_group_name" {
+  description = "Azure resource group for Keycloak compute resources (CDP resource group)"
+  type        = string
+}
+
+variable "network_resource_group_name" {
+  description = "Azure resource group containing the CDP VNet and gateway subnet"
+  type        = string
+}
+
+variable "vnet_name" {
+  description = "CDP virtual network name"
+  type        = string
+}
+
+variable "subnet_name" {
+  description = "CDP gateway subnet name for Keycloak"
+  type        = string
+}

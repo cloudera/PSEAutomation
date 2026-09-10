@@ -68,6 +68,8 @@ pipeline {
         REPO_URL = "https://github.com/cloudera/cloudera-partners.git"
         //BRANCH_NAME = ""
         REPO_DIR = "${HOL_AUTO_EXEC_DIR}/hol-automation"
+        AZURE_CONFIG_DIR = "/home/holautosa/.azure"
+        AWS_CONFIG_DIR = "/home/holautosa/.aws"
     }
 
     stages {
@@ -313,17 +315,17 @@ sh """
             steps {
                 sh 'echo "Stage :: Run Docker Container"'
                 script {
-                    sh "docker run --name hol-provisioner-${BUILD_NUMBER} -i -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp ${env.DOCKER_IMAGE} ${params.ACTION}"
+                    sh "docker run --name hol-provisioner-azure-${BUILD_NUMBER} -i -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp -v ${env.AZURE_CONFIG_DIR}:/root/.azure -v ${env.AWS_CONFIG_DIR}:/root/.aws ${env.DOCKER_IMAGE} ${params.ACTION}"
                 }
             }
         }
         stage('Check Logs for Failures') {
             steps {
                 script {
-                    sh "docker logs hol-provisioner-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log 2>&1 || true"
-                    def logOutput = readFile("${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log")
+                    sh "docker logs hol-provisioner-azure-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log 2>&1 || true"
+                    def logOutput = readFile("${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log")
                     def dockerExit = sh(
-                        script: "docker inspect hol-provisioner-${BUILD_NUMBER} --format='{{.State.ExitCode}}' 2>/dev/null || echo 1",
+                        script: "docker inspect hol-provisioner-azure-${BUILD_NUMBER} --format='{{.State.ExitCode}}' 2>/dev/null || echo 1",
                         returnStdout: true
                     ).trim()
 
@@ -518,7 +520,7 @@ sh """
         failure {
             script {
                 def errorLog = currentBuild.description ?: ""
-                def logFile = "${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log"
+                def logFile = "${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log"
 
                 if ((!errorLog || errorLog == "Unknown error occurred.") && fileExists(logFile)) {
                     def parserCandidates = [
@@ -603,15 +605,15 @@ sh """
                         </html>
                     """,
                     mimeType: 'text/html',
-                    attachmentsPattern: "hol-provisioner-${BUILD_NUMBER}.log,configfile",  // Attach log and config file
+                    attachmentsPattern: "hol-provisioner-azure-${BUILD_NUMBER}.log,configfile",  // Attach log and config file
                     from: 'psejenkins@cloudera.com'
                 )
             }
         }
 
         cleanup {
-            sh "rm -f ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log"
-            sh 'echo "CLEANUP: Docker : "; docker rm -f hol-provisioner-${BUILD_NUMBER} || true'
+            sh "rm -f ${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log"
+            sh 'echo "CLEANUP: Docker : "; docker rm -f hol-provisioner-azure-${BUILD_NUMBER} || true'
         }
     }
 }

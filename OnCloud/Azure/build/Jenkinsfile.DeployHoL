@@ -68,6 +68,8 @@
         REPO_URL = "https://github.com/cloudera/PSEAutomation.git"
         //BRANCH_NAME = ""
         REPO_DIR = "${HOL_AUTO_EXEC_DIR}/hol-automation"
+        AZURE_CONFIG_DIR = "/home/holautosa/.azure"
+        AWS_CONFIG_DIR = "/home/holautosa/.aws"
         AWS_APN_ID = credentials('AWS_APN_ID')
     }
 
@@ -228,8 +230,11 @@
                      // Do not use "owner": CDP account default tags include it and reject overrides.
                     def envTags = "{pse-owner=${params.OWNER.trim()},apn-id=${env.AWS_APN_ID}}"
                     
-                    // Combine LOCAL_MACHINE_IP and VPN_CIDRS
-                    def allCidrs = "${params.LOCAL_MACHINE_IP.trim()},${env.VPN_CIDRS.trim()}"
+                    // Combine LOCAL_MACHINE_IP and VPN_CIDRS unless open access is requested
+                    def localIp = params.LOCAL_MACHINE_IP?.trim()
+                    def allCidrs = (localIp == '0.0.0.0/0')
+                        ? localIp
+                        : "${localIp},${env.VPN_CIDRS.trim()}"
 
                     // Create or overwrite the config file
                     writeFile file: env.CONFIG_FILE, text: """PROVISION_KEYCLOAK:${params.PROVISION_KEYCLOAK}
@@ -323,17 +328,17 @@ ENV_TAGS:${envTags}
             steps {
                 sh 'echo "Stage :: Run Docker Container"'
                 script {
-                    sh "docker run --name hol-provisioner-${BUILD_NUMBER} -i -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp ${env.DOCKER_IMAGE} ${params.ACTION}"
+                    sh "docker run --name hol-provisioner-azure-${BUILD_NUMBER} -i -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp -v ${env.AZURE_CONFIG_DIR}:/root/.azure -v ${env.AWS_CONFIG_DIR}:/root/.aws ${env.DOCKER_IMAGE} ${params.ACTION}"
                 }
             }
         }
         stage('Check Logs for Failures') {
             steps {
                 script {
-                    sh "docker logs hol-provisioner-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log 2>&1 || true"
-                    def logOutput = readFile("${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log")
+                    sh "docker logs hol-provisioner-azure-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log 2>&1 || true"
+                    def logOutput = readFile("${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log")
                     def dockerExit = sh(
-                        script: "docker inspect hol-provisioner-${BUILD_NUMBER} --format='{{.State.ExitCode}}' 2>/dev/null || echo 1",
+                        script: "docker inspect hol-provisioner-azure-${BUILD_NUMBER} --format='{{.State.ExitCode}}' 2>/dev/null || echo 1",
                         returnStdout: true
                     ).trim()
 
@@ -453,7 +458,7 @@ ENV_TAGS:${envTags}
                     """
                 }
                 archiveArtifacts artifacts: "${env.WORKSHOP_NAME_LOWER}.txt,configfile", allowEmptyArchive: true
-                //def attachments = "${env.WORKSHOP_NAME_LOWER}.txt,configfile,${env.WORKSHOP_NAME_LOWER}-keypair.pem,hol-provisioner-${BUILD_NUMBER}.log"
+                //def attachments = "${env.WORKSHOP_NAME_LOWER}.txt,configfile,${env.WORKSHOP_NAME_LOWER}-keypair.pem,hol-provisioner-azure-${BUILD_NUMBER}.log"
                 def attachmentsList = []
 		if (fileExists("${env.WORKSPACE}/${env.WORKSHOP_NAME_LOWER}.txt")) {
     		    attachmentsList << "${env.WORKSHOP_NAME_LOWER}.txt"
@@ -464,8 +469,8 @@ ENV_TAGS:${envTags}
 		if (fileExists("${env.WORKSPACE}/${env.WORKSHOP_NAME_LOWER}-keypair.pem")) {
     		    attachmentsList << "${env.WORKSHOP_NAME_LOWER}-keypair.pem" 
 		}
-		if (fileExists("${env.WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log")) {
-            	    attachmentsList << "hol-provisioner-${BUILD_NUMBER}.log"
+		if (fileExists("${env.WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log")) {
+            	    attachmentsList << "hol-provisioner-azure-${BUILD_NUMBER}.log"
         	}
 
 		def attachments = attachmentsList.join(',')
@@ -546,7 +551,7 @@ ENV_TAGS:${envTags}
         failure {
             script {
                 def errorLog = currentBuild.description ?: ""
-                def logFile = "${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log"
+                def logFile = "${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log"
 
                 if ((!errorLog || errorLog == "Unknown error occurred.") && fileExists(logFile)) {
                     def parserCandidates = [
@@ -577,7 +582,7 @@ ENV_TAGS:${envTags}
                     """
                 }
                 archiveArtifacts artifacts: "${env.WORKSHOP_NAME_LOWER}.txt,configfile", allowEmptyArchive: true
-                //def attachments = "${env.WORKSHOP_NAME_LOWER}.txt,configfile,${env.WORKSHOP_NAME_LOWER}-keypair.pem,hol-provisioner-${BUILD_NUMBER}.log"
+                //def attachments = "${env.WORKSHOP_NAME_LOWER}.txt,configfile,${env.WORKSHOP_NAME_LOWER}-keypair.pem,hol-provisioner-azure-${BUILD_NUMBER}.log"
                 def attachmentsList = []
 		if (fileExists("${env.WORKSPACE}/${env.WORKSHOP_NAME_LOWER}.txt")) {
     		    attachmentsList << "${env.WORKSHOP_NAME_LOWER}.txt"
@@ -588,8 +593,8 @@ ENV_TAGS:${envTags}
 		if (fileExists("${env.WORKSPACE}/${env.WORKSHOP_NAME_LOWER}-keypair.pem")) {
     		    attachmentsList << "${env.WORKSHOP_NAME_LOWER}-keypair.pem" 
 		}
-		if (fileExists("${env.WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log")) {
-            	    attachmentsList << "hol-provisioner-${BUILD_NUMBER}.log"
+		if (fileExists("${env.WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log")) {
+            	    attachmentsList << "hol-provisioner-azure-${BUILD_NUMBER}.log"
         	}
 
 		def attachments = attachmentsList.join(',')
@@ -666,7 +671,7 @@ ENV_TAGS:${envTags}
                         </html>
                     """,
                     mimeType: 'text/html',
-                    // attachmentsPattern: "hol-provisioner-${BUILD_NUMBER}.log,configfile",  // Attach log and config file
+                    // attachmentsPattern: "hol-provisioner-azure-${BUILD_NUMBER}.log,configfile",  // Attach log and config file
                     attachmentsPattern: attachments,  // Attach artifacts in failure
                     from: 'psejenkins@cloudera.com'
                 )
@@ -674,8 +679,8 @@ ENV_TAGS:${envTags}
         }
 
         cleanup {
-            sh "rm -f ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log"
-            sh 'echo "CLEANUP: Docker : "; docker rm -f hol-provisioner-${BUILD_NUMBER} || true'
+            sh "rm -f ${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log"
+            sh 'echo "CLEANUP: Docker : "; docker rm -f hol-provisioner-azure-${BUILD_NUMBER} || true'
         }
     }
 }

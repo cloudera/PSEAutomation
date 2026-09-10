@@ -59,6 +59,7 @@ This folder contains automation scripts, templates, and configurations for deplo
 - Azure infrastructure provisioning using Infrastructure-as-Code.
 - Containerized HoL provisioner with support for CAI, CDW, CDE, CDF, and optional Keycloak.
 - Jenkins pipelines and Ansible playbooks mirrored from the AWS automation.
+- Standalone usage via a `configfile` mounted at `/userconfig` (see `OnCloud/Azure/build/configuration/configfile.example`).
 
 === Participant_amps
 This folder contains **Selenium based automation** tailored for CAI project creation and deploying AMPs for workshop participants.  

@@ -243,7 +243,7 @@ _hol_startup_inner_text() {
 hol_startup_banner() {
    local inner_width=46
    local hline
-   local title="Cloudera on AWS cloud provisioner"
+   local title="Cloudera on Azure cloud provisioner"
    local subtitle="(AutoClouderaDeploy)"
    local top_line mid_line sub_line bot_line
 

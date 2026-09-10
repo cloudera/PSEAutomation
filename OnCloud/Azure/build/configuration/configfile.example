@@ -1,0 +1,58 @@
+# Copy this file to your userconfig directory as "configfile" (no extension).
+# Format: KEY:value  — no quotes, no blank line after the last entry.
+# Lines starting with # are ignored when copying; remove comments for production use.
+
+# --- Core workshop settings (required) ---
+PROVISION_KEYCLOAK:yes
+KEYCLOAK_ADMIN_PASSWORD:changeme
+PROVISION_CAII:no
+AZURE_REGION:eastus
+CDP_DEPLOYMENT_TYPE:public
+WORKSHOP_NAME:pseworkshop
+NUMBER_OF_WORKSHOP_USERS:10
+WORKSHOP_USER_PREFIX:pseworkshop
+WORKSHOP_USER_DEFAULT_PASSWORD:changeme
+LOCAL_MACHINE_IP:203.0.113.10/32
+ENABLE_DATA_SERVICES:CDW,CAI,CDE,CDF
+DOMAIN:example.com
+HOSTEDZONEID:Z1234567890ABC
+DATALAKE_VERSION:7.3.2
+
+# --- Optional: existing SSH key (omit to auto-generate) ---
+# Place <SSH_KEY_NAME>.pem in the same userconfig directory.
+# SSH_KEY_NAME is also accepted as AWS_KEY_PAIR for parity with AWS configfiles.
+#SSH_KEY_NAME:my-keypair
+
+# --- Optional: CDP quota overrides ---
+#CDP_SAML_PROVIDER_LIMIT:10
+#CDP_USER_LIMIT:1000
+#CDP_GROUP_LIMIT:50
+
+# --- Optional: data service sizing overrides ---
+#CDW_VRTL_WAREHOUSE_SIZE:small
+#CDW_DATAVIZ_SIZE:small
+#CDE_INSTANCE_TYPE:Standard_D8s_v3
+#CDE_INITIAL_INSTANCES:1
+#CDE_MIN_INSTANCES:1
+#CDE_MAX_INSTANCES:5
+#CDE_SPARK_VERSION:3.3.1
+#CDE_VC_TIER:CORE
+# When CAI or PROVISION_CAII is enabled, CDP Terraform also provisions a premium
+# Azure Files NFS share (secure transfer disabled) with private endpoints in the CDP VNet.
+#CAI_WS_INSTANCE_TYPE:Standard_D8s_v3
+#CAI_MIN_INSTANCES:1
+#CAI_MAX_INSTANCES:5
+#CAI_ENABLE_GPU:no
+#CDF_INSTANCE_TYPE:Standard_D8s_v3
+#CDF_MIN_NODES:1
+#CDF_MAX_NODES:3
+#CDF_USE_PUBLIC_LB:yes
+
+# --- Optional: resource tags (pse-owner is required for cost tracking) ---
+ENV_TAGS:{pse-owner=you@cloudera.com,apn-id=12345}
+
+# --- Optional: Azure service principal (use instead of mounting ~/.azure) ---
+#AZURE_CLIENT_ID:00000000-0000-0000-0000-000000000000
+#AZURE_CLIENT_SECRET:your-secret
+#AZURE_TENANT_ID:00000000-0000-0000-0000-000000000000
+#AZURE_SUBSCRIPTION_ID:00000000-0000-0000-0000-000000000000

@@ -6,6 +6,11 @@ HOL_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hol-output.sh
 source "${HOL_LIB_DIR}/hol-output.sh"
 
+# Jenkins mounts /userconfig with a different uid than the container process.
+configure_git_for_userconfig() {
+   git config --global --add safe.directory '*' 2>/dev/null || true
+}
+
 #TF_QUICKSTART_VERSION=v0.8.0
 USER_CONFIG_FILE="/userconfig/configfile"
 KEYGEN_TF_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/keypair_gen
@@ -698,18 +703,56 @@ destroy_keycloak() {
    fi
 }
 #--------------------------------------------------------------------------------------------------#
+# Sync cdp-tf-quickstarts without deleting terraform state or workshop files.
+sync_cdp_tf_quickstarts() {
+   local quickstart_dir="$1"
+   local cloud_path="$2"
+   local repo_url="https://github.com/cloudera-labs/cdp-tf-quickstarts.git"
+   local git_err=""
+   local -a git_safe=(git -c safe.directory='*' -c "safe.directory=${quickstart_dir}")
+
+   configure_git_for_userconfig
+
+   if [[ -d "${quickstart_dir}/.git" ]]; then
+      hol_step "Updating cdp-tf-quickstarts (${TF_QUICKSTART_VERSION})"
+      cd "${quickstart_dir}" || hol_fail "Unable to enter cdp-tf-quickstarts directory."
+      "${git_safe[@]}" fetch --depth 1 origin "${TF_QUICKSTART_VERSION}" 2>/dev/null \
+         || "${git_safe[@]}" fetch --depth 1 origin "refs/tags/${TF_QUICKSTART_VERSION}:refs/tags/${TF_QUICKSTART_VERSION}" 2>/dev/null \
+         || "${git_safe[@]}" fetch --depth 1 origin
+      if ! git_err=$("${git_safe[@]}" checkout -f "${TF_QUICKSTART_VERSION}" 2>&1); then
+         hol_fail "Unable to checkout ${TF_QUICKSTART_VERSION} in cdp-tf-quickstarts: ${git_err}"
+      fi
+      "${git_safe[@]}" sparse-checkout init --cone
+      "${git_safe[@]}" sparse-checkout set "${cloud_path}"
+      "${git_safe[@]}" checkout @ &>/dev/null
+      hol_ok "cdp-tf-quickstarts updated"
+      return 0
+   fi
+
+   if [[ -e "${quickstart_dir}" ]]; then
+      hol_warn "Quickstart path exists but is not a git repo — recloning"
+      rm -rf "${quickstart_dir}"
+   fi
+
+   hol_step "Cloning cdp-tf-quickstarts (${TF_QUICKSTART_VERSION})"
+   if ! "${git_safe[@]}" clone "${repo_url}" -b "${TF_QUICKSTART_VERSION}" --single-branch --depth 1 "${quickstart_dir}"; then
+      hol_fail "Failed to clone cdp-tf-quickstarts (branch/tag: ${TF_QUICKSTART_VERSION})."
+   fi
+   cd "${quickstart_dir}" || hol_fail "Unable to enter cdp-tf-quickstarts directory."
+   "${git_safe[@]}" sparse-checkout init --cone
+   "${git_safe[@]}" sparse-checkout set "${cloud_path}"
+   "${git_safe[@]}" checkout @ &>/dev/null
+}
+
 # Function to provision CDP Environment.
 provision_cdp() {
    hol_banner "Provisioning CDP environment" "☁️"
    sleep 10
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
-   git clone https://github.com/cloudera-labs/cdp-tf-quickstarts.git -b $TF_QUICKSTART_VERSION --single-branch --depth 1 /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts &>/dev/null
-   cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts
-   git sparse-checkout init --cone
-   git sparse-checkout set aws
-   git checkout @ &>/dev/null
-   cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws
+   local quickstart_dir="/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts"
+   sync_cdp_tf_quickstarts "${quickstart_dir}" "aws"
+   cd "${quickstart_dir}/aws"
 
    # Convert comma-separated IPs into properly quoted Terraform list elements
    cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
@@ -851,10 +894,17 @@ aws_enhancements() {
    fi
 
    cd /userconfig/.$USER_NAMESPACE/aws_enhancements/s3_enhancements
-     terraform init
-     terraform apply -auto-approve \
-         -var="log_bucket_name=$BUCKET_NAME" \
-         -var="aws_region=$aws_region"
+   terraform init
+   terraform apply -auto-approve \
+      -var="log_bucket_name=$BUCKET_NAME" \
+      -var="aws_region=$aws_region"
+
+   hol_subsection "Attaching log PutObject policy to datalake admin role" "🔐"
+   cd /userconfig/.$USER_NAMESPACE/aws_enhancements/dladmin_log_policy
+   terraform init
+   terraform apply -auto-approve \
+      -var="env_prefix=$workshop_name" \
+      -var="aws_region=$aws_region"
 }
 
 #--------------------------------------------------------------------------------------------------#

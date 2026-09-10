@@ -1,6 +1,7 @@
 #!/bin/bash
 # ***************************************************************************************************#
 source /usr/local/bin/hol-functions.sh
+configure_git_for_userconfig
 # Setting required path and variables.
 USER_CONFIG_FILE="/userconfig/configfile"
 TERRAFORM_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/cdp-kc-config/keycloak_terraform_config
@@ -12,6 +13,7 @@ case $USER_ACTION in
 provision)
     hol_banner "HoL Provision Pipeline" "🚀"
     validating_variables
+    ensure_aws_cli_for_dns
     if [[ -n "$ssh_key_name" ]]; then
         key_pair_file
     else
@@ -23,8 +25,16 @@ provision)
     hol_subsection "CDP pre-requisites" "🔐"
     cdp_prereq
     check_key_pair
+    sleep 10
+    provision_cdp
+    if [ $? -ne 0 ]; then
+        hol_warn "CDP environment provisioning failed — rolling back"
+        destroy_cdp
+        hol_provision_failed "$workshop_name"
+    else
+        hol_milestone "CDP Environment Provisioned" "☁️"
+    fi
     if [ "$provision_keycloak" == "yes" ]; then
-        # setup_keycloak_ec2 $keycloak_sg_name
         setup_keycloak_vm
         if [ $? -ne 0 ]; then
             hol_warn "Keycloak provisioning failed — rolling back"
@@ -35,18 +45,6 @@ provision)
         fi
     else
         hol_skip "Keycloak provisioning skipped (configfile)"
-    fi
-    sleep 10
-    provision_cdp
-    if [ $? -ne 0 ]; then
-        hol_warn "CDP environment provisioning failed — rolling back"
-        destroy_cdp
-        if [ "$provision_keycloak" == "yes" ]; then
-            destroy_keycloak
-        fi
-        hol_provision_failed "$workshop_name"
-    else
-        hol_milestone "CDP Environment Provisioned" "☁️"
     fi
     update_cdp_user_group
     if [ "$provision_keycloak" == "yes" ]; then
@@ -77,6 +75,8 @@ provision)
 destroy)
     hol_banner "HoL Destroy Pipeline" "🗑️"
     validating_variables
+    ensure_aws_cli_for_dns
+    setup_azure_cli_auth
     if [ "$provision_caii" == "yes" ]; then
         hol_subsection "CAII teardown" "🧠"
         destroy_cai_inference
