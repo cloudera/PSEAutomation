@@ -11,7 +11,8 @@ pipeline {
     }
 
     parameters {
-        string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Branch to be used for building Docker image')
+        string(name: 'AWS_BUILD_BRANCH', defaultValue: 'main', description: 'Branch for AWS hol-automation-build-aws')
+        string(name: 'AZURE_BUILD_BRANCH', defaultValue: 'azure-automation', description: 'Branch for Azure hol-automation-build-azure')
     }
     
     triggers {
@@ -36,7 +37,7 @@ pipeline {
                             echo 'Triggering hol-automation-build-aws job...'
                             build job: 'hol-automation-build-aws',
                                 parameters: [
-                                    string(name: 'BUILD_BRANCH', value: "${params.BUILD_BRANCH}")
+                                    string(name: 'BUILD_BRANCH', value: "${params.AWS_BUILD_BRANCH}")
                                 ],
                                 propagate: true
                         },
@@ -44,7 +45,7 @@ pipeline {
                             echo 'Triggering hol-automation-build-azure job...'
                             build job: 'hol-automation-build-azure',
                                 parameters: [
-                                    string(name: 'BUILD_BRANCH', value: "${params.BUILD_BRANCH}")
+                                    string(name: 'BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}")
                                 ],
                                 propagate: true
                         }

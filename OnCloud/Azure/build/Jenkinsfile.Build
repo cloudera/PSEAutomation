@@ -18,21 +18,42 @@ pipeline {
         booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         booleanParam(name: 'MULTI_PLATFORM_BUILD', defaultValue: false, description: 'Enable multi-platform build and push?')
         string(name: 'TF_QS_VER', defaultValue: 'main', description: 'CDP-TF-QUICKSTART tag version (e.g. v0.8.5 or main) to use for building Docker image')
-        string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Branch to checkout')       
+        string(name: 'BUILD_BRANCH', defaultValue: 'azure-automation', description: 'Git branch to checkout (Azure provisioner lives on azure-automation until merged to main)')
     }
 
     options {
         timeout(time: 6, unit: 'HOURS')
         timestamps()
         ansiColor('xterm')
+        skipDefaultCheckout(true)
     }
 
     stages {
         stage('Checkout') {
             steps {
                 script {
-                    echo "Stage :: Checkout ${params.BUILD_BRANCH} Branch."
-                    checkout([$class: 'GitSCM', userRemoteConfigs: [[url: 'https://github.com/cloudera/PSEAutomation.git']], branches: [[name: "refs/heads/${params.BUILD_BRANCH}"]]])
+                    def branch = params.BUILD_BRANCH?.trim() ?: 'azure-automation'
+                    echo "Stage :: Checkout ${branch} branch."
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "refs/heads/${branch}"]],
+                        userRemoteConfigs: [[url: 'https://github.com/cloudera/PSEAutomation.git']],
+                        extensions: [
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'CloneOption', depth: 1, shallow: true, noTags: false, honorRefspec: true]
+                        ]
+                    ])
+                    sh """
+                        set -e
+                        echo "Checked out commit: \$(git rev-parse HEAD)"
+                        echo "Branch: \$(git branch --show-current || true)"
+                        test -f ${DOCKERFILE_DIR}/Dockerfile || {
+                          echo "ERROR: ${DOCKERFILE_DIR}/Dockerfile not found after checkout."
+                          echo "Ensure BUILD_BRANCH is 'azure-automation' (main does not contain the Azure build tree)."
+                          ls -la ${DOCKERFILE_DIR} || ls -la .
+                          exit 1
+                        }
+                    """
                 }
             }
         }

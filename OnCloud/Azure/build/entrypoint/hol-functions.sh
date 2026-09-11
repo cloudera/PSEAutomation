@@ -2371,7 +2371,7 @@ deploy_cdw() {
       hol_fail "CDW managed identity is not set. Ensure CDW is enabled and CDP/Azure enhancements completed successfully."
    fi
 
-   ansible-playbook $DS_CONFIG_DIR/enable-cdw.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cdw.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       azure_subnet_name=$azure_cdw_subnet \
       workshop_name=$workshop_name \
@@ -2409,7 +2409,7 @@ deploy_cde() {
       hol_fail "CDE managed identities are not set. Ensure CDE is enabled and CDP/Azure enhancements completed successfully."
    fi
 
-   ansible-playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
       instance_type=$cde_instance_type \
@@ -2443,7 +2443,7 @@ deploy_cai() {
       prepare_cai_nfs_workbench_mount || return 1
    fi
 
-   ansible-playbook $DS_CONFIG_DIR/enable-cai.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
       ws_instance_type=$cai_ws_instance_type \
@@ -2515,7 +2515,7 @@ deploy_cdf() {
          }' > "$extra_vars_file"
    fi
 
-   ansible-playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}"
+   hol_run_ansible_playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}"
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cdf() {
@@ -2784,13 +2784,29 @@ enable_data_services() {
       return 0
    fi
 
+   local failed=0
+   local parallel_services=()
+   local service
+
+   for service in "${services_to_deploy[@]}"; do
+      if [[ "$service" == "cdw" ]]; then
+         hol_info "Deploying CDW first (sequential) before other data services"
+         deploy_single_data_service "cdw" || failed=1
+      else
+         parallel_services+=("$service")
+      fi
+   done
+
+   if [ "${#parallel_services[@]}" -eq 0 ]; then
+      return $failed
+   fi
+
    hol_parallel_start
-   hol_info "Services: ${services_to_deploy[*]}"
+   hol_info "Services: ${parallel_services[*]}"
 
    local pids=()
    local delay=0
-   local service
-   for service in "${services_to_deploy[@]}"; do
+   for service in "${parallel_services[@]}"; do
       (
          if (( delay > 0 )); then
             sleep "$delay"
@@ -2801,7 +2817,8 @@ enable_data_services() {
       delay=$((delay + 25))
    done
 
-   wait_for_pids "${pids[@]}"
+   wait_for_pids "${pids[@]}" || failed=1
+   return $failed
 }
 #--------------------------------------------------------------------------------------------------#
 disable_data_services() {
