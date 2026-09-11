@@ -170,6 +170,30 @@ hol_parallel_start() {
    hol_section "⚡  Deploying data services in parallel"
 }
 
+hol_ansible_log_file() {
+   local service_tag="${HOL_SERVICE_TAG:-ansible}"
+   local workshop="${workshop_name:-hol}"
+   local log_dir="/userconfig/.${workshop}/logs"
+   mkdir -p "$log_dir"
+   echo "${log_dir}/${service_tag}.log"
+}
+
+hol_run_ansible_playbook() {
+   local log_file
+   log_file="$(hol_ansible_log_file)"
+   : >"$log_file"
+
+   if ansible-playbook "$@" >>"$log_file" 2>&1; then
+      return 0
+   fi
+
+   while IFS= read -r line; do
+      printf '[%s] %s\n' "${HOL_SERVICE_TAG:-?}" "$line"
+   done <"$log_file"
+   hol_warn "Full ${HOL_SERVICE_TAG:-ansible} log: ${log_file}"
+   return 1
+}
+
 hol_role_ok() {
    hol_ok "Role '${1}' assigned to group '${2}'"
 }

@@ -9,6 +9,15 @@
     cdw_async_timeout: 7200
     cdw_async_retries: 120
     cdw_async_delay: 30
+    cdw_terminal_failure_statuses:
+      - Error
+      - Failed
+    cdw_in_progress_statuses:
+      - Accepted
+      - Creating
+      - Starting
+      - Provisioning
+      - Updating
 
   tasks:
     - name: Check and print variable status
@@ -28,23 +37,84 @@
 
     - name: Set CDW cluster facts
       ansible.builtin.set_fact:
-        cdw_cluster_running: >-
+        cdw_clusters: "{{ existing_dwcluster.clusters | default([], true) }}"
+        cdw_cluster_status_value: >-
           {{
-            existing_dwcluster is succeeded and
-            (existing_dwcluster.clusters | default([], true) | length) > 0 and
-            existing_dwcluster.clusters[0].status == "Running"
+            (existing_dwcluster.clusters | default([], true))[0].status
+            if ((existing_dwcluster.clusters | default([], true)) | length) > 0
+            else ''
           }}
         cdw_cluster_id: >-
           {{
             (existing_dwcluster.clusters | default([], true))[0].id
-            if ((existing_dwcluster.clusters | default([], true)) | length > 0)
+            if ((existing_dwcluster.clusters | default([], true)) | length) > 0
             else ''
           }}
+    - name: Set CDW cluster state flags
+      ansible.builtin.set_fact:
+        cdw_cluster_running: "{{ cdw_cluster_status_value == 'Running' }}"
+        cdw_cluster_failed: "{{ cdw_cluster_status_value in cdw_terminal_failure_statuses }}"
+        cdw_cluster_in_progress: "{{ cdw_cluster_status_value in cdw_in_progress_statuses }}"
+
+    - name: Delete failed CDW cluster before retry
+      cloudera.cloud.dw_cluster:
+        cluster_id: "{{ cdw_cluster_id }}"
+        state: absent
+        wait: true
+        timeout: 3600
+      when:
+        - cdw_cluster_failed
+        - cdw_cluster_id | length > 0
+      register: cdw_delete_result
+
+    - name: Wait for failed CDW cluster deletion
+      cloudera.cloud.dw_cluster_info:
+        env: "{{ cdp_env_name }}"
+      register: cdw_delete_wait
+      until: (cdw_delete_wait.clusters | default([], true) | length) == 0
+      retries: 40
+      delay: 30
+      when: cdw_cluster_failed
+
+    - name: Refresh CDW cluster facts after failed cluster deletion
+      cloudera.cloud.dw_cluster_info:
+        env: "{{ cdp_env_name }}"
+      register: existing_dwcluster
+      when: cdw_cluster_failed
+
+    - name: Reset CDW cluster facts after failed cluster deletion
+      ansible.builtin.set_fact:
+        cdw_clusters: "{{ existing_dwcluster.clusters | default([], true) }}"
+        cdw_cluster_status_value: >-
+          {{
+            (existing_dwcluster.clusters | default([], true))[0].status
+            if ((existing_dwcluster.clusters | default([], true)) | length) > 0
+            else ''
+          }}
+        cdw_cluster_id: >-
+          {{
+            (existing_dwcluster.clusters | default([], true))[0].id
+            if ((existing_dwcluster.clusters | default([], true)) | length) > 0
+            else ''
+          }}
+    - name: Reset CDW cluster state flags after failed cluster deletion
+      ansible.builtin.set_fact:
+        cdw_cluster_running: "{{ cdw_cluster_status_value == 'Running' }}"
+        cdw_cluster_failed: "{{ cdw_cluster_status_value in cdw_terminal_failure_statuses }}"
+        cdw_cluster_in_progress: "{{ cdw_cluster_status_value in cdw_in_progress_statuses }}"
+      when: cdw_cluster_failed
 
     - name: Skip activation when CDW cluster is already running
       ansible.builtin.debug:
         msg: "CDW cluster already running for {{ cdp_env_name }} — skipping activation."
       when: cdw_cluster_running
+
+    - name: Wait for in-progress CDW cluster instead of re-activating
+      ansible.builtin.debug:
+        msg: >-
+          CDW cluster already exists in {{ cdw_cluster_status_value }} state for {{ cdp_env_name }}
+          — skipping activation and waiting for completion.
+      when: cdw_cluster_in_progress
 
     - name: Activating CDW cluster
       cloudera.cloud.dw_cluster:
@@ -58,8 +128,20 @@
         public_worker_node: True
         wait: False
       register: dwcluster
-      when: not cdw_cluster_running
-      ignore_errors: true
+      when:
+        - not cdw_cluster_running
+        - not cdw_cluster_in_progress
+        - (cdw_clusters | length) == 0
+      failed_when: false
+
+    - name: Fail when CDW activation request is rejected
+      ansible.builtin.fail:
+        msg: >-
+          CDW activation request failed for {{ cdp_env_name }}:
+          {{ dwcluster.msg | default(dwcluster) }}
+      when:
+        - dwcluster is defined
+        - dwcluster.failed | default(false)
 
     - name: Set cluster ID from activation result
       ansible.builtin.set_fact:
@@ -85,8 +167,8 @@
       until: >
         (dw_cluster_status.clusters | default([], true) | length) > 0 and
         dw_cluster_status.clusters[0].status in ["Running", "Error", "Failed"]
-      retries: 45
-      delay: 30
+      retries: 80
+      delay: 60
       failed_when: false
 
     - name: Refresh CDW cluster ID after activation
@@ -99,12 +181,26 @@
         msg: "Cluster is in {{ dw_cluster_status.clusters[0].status }} State"
       when: (dw_cluster_status.clusters | default([], true) | length) > 0
 
-    - name: Fail task on Cluster Creation Failed
-      fail:
-        msg: "Cluster Creation Got Failed."
+    - name: Fetch CDW cluster details on failure
+      ansible.builtin.command: >
+        cdp dw describe-cluster --cluster-id "{{ cdw_cluster_id }}"
+      register: cdw_cluster_describe
+      changed_when: false
+      failed_when: false
       when:
         - (dw_cluster_status.clusters | default([], true) | length) > 0
-        - dw_cluster_status.clusters[0].status in ["Error", "Failed"]
+        - dw_cluster_status.clusters[0].status in cdw_terminal_failure_statuses
+        - cdw_cluster_id | length > 0
+
+    - name: Fail task on Cluster Creation Failed
+      ansible.builtin.fail:
+        msg: >-
+          CDW cluster creation failed for {{ cdp_env_name }}
+          (status={{ dw_cluster_status.clusters[0].status }}).
+          {{ cdw_cluster_describe.stdout | default('Run: cdp dw describe-cluster for details.') }}
+      when:
+        - (dw_cluster_status.clusters | default([], true) | length) > 0
+        - dw_cluster_status.clusters[0].status in cdw_terminal_failure_statuses
 
     - name: Waiting for default database catalog to be running
       cloudera.cloud.dw_database_catalog_info:
