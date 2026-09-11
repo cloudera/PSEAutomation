@@ -28,6 +28,22 @@
           - "cdp_env_name: {{ cdp_env_name }}"
           - "number_vc_to_create: {{ number_vc_to_create | default(1) }}"
 
+    - name: Normalize Spark version for CDE CLI
+      ansible.builtin.set_fact:
+        cde_spark_version_cli: >-
+          {{
+            'SPARK3'
+            if (spark_version | default('SPARK3') | upper) in ['AUTO', '']
+            else (spark_version | upper)
+          }}
+
+    - name: Print normalized Spark version
+      ansible.builtin.debug:
+        msg: >-
+          Using Spark version {{ cde_spark_version_cli }}
+          (requested: {{ spark_version | default('SPARK3') }}).
+      when: (spark_version | default('SPARK3') | upper) != cde_spark_version_cli
+
     - name: Check if CDE service exists and is running
       cloudera.cloud.de_info:
         name: "{{ workshop_name }}-cde"
@@ -118,7 +134,7 @@
         cdp de create-vc
         --name "{{ item.name }}"
         --cluster-id "{{ deservicestatus.services[0].clusterId }}"
-        --spark-version "{{ spark_version }}"
+        --spark-version "{{ cde_spark_version_cli | default(spark_version) }}"
         --cpu-requests "20"
         --memory-requests "80Gi"
         --vc-tier "{{ vc_tier }}"

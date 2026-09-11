@@ -20,6 +20,8 @@
 
 Both provisioners share the same workflow: mount a `userconfig` directory with a `configfile`, run `provision` or `destroy`, and collect workshop access details from `{WORKSHOP_NAME}.txt`.
 
+Long runs (1–3+ hours): use foreground `docker run --rm` (default), or optional detach mode (`-d` + `docker logs -f`) and per-service logs under `~/hol-userconfig/.{WORKSHOP_NAME}/logs/` — see link:AWS/build/README.adoc#_optional_run_in_background_d[AWS] or link:Azure/build/README.adoc#_optional_run_in_background_d[Azure] runbooks.
+
 * link:AWS/build/README.adoc[AWS runbook] — quick start, developer build/tag/push, Jenkins jobs
 * link:Azure/build/README.adoc[Azure runbook] — quick start, developer build/tag/push, Azure enhancements (CDW/CDE identities, CAI NFS)
 

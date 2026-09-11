@@ -27,7 +27,7 @@ pipeline {
         string(name: 'CDP_GROUP_LIMIT', defaultValue: '50', description: 'Maximum number of CDP groups allowed')
         string(name: 'CDW_VRTL_WAREHOUSE_SIZE', defaultValue: 'xsmall', description: 'Size of the CDW Virtual Warehouse (e.g., small, medium, large, etc.)')
         string(name: 'CDW_DATAVIZ_SIZE', defaultValue: 'viz-default', description: 'Size of the CDW Dataviz (e.g., viz-small, viz-default)')
-        choice(name: 'CDE_SPARK_VERSION', choices: ['AUTO', 'SPARK3_5', 'SPARK3_3', 'SPARK3', 'SPARK2', 'SPARK3_2'], description: 'AUTO matches CDP UI (recommended). Explicit enums map to older Spark patches and may fail runtime catalog lookup.')
+        choice(name: 'CDE_SPARK_VERSION', choices: ['SPARK3', 'SPARK3_5', 'SPARK3_3', 'SPARK3_2', 'SPARK2', 'AUTO'], description: 'SPARK3 recommended. AUTO is mapped to SPARK3 for cdp de create-vc (CLI does not accept AUTO).')
         choice(name: 'CDE_VC_TIER', choices: ['ALLP', 'CORE'], description: 'Choose Virtual Cluster Tier Type to deploy')
         string(name: 'CDE_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CDE Instance type (e.g., m5.2xlarge)')
         string(name: 'CDE_INITIAL_INSTANCES', defaultValue: '10', description: 'Initial number of CDE instances to deploy')
