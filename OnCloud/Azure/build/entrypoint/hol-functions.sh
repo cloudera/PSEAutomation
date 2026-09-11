@@ -1020,6 +1020,26 @@ should_provision_cde() {
    [[ ",${selected_services}," == *",cde,"* ]]
 }
 
+should_apply_ai_registry_storage_access() {
+   [[ "${provision_caii:-no}" == "yes" ]] && return 0
+   local selected_services="${enable_data_services//[/}"
+   selected_services="${selected_services//]/}"
+   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
+   [[ ",${selected_services}," == *",cai,"* ]]
+}
+
+resolve_datalake_storage_account() {
+   if [[ -n "${DATA_STORAGE_ACCOUNT:-}" ]]; then
+      return 0
+   fi
+   local azure_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/azure"
+   if [[ -d "$azure_tf_dir" ]]; then
+      DATA_STORAGE_ACCOUNT=$(cd "$azure_tf_dir" && terraform output -raw azure_data_storage_account 2>/dev/null || true)
+      export DATA_STORAGE_ACCOUNT
+   fi
+   [[ -n "${DATA_STORAGE_ACCOUNT:-}" ]]
+}
+
 # Return 0 when CAI or CAII is selected and Azure NFS should be provisioned.
 should_provision_cai_nfs() {
    [[ "${provision_caii:-no}" == "yes" ]] && return 0
@@ -1618,15 +1638,23 @@ azure_enhancements() {
       -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
       -var="azure_region=$azure_region"
 
-   if should_provision_cdw; then
-      if [[ -z "${DATA_STORAGE_ACCOUNT:-}" ]]; then
-         local azure_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/azure"
-         if [[ -d "$azure_tf_dir" ]]; then
-            DATA_STORAGE_ACCOUNT=$(cd "$azure_tf_dir" && terraform output -raw azure_data_storage_account 2>/dev/null || true)
-            export DATA_STORAGE_ACCOUNT
-         fi
+   if should_apply_ai_registry_storage_access; then
+      if ! resolve_datalake_storage_account; then
+         hol_fail "Datalake storage account is not set. AI Registry requires Storage Blob roles on the datalake account."
       fi
-      if [[ -z "${DATA_STORAGE_ACCOUNT:-}" ]]; then
+
+      hol_subsection "Granting datalake storage access for AI Registry" "🤖"
+      cd /userconfig/.$USER_NAMESPACE/azure_enhancements/ai_registry_storage_access
+      terraform init
+      terraform apply -auto-approve \
+         -var="env_prefix=$workshop_name" \
+         -var="data_storage_account=$DATA_STORAGE_ACCOUNT" \
+         -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
+         -var="azure_region=$azure_region"
+   fi
+
+   if should_provision_cdw; then
+      if ! resolve_datalake_storage_account; then
          hol_fail "Datalake storage account is not set. CDW identity requires Storage Blob Data Owner on the datalake account."
       fi
 
@@ -2397,7 +2425,7 @@ deploy_cde() {
       cde_instance_type=$CDE_INSTANCE_TYPE
    fi
    cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
-      Standard_D8s_v5 Standard_D8s_v4 Standard_D8s_v3 Standard_D16s_v3)
+      Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
 
    if [[ -z "${CDE_CLUSTER_MANAGED_IDENTITY_ID:-}" && -d "/userconfig/.$workshop_name/azure_enhancements/cde_custom_identity" ]]; then
       cd "/userconfig/.$workshop_name/azure_enhancements/cde_custom_identity"
@@ -2652,7 +2680,7 @@ deploy_single_data_service() {
       DEFAULT_CDE_VC_TIER="CORE"
       cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
       cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
-         Standard_D8s_v5 Standard_D8s_v4 Standard_D8s_v3 Standard_D16s_v3)
+         Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
       cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
       cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
       cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
@@ -2683,7 +2711,7 @@ deploy_single_data_service() {
       DEFAULT_CAI_MAX_GPU_INSTANCES=10
       cai_ws_instance_type="${cai_ws_instance_type:-$DEFAULT_CAI_WS_INSTANCE_TYPE}"
       cai_ws_instance_type=$(resolve_azure_instance_type "$cai_ws_instance_type" \
-         Standard_D8s_v5 Standard_D8s_v4 Standard_D8s_v3)
+         Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
       cai_min_instances="${cai_min_instances:-$DEFAULT_CAI_MIN_INSTANCES}"
       cai_max_instances="${cai_max_instances:-$DEFAULT_CAI_MAX_INSTANCES}"
       cai_enable_gpu="${cai_enable_gpu:-$DEFAULT_CAI_ENABLE_GPU}"
@@ -2713,7 +2741,7 @@ deploy_single_data_service() {
       DEFAULT_CDF_USE_PUBLIC_LB="true"
       cdf_instance_type="${cdf_instance_type:-$DEFAULT_CDF_INSTANCE_TYPE}"
       cdf_instance_type=$(resolve_azure_instance_type "$cdf_instance_type" \
-         Standard_D8s_v5 Standard_D8s_v4 Standard_D8s_v3)
+         Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
       cdf_min_nodes="${cdf_min_nodes:-$DEFAULT_CDF_MIN_NODES}"
       cdf_max_nodes="${cdf_max_nodes:-$DEFAULT_CDF_MAX_NODES}"
       cdf_use_public_lb="${cdf_use_public_lb:-$DEFAULT_CDF_USE_PUBLIC_LB}"

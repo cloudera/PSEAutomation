@@ -137,7 +137,7 @@ If omitted, a key pair is generated automatically.
 
 | `CDE_INSTANCE_TYPE`
 | CDE
-| CDE service cluster instance type
+| CDE service cluster instance type. Azure default `Standard_D8s_v5`; fallbacks include `Standard_D8as_v5`, `Standard_D8ds_v5`, `Standard_D16s_v5` (pick from the CDE UI workload dropdown for your region)
 
 | `CDE_INITIAL_INSTANCES` / `CDE_MIN_INSTANCES` / `CDE_MAX_INSTANCES`
 | CDE
@@ -153,7 +153,7 @@ If omitted, a key pair is generated automatically.
 
 | `CAI_WS_INSTANCE_TYPE`
 | CAI
-| CAI workspace instance type
+| CAI workspace instance type. Azure default `Standard_D8s_v5` (same v5 family fallbacks as CDE)
 
 | `CAI_MIN_INSTANCES` / `CAI_MAX_INSTANCES`
 | CAI
@@ -173,7 +173,7 @@ If omitted, a key pair is generated automatically.
 
 | `CDF_INSTANCE_TYPE`
 | CDF
-| CDF instance type
+| CDF instance type. Azure default `Standard_D8s_v5` (same v5 family fallbacks as CDE)
 
 | `CDF_MIN_NODES` / `CDF_MAX_NODES`
 | CDF

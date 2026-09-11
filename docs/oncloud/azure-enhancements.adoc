@@ -19,6 +19,7 @@ Assigns **Storage Blob Data Contributor** on the CDP log container to the `${env
 When `ENABLE_DATA_SERVICES` includes `CDW`, creates `${env_prefix}-cdw-identity` and assigns:
 
 * A custom role with link:https://docs.cloudera.com/data-warehouse/cloud/azure-environments/topics/dw-azure-environments-minimum-permissions.html[CDW minimum permissions] on the CDP resource group
+* **Managed Identity Operator** on the CDP resource group (allows the CDW AKS identity to use other managed identities in the same resource group)
 * **Storage Blob Data Owner** on the CDP datalake storage account (link:https://docs.cloudera.com/data-warehouse/cloud/azure-environments/topics/dw-azure-environment-requirements-checklist.html[CDW Azure checklist])
 
 The following legacy single-server PostgreSQL actions are excluded because they are not available on Azure today:
@@ -35,9 +36,18 @@ When `ENABLE_DATA_SERVICES` includes `CDE`, creates two user-assigned identities
 * `${env_prefix}-cde-cluster-identity` — CDE service cluster
 * `${env_prefix}-cde-vc-identity` — CDE virtual clusters
 
-Both identities are granted **Storage Blob Data Contributor** on the CDP log container. Their resource IDs are passed to `enable-cde.yml` and used with `cdp de enable-service --azure-service-managed-identity` and `--azure-virtual-cluster-managed-identities` (required for CDE >= 1.25.2 on Azure).
+Both identities are granted **Storage Blob Data Contributor** on the CDP log container and **Managed Identity Operator** on the CDP resource group. Their resource IDs are passed to `enable-cde.yml` and used with `cdp de enable-service --azure-service-managed-identity` and `--azure-virtual-cluster-managed-identities` (required for CDE >= 1.25.2 on Azure).
 
 The CDP Terraform quickstart assigns **Contributor** to the environment credential (`${env_prefix}-xaccount-app`) by default, which satisfies the link:https://docs.cloudera.com/data-engineering/cloud/enable-data-engineering/topics/cde-adding-required-permissions-for-azure-env-credentials.html[CDE Workload Identity FIC manager] requirement. No extra HoL Terraform is applied unless you switch to minimal environment-credential permissions.
+
+== ai_registry_storage_access
+
+When `ENABLE_DATA_SERVICES` includes `CAI` or `PROVISION_CAII` is `yes`, grants datalake storage roles required for `cdp ml create-model-registry` (per link:https://docs.cloudera.com/cdp-public-cloud/cloud/requirements-azure/topics/mc-az-minimal-setup-for-cloud-storage.html[Cloudera Azure minimal cloud storage setup]):
+
+* `${env_prefix}-dladmin-identity` — **Storage Blob Data Owner** and **Storage Account Contributor** on the datalake storage account
+* `${env_prefix}-log-identity` — **Storage Account Contributor** and **Storage Blob Data Contributor** on the datalake storage account (model registry path under the data container)
+
+Applied in `azure_enhancements()` before CAI/CAII workspace and registry provisioning.
 
 == CAI NFS (via CDP Terraform)
 

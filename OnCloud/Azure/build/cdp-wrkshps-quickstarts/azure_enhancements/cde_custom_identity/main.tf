@@ -54,3 +54,19 @@ resource "azurerm_role_assignment" "cde_vc_log_contributor" {
 
   description = "HoL enhancement: allow CDE VC identity PutBlob on CDP log container"
 }
+
+resource "azurerm_role_assignment" "cde_cluster_managed_identity_operator" {
+  scope                = data.azurerm_resource_group.cdp.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.cde_cluster.principal_id
+
+  description = "HoL enhancement: allow CDE cluster identity to use managed identities in the CDP resource group"
+}
+
+resource "azurerm_role_assignment" "cde_vc_managed_identity_operator" {
+  scope                = data.azurerm_resource_group.cdp.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.cde_vc.principal_id
+
+  description = "HoL enhancement: allow CDE VC identity to use managed identities in the CDP resource group"
+}
