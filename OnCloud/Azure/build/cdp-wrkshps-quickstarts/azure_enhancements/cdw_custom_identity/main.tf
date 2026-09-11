@@ -103,3 +103,11 @@ resource "azurerm_role_assignment" "cdw_datalake_blob_owner" {
 
   description = "HoL enhancement: CDW AKS identity datalake storage access (required for CDW activation)"
 }
+
+resource "azurerm_role_assignment" "cdw_managed_identity_operator" {
+  scope                = data.azurerm_resource_group.cdp.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.cdw.principal_id
+
+  description = "HoL enhancement: allow CDW AKS identity to use managed identities in the CDP resource group"
+}

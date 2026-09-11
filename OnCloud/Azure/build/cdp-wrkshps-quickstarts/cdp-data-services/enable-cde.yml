@@ -7,9 +7,9 @@
     instance_type: "Standard_D8s_v5"
     cde_instance_type_fallbacks:
       - "Standard_D8s_v5"
-      - "Standard_D8s_v4"
-      - "Standard_D8s_v3"
-      - "Standard_D16s_v3"
+      - "Standard_D8as_v5"
+      - "Standard_D8ds_v5"
+      - "Standard_D16s_v5"
     initial_instances: 10
     minimum_instances: 10
     maximum_instances: 40

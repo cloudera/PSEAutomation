@@ -21,11 +21,15 @@ Detailed reference: link:../../../../../docs/oncloud/azure-enhancements.adoc[Azu
 
 | `cdw_custom_identity/`
 | `ENABLE_DATA_SERVICES` includes `CDW`
-| `${env_prefix}-cdw-identity` with CDW minimum permissions + Storage Blob Data Owner
+| `${env_prefix}-cdw-identity` with CDW minimum permissions, **Managed Identity Operator** on CDP RG, and **Storage Blob Data Owner** on datalake storage
 
 | `cde_custom_identity/`
 | `ENABLE_DATA_SERVICES` includes `CDE`
-| Cluster and virtual-cluster managed identities for CDE >= 1.25.2
+| Cluster and virtual-cluster managed identities for CDE >= 1.25.2, log container contributor, and **Managed Identity Operator** on CDP RG (both identities)
+
+| `ai_registry_storage_access/`
+| `ENABLE_DATA_SERVICES` includes `CAI` or `PROVISION_CAII:yes`
+| Datalake storage IAM for `${env_prefix}-dladmin-identity` and `${env_prefix}-log-identity` (AI Model Registry)
 |===
 
 CAI NFS provisioning is handled via CDP Terraform patches (not a separate module here). See the link:../../../../../docs/oncloud/azure-enhancements.adoc#_cai_nfs_via_cdp_terraform[CAI NFS section] in the detailed guide.
@@ -39,6 +43,7 @@ These modules are invoked automatically by the provisioner pipeline. No manual T
 azure_enhancements/
 ├── storage_lifecycle/
 ├── dladmin_log_access/
+├── ai_registry_storage_access/
 ├── cdw_custom_identity/
 └── cde_custom_identity/
 ----
