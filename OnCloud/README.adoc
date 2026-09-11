@@ -1,0 +1,91 @@
+= OnCloud — CDP Public Cloud HoL Automation
+:toc: preamble
+:icons: font
+
+**AutoClouderaDeploy** provisions disposable Cloudera Data Platform Public Cloud Hands-on Lab environments from a single Docker container — CDP environment, datalake, optional data services (CAI, CDW, CDE, CDF), Keycloak SSO, and workshop users.
+
+|===
+| Cloud | Directory | Published image
+
+| AWS
+| link:AWS/build/README.adoc[`AWS/build/`]
+| `clouderapartners/cdp-public-cloud-hol-provisioner:latest`
+
+| Azure
+| link:Azure/build/README.adoc[`Azure/build/`]
+| `clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest`
+|===
+
+== Choose your cloud
+
+Both provisioners share the same workflow: mount a `userconfig` directory with a `configfile`, run `provision` or `destroy`, and collect workshop access details from `{WORKSHOP_NAME}.txt`.
+
+* link:AWS/build/README.adoc[AWS runbook] — quick start, developer build/tag/push, Jenkins jobs
+* link:Azure/build/README.adoc[Azure runbook] — quick start, developer build/tag/push, Azure enhancements (CDW/CDE identities, CAI NFS)
+
+== Configuration
+
+|===
+| Item | AWS | Azure
+
+| Example configfile
+| link:AWS/build/configuration/configfile.example[`configfile.example`]
+| link:Azure/build/configuration/configfile.example[`configfile.example`]
+
+| Full key reference
+| link:../docs/oncloud/configfile-reference.adoc[configfile reference]
+| link:../docs/oncloud/configfile-reference.adoc[configfile reference]
+|===
+
+== Detailed documentation
+
+Long-form guides live outside this folder:
+
+* link:../docs/oncloud/README.adoc[OnCloud documentation index]
+* link:../docs/oncloud/aws-provisioner.adoc[AWS provisioner reference]
+* link:../docs/oncloud/azure-provisioner.adoc[Azure provisioner reference]
+* link:../docs/oncloud/aws-enhancements.adoc[AWS post-provision enhancements]
+* link:../docs/oncloud/azure-enhancements.adoc[Azure post-provision enhancements]
+
+== Repository layout
+
+[source]
+----
+OnCloud/
+├── README.adoc                 ← this file
+├── AWS/build/                  ← AWS Docker image, entrypoint, Jenkinsfiles, playbooks
+│   ├── README.adoc
+│   ├── Dockerfile
+│   ├── configuration/
+│   └── cdp-wrkshps-quickstarts/
+└── Azure/build/                ← Azure Docker image, entrypoint, Jenkinsfiles, playbooks
+    ├── README.adoc
+    ├── Dockerfile
+    ├── configuration/
+    └── cdp-wrkshps-quickstarts/
+        └── azure_enhancements/
+----
+
+== Jenkins (CI)
+
+|===
+| Job | Path
+
+| AWS image build
+| `OnCloud/AWS/build/Jenkinsfile.Build`
+
+| Azure image build
+| `OnCloud/Azure/build/Jenkinsfile.Build`
+
+| AWS workshop deploy
+| `OnCloud/AWS/build/Jenkinsfile.DeployHoL`
+
+| Azure workshop deploy
+| `OnCloud/Azure/build/Jenkinsfile.DeployHoL`
+|===
+
+Azure automation is developed on the `azure-automation` branch until merged to `main`.
+
+---
+
+Authors: **Kuldeep Sahu** (ksahu@cloudera.com) · **Avanish Tiwari** (aktiwari@cloudera.com)

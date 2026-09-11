@@ -4,6 +4,8 @@
 
 Automation for provisioning disposable Cloudera Data Platform (CDP) Public Cloud Hands-on Lab environments on AWS and Azure.
 
+Folder index: link:../../OnCloud/README.adoc[`OnCloud/README.adoc`]
+
 == Runbooks (quick start)
 
 Use these for day-to-day provision and destroy workflows:
