@@ -17,7 +17,7 @@ Each module includes a concise runbook-style `README.adoc` for day-to-day use. L
 | Topic | Runbook | Detailed guide
 
 | OnCloud (AWS + Azure HoL provisioner)
-| link:OnCloud/AWS/build/README.adoc[AWS build] · link:OnCloud/Azure/build/README.adoc[Azure build]
+| link:OnCloud/README.adoc[OnCloud] · link:OnCloud/AWS/build/README.adoc[AWS] · link:OnCloud/Azure/build/README.adoc[Azure]
 | link:docs/oncloud/README.adoc[OnCloud docs]
 
 | Configfile keys
