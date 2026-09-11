@@ -49,7 +49,11 @@
         string(name: 'DATALAKE_VERSION', defaultValue: '7.3.2', description: 'The Datalake runtime version to be used (e.g., 7.2.18)')
         choice(name: 'DELETE_WORKDIR', choices: ['false', 'true'], description: 'Choose whether to delete the work directory after the job completes')
         booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
-        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag to run the automation')
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag to pull from registry when BUILD_LOCAL_IMAGE is false')
+        booleanParam(name: 'BUILD_LOCAL_IMAGE', defaultValue: false, description: 'Build image in this job from IMAGE_BUILD_BRANCH, tag with BUILD_IMAGE_TAG, and use it for provision/destroy (skips docker pull)')
+        string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testbuildimage', description: 'Docker image tag for locally built image when BUILD_LOCAL_IMAGE is true')
+        string(name: 'IMAGE_BUILD_BRANCH', defaultValue: 'azure-automation', description: 'Git branch to checkout and build when BUILD_LOCAL_IMAGE is true')
+        string(name: 'IMAGE_BUILD_TF_QS_VER', defaultValue: 'main', description: 'TF_QUICKSTART_VERSION docker build-arg when BUILD_LOCAL_IMAGE is true')
     }
 
     options {
@@ -314,12 +318,80 @@ ENV_TAGS:${envTags}
             }
         }*/
 
+        stage('Build Local Docker Image') {
+            when { expression { return params.BUILD_LOCAL_IMAGE } }
+            steps {
+                script {
+                    def branch = params.IMAGE_BUILD_BRANCH?.trim()
+                    if (!branch) {
+                        error('IMAGE_BUILD_BRANCH is required when BUILD_LOCAL_IMAGE is enabled.')
+                    }
+                    def dockerfileDir = 'OnCloud/Azure/build'
+                    def tfQsVer = params.IMAGE_BUILD_TF_QS_VER?.trim() ?: 'main'
+                    def buildImageTag = params.BUILD_IMAGE_TAG?.trim() ?: 'testbuildimage'
+                    env.DOCKER_IMAGE = "clouderapartners/cdp-public-cloud-hol-provisioner-azure:${buildImageTag}"
+
+                    echo "Building image from branch ${branch} -> ${env.DOCKER_IMAGE}"
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "refs/heads/${branch}"]],
+                        userRemoteConfigs: [[url: 'https://github.com/cloudera/PSEAutomation.git']],
+                        extensions: [
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'CloneOption', depth: 1, shallow: true, noTags: false, honorRefspec: true]
+                        ]
+                    ])
+                    sh """
+                        set -e
+                        test -f ${dockerfileDir}/Dockerfile || {
+                          echo "ERROR: ${dockerfileDir}/Dockerfile not found. Use branch that contains the Azure build tree."
+                          exit 1
+                        }
+                        docker build --platform linux/amd64 \\
+                          --build-arg TF_QUICKSTART_VERSION=${tfQsVer} \\
+                          -t ${env.DOCKER_IMAGE} ${dockerfileDir}
+                        docker images | grep '${buildImageTag}' || true
+                    """
+                    echo "Using locally built image for ${params.ACTION}: ${env.DOCKER_IMAGE}"
+                }
+            }
+        }
+
         stage('Pull Docker Image') {
+            when { expression { return !params.BUILD_LOCAL_IMAGE } }
             steps {
                 sh 'echo "Stage :: Pull Docker Image"'
                 script {
                     // Pull the Docker image from Docker Hub
                     sh "docker ps; docker pull ${env.DOCKER_IMAGE} && docker images"
+                }
+            }
+        }
+
+        stage('Assign CDP env admin roles for pipeline') {
+            steps {
+                script {
+                    def assignScriptCandidates = [
+                        "${env.WORKSPACE}/OnCloud/Azure/build/jenkins/assignCdpEnvAdminRoles.sh",
+                        "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/assignCdpEnvAdminRoles.sh",
+                        "${env.WORKSPACE}/jenkins/assignCdpEnvAdminRoles.sh",
+                        "jenkins/assignCdpEnvAdminRoles.sh"
+                    ]
+                    def assignScript = assignScriptCandidates.find { fileExists(it) }
+                    if (!assignScript) {
+                        echo 'WARN: assignCdpEnvAdminRoles.sh not found — skipping pre-run role assignment'
+                        return
+                    }
+                    sh """
+                        chmod +x '${assignScript}'
+                        WORKSHOP_NAME='${params.WORKSHOP_NAME}' \
+                        BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' \
+                        CDP_MACHINE_USERNAME='psejenkins' \
+                        ASSIGN_BUILD_USER=false \
+                        ASSIGN_MACHINE_USER=true \
+                        ASSIGN_CALLER=true \
+                        '${assignScript}'
+                    """
                 }
             }
         }
@@ -368,79 +440,31 @@ ENV_TAGS:${envTags}
         }
         stage('Assign admin roles to builduser') {
             when {
-            expression { params.ACTION == 'provision' }
+                expression { params.ACTION == 'provision' }
             }
             steps {
-                script{
-                    sh '''
-                    set +e
-                    set +x
-
-                    CDP_WORKLOAD_USERNAME="${BUILD_USER_ID//_/.}"
-                    CDP_ENV_NAME="$(echo "$WORKSHOP_NAME" | tr '[:upper:]' '[:lower:]')-cdp-env"
-                    echo "Assigning environment roles for ${CDP_WORKLOAD_USERNAME} on ${CDP_ENV_NAME}"
-
-                    CDP_USER_CRN=$(cdp iam list-users --max-items 10000 \
-                        | jq -r --arg u "$CDP_WORKLOAD_USERNAME" '.users[] | select(.workloadUsername==$u).userId')
-                    CDP_ENV_CRN=$(cdp environments describe-environment --environment-name "$CDP_ENV_NAME" | jq -r .environment.crn)
-
-                    if [ -z "$CDP_USER_CRN" ] || [ "$CDP_USER_CRN" = "null" ]; then
-                        echo "WARN: CDP user not found for '$CDP_WORKLOAD_USERNAME' — skipping role assignment."
-                        exit 0
-                    fi
-                    if [ -z "$CDP_ENV_CRN" ] || [ "$CDP_ENV_CRN" = "null" ]; then
-                        echo "WARN: Environment '$CDP_ENV_NAME' not found — skipping role assignment."
-                        exit 0
-                    fi
-
-                    get_crn_resource_role() {
-                        cdp iam list-resource-roles | jq -r \
-                            --arg role "$1" \
-                            '.resourceRoles[] | select(.crn | endswith(":" + $role)) | .crn'
+                script {
+                    def assignScriptCandidates = [
+                        "${env.WORKSPACE}/OnCloud/Azure/build/jenkins/assignCdpEnvAdminRoles.sh",
+                        "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/assignCdpEnvAdminRoles.sh",
+                        "${env.WORKSPACE}/jenkins/assignCdpEnvAdminRoles.sh",
+                        "jenkins/assignCdpEnvAdminRoles.sh"
+                    ]
+                    def assignScript = assignScriptCandidates.find { fileExists(it) }
+                    if (!assignScript) {
+                        echo 'WARN: assignCdpEnvAdminRoles.sh not found — skipping build user role assignment'
+                        return
                     }
-
-                    user_has_resource_role() {
-                        cdp iam list-user-assigned-resource-roles --user "$CDP_USER_CRN" 2>/dev/null \
-                            | jq -e --arg role ":$1" --arg env "$CDP_ENV_CRN" \
-                            '.resourceRoles[]? | select(.crn | endswith($role)) | select(.resourceCrn == $env)' >/dev/null
-                    }
-
-                    assign_failed=0
-                    for role_name in EnvironmentAdmin Owner; do
-                        if user_has_resource_role "$role_name"; then
-                            echo "  ✓ ${role_name} (already assigned)"
-                            continue
-                        fi
-
-                        role_crn=$(get_crn_resource_role "$role_name")
-                        if [ -z "$role_crn" ]; then
-                            echo "  WARN: Role '${role_name}' not found — skipping"
-                            continue
-                        fi
-
-                        err_file=$(mktemp)
-                        if cdp iam assign-user-resource-role \
-                            --user "$CDP_USER_CRN" \
-                            --resource-role-crn "$role_crn" \
-                            --resource-crn "$CDP_ENV_CRN" >"$err_file" 2>&1; then
-                            echo "  ✓ ${role_name} assigned"
-                        elif grep -qiE 'ALREADY_EXISTS|already assigned' "$err_file"; then
-                            echo "  ✓ ${role_name} (already assigned)"
-                        else
-                            echo "  ✗ Failed to assign ${role_name}:"
-                            sed 's/^/    /' "$err_file"
-                            assign_failed=1
-                        fi
-                        rm -f "$err_file"
-                    done
-
-                    cdp environments sync-all-users --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
-                    cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
-
-                    if [ "$assign_failed" -ne 0 ]; then
-                        exit 1
-                    fi
-                    '''
+                    sh """
+                        chmod +x '${assignScript}'
+                        WORKSHOP_NAME='${params.WORKSHOP_NAME}' \
+                        BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' \
+                        CDP_MACHINE_USERNAME='psejenkins' \
+                        ASSIGN_BUILD_USER=true \
+                        ASSIGN_MACHINE_USER=false \
+                        ASSIGN_CALLER=false \
+                        '${assignScript}'
+                    """
                 }
             }
         }

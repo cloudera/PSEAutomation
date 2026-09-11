@@ -15,6 +15,14 @@
     cai_nfs_version: "4.1"
 
   tasks:
+    - name: Sanitize workspace instance type value
+      ansible.builtin.set_fact:
+        ws_instance_type: >-
+          {{
+            (ws_instance_type | regex_search('Standard_[A-Za-z0-9_]+'))
+            | default(ws_instance_type, true)
+          }}
+
     - name: Check and print variable status
       debug:
         msg:

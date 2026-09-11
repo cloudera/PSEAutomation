@@ -206,10 +206,18 @@ docker run --rm --platform linux/amd64 \
 
 Storage lifecycle, CDW/CDE managed identities, and CAI NFS: link:cdp-wrkshps-quickstarts/azure_enhancements/README.adoc[`azure_enhancements/`] · link:../../../docs/oncloud/azure-enhancements.adoc[detailed guide]
 
+== Jenkins pipelines
+
+Workshop **provision** / **destroy** jobs: `Jenkinsfile.DeployHoL` and `Jenkinsfile.TestDeployHoL`.
+
+* link:../../JENKINS-PIPELINES.adoc[Jenkins pipelines guide] — all jobs, parameters, stages, local image build (`BUILD_LOCAL_IMAGE`, `BUILD_IMAGE_TAG`), and CDP role assignment
+* Image build job: `Jenkinsfile.Build` (default branch `azure-automation`)
+
 == Further reading
 
 * link:../../../docs/oncloud/README.adoc[OnCloud documentation index]
 * link:../../../docs/oncloud/azure-provisioner.adoc[Features, credentials, standalone usage details]
+* link:CHANGELOG.md[Changelog]
 
 ---
 

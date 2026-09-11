@@ -54,13 +54,23 @@
       debug:
         msg: "{{ deservicestatus }}"
 
-    - name: Initialize CDE service existence flag
+    - name: Sanitize instance type value
       ansible.builtin.set_fact:
-        cde_service_exists: false
+        instance_type: >-
+          {{
+            (instance_type | regex_search('Standard_[A-Za-z0-9_]+'))
+            | default(instance_type, true)
+          }}
 
-    - name: Determine if CDE service needs to be created
+    - name: Initialize CDE service state flags
       ansible.builtin.set_fact:
-        cde_service_exists: >-
+        cde_service_present: false
+        cde_service_ready: false
+
+    - name: Determine CDE service state
+      ansible.builtin.set_fact:
+        cde_service_present: "{{ (deservicestatus.services | default([], true) | length) > 0 }}"
+        cde_service_ready: >-
           {{
             (deservicestatus.services | default([], true)
             | selectattr('status', 'equalto', 'ClusterCreationCompleted')
@@ -68,10 +78,13 @@
           }}
       when: deservicestatus is succeeded
 
-    - name: Skip provisioning when CDE service is already running
+    - name: Skip activation when CDE service already exists
       ansible.builtin.debug:
-        msg: "CDE service {{ workshop_name }}-cde is already running — skipping activation."
-      when: cde_service_exists
+        msg: >-
+          CDE service {{ workshop_name }}-cde already exists
+          (status: {{ deservicestatus.services[0].status | default('unknown') }}) —
+          skipping enable; waiting for completion if needed.
+      when: cde_service_present
 
     - name: Activate CDE service if it does not exist
       cloudera.cloud.de:
@@ -84,7 +97,7 @@
         enable_public_endpoint: true
         state: present
         wait: no
-      when: not cde_service_exists
+      when: not cde_service_present
       register: deservice
 
     - name: Check the CDE service status

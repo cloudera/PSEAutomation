@@ -194,6 +194,13 @@ docker run --rm \
 
 S3 lifecycle and datalake admin log policies: link:cdp-wrkshps-quickstarts/aws_enhancements/README.adoc[`aws_enhancements/`] · link:../../../docs/oncloud/aws-enhancements.adoc[detailed guide]
 
+== Jenkins pipelines
+
+Workshop **provision** / **destroy** jobs: `Jenkinsfile.DeployHoL` and `Jenkinsfile.TestDeployHoL`.
+
+* link:../../JENKINS-PIPELINES.adoc[Jenkins pipelines guide] — all jobs, parameters, stages, local image build (`BUILD_LOCAL_IMAGE`, `BUILD_IMAGE_TAG`), and CDP role assignment
+* Image build job: `Jenkinsfile.Build`
+
 == Further reading
 
 * link:../../../docs/oncloud/README.adoc[OnCloud documentation index]

@@ -1,0 +1,238 @@
+= OnCloud Jenkins Pipelines
+:toc: preamble
+:icons: font
+
+Reference for Jenkins jobs that build HoL provisioner images and run workshop **provision** / **destroy** on AWS and Azure.
+
+== Pipeline inventory
+
+|===
+| Job type | AWS path | Azure path | Published image
+
+| Image build
+| `OnCloud/AWS/build/Jenkinsfile.Build`
+| `OnCloud/Azure/build/Jenkinsfile.Build`
+| `clouderapartners/cdp-public-cloud-hol-provisioner:<tag>` (AWS) +
+  `clouderapartners/cdp-public-cloud-hol-provisioner-azure:<tag>` (Azure)
+
+| Workshop deploy (production defaults)
+| `OnCloud/AWS/build/Jenkinsfile.DeployHoL`
+| `OnCloud/Azure/build/Jenkinsfile.DeployHoL`
+| Pulls `IMAGE_TAG` from Docker Hub (default) or builds locally (optional)
+
+| Workshop deploy (test defaults)
+| `OnCloud/AWS/build/Jenkinsfile.TestDeployHoL`
+| `OnCloud/Azure/build/Jenkinsfile.TestDeployHoL`
+| Same as DeployHoL with different parameter defaults (regions, datalake version, etc.)
+
+| Scheduled build + test (optional)
+| `OnCloud/AWS/build/Jenkinsfile.PollSCM`
+| `OnCloud/Azure/build/Jenkinsfile.PollSCM`
+| Triggers downstream build and test-deploy jobs
+|===
+
+Supporting scripts live under `OnCloud/{AWS,Azure}/build/jenkins/` (for example `assignCdpEnvAdminRoles.sh`, `provisionFailureParser.groovy`).
+
+== Image build jobs (`Jenkinsfile.Build`)
+
+Build and push provisioner images to Docker Hub.
+
+=== Key parameters
+
+|===
+| Parameter | AWS default | Azure default | Purpose
+
+| `PRIMARY_TAG`
+| `testmain`
+| `testmain`
+| Main image tag pushed to registry
+
+| `BUILD_BRANCH`
+| `main`
+| `azure-automation`
+| Git branch to checkout before `docker build`
+
+| `TF_QS_VER`
+| `main`
+| `main`
+| `TF_QUICKSTART_VERSION` Docker build-arg (runtime quickstart pin)
+
+| `MULTI_PLATFORM_BUILD`
+| `false`
+| `false`
+| When `true`, uses `docker buildx` for `linux/amd64` + `linux/arm64`
+
+| `REFRESH_JENKINSFILE`
+| `false`
+| `false`
+| Reload job parameters from Jenkinsfile and exit (dry run)
+|===
+
+NOTE: Build jobs use `--no-cache` today, so full image rebuilds can take 20–40+ minutes. For iterative playbook/script changes, prefer link:#_optional_local_image_build_in_deploy_jobs[local image build in deploy jobs] instead of publishing on every change.
+
+== Workshop deploy jobs (`Jenkinsfile.DeployHoL` / `TestDeployHoL`)
+
+Single job runs **provision** or **destroy** for one workshop via a Docker container on the Jenkins agent.
+
+=== Core parameters
+
+|===
+| Parameter | Description
+
+| `ACTION`
+| `provision` or `destroy`
+
+| `WORKSHOP_NAME`
+| Workshop prefix (5–12 chars, no underscores)
+
+| `ENABLE_DATA_SERVICES`
+| Checkbox: `CDW`, `CAI`, `CDE`, `CDF`, or `NONE`
+
+| `IMAGE_TAG`
+| Registry tag to **pull** when `BUILD_LOCAL_IMAGE=false` (default `latest`)
+
+| `BUILD_LOCAL_IMAGE`
+| When `true`, build image in this job and skip `docker pull` (default `false`)
+
+| `BUILD_IMAGE_TAG`
+| Tag for locally built image when `BUILD_LOCAL_IMAGE=true` (default `testbuildimage`)
+
+| `IMAGE_BUILD_BRANCH`
+| Git branch to checkout and build when `BUILD_LOCAL_IMAGE=true` +
+  (AWS default `main`, Azure default `azure-automation`)
+
+| `IMAGE_BUILD_TF_QS_VER`
+| `TF_QUICKSTART_VERSION` build-arg for local build +
+  (AWS default `v0.15.0`, Azure default `main`)
+
+| `REFRESH_JENKINSFILE`
+| Reload job parameters from Jenkinsfile and exit
+|===
+
+When `BUILD_LOCAL_IMAGE=false` (normal production use):
+
+[source]
+----
+IMAGE_TAG=latest
+→ docker pull clouderapartners/cdp-public-cloud-hol-provisioner:latest
+→ docker run … provision|destroy
+----
+
+When `BUILD_LOCAL_IMAGE=true` (branch testing without publishing):
+
+[source]
+----
+BUILD_IMAGE_TAG=testbuildimage
+IMAGE_BUILD_BRANCH=azure-automation
+→ git checkout branch
+→ docker build -t clouderapartners/…-provisioner[-azure]:testbuildimage
+→ docker run … provision|destroy   (same tag for both actions in the job)
+----
+
+If the image remains on the agent after provision, a follow-up **destroy** job can set `BUILD_LOCAL_IMAGE=false` and `IMAGE_TAG=testbuildimage` only if that tag was pushed to the registry. For agent-local tags, either rebuild with the same `BUILD_IMAGE_TAG` or keep `BUILD_LOCAL_IMAGE=true`.
+
+[[optional-local-image-build-in-deploy-jobs]]
+=== Optional local image build
+
+Use this workflow to test Dockerfile, entrypoint, or Ansible playbook changes from a feature branch without running the separate image-build job or pushing to Docker Hub.
+
+. Set `BUILD_LOCAL_IMAGE` = **true**
+. Set `IMAGE_BUILD_BRANCH` = your branch (e.g. `azure-automation`)
+. Set `BUILD_IMAGE_TAG` = **testbuildimage** (or any stable test tag)
+. Run with `ACTION=provision`, then re-run with `ACTION=destroy` using the same image parameters
+
+Local builds use Docker layer cache (no `--no-cache`), so rebuilds after small COPY-layer changes are much faster than full registry builds.
+
+=== Deploy pipeline stages
+
+Typical stage order:
+
+1. **Check Mandatory Parameters** — validates workshop name, domain, passwords, CAII IP rules, etc.
+2. **Create Config File** — writes `configfile` under the agent `userconfig` directory
+3. **Build Local Docker Image** — only when `BUILD_LOCAL_IMAGE=true`
+4. **Pull Docker Image** — only when `BUILD_LOCAL_IMAGE=false`
+5. **Assign CDP env admin roles for pipeline** — runs `jenkins/assignCdpEnvAdminRoles.sh` on the agent before the container starts; grants `psejenkins` (and CDP caller) environment admin roles including `DFFlowAdmin` for CDF flow stop during destroy
+6. **Run Docker Container** — `docker run` with mounted `userconfig`, `~/.cdp`, and cloud credentials
+7. **Check Logs for Failures** — parses provisioner log via `provisionFailureParser.groovy`
+8. **Assign admin roles to builduser** — provision only; grants `EnvironmentAdmin` / `Owner` (and related roles) to the human who triggered the job
+
+=== CDP role assignment script
+
+`OnCloud/{AWS,Azure}/build/jenkins/assignCdpEnvAdminRoles.sh` is invoked from Jenkins (not baked into the Docker image). It assigns idempotent environment-scoped roles:
+
+* `EnvironmentAdmin`, `Owner`
+* `DFFlowAdmin`, `DWAdmin`, `DEAdmin`, `MLAdmin`
+
+Targets (controlled by env vars):
+
+* `psejenkins` machine user (`ASSIGN_MACHINE_USER`)
+* CDP credential caller (`ASSIGN_CALLER`)
+* Build user (`ASSIGN_BUILD_USER`, provision post-stage only)
+
+== Poll / integration jobs (`Jenkinsfile.PollSCM`)
+
+Optional scheduled jobs that:
+
+. Watch upstream repos (for example `cdp-tf-quickstarts`)
+. Trigger AWS and Azure **image build** jobs in parallel
+. Trigger **test deploy** jobs when builds succeed
+
+Adjust `REMOTE_JOB_*` names in the Jenkinsfile to match your Jenkins folder layout.
+
+== Typical workflows
+
+=== Production workshop (registry image)
+
+[cols="1,2"]
+|===
+| Setting | Value
+
+| `BUILD_LOCAL_IMAGE`
+| `false`
+
+| `IMAGE_TAG`
+| `latest` or `testmain`
+
+| `ACTION`
+| `provision` or `destroy`
+|===
+
+=== Feature-branch validation (no push)
+
+[cols="1,2"]
+|===
+| Setting | Value
+
+| `BUILD_LOCAL_IMAGE`
+| `true`
+
+| `IMAGE_BUILD_BRANCH`
+| your branch
+
+| `BUILD_IMAGE_TAG`
+| `testbuildimage`
+
+| `ACTION`
+| `provision` then `destroy`
+|===
+
+=== Publish a new registry image
+
+. Run **image build** job with `PRIMARY_TAG` / `BUILD_BRANCH`
+. Run **deploy** job with `BUILD_LOCAL_IMAGE=false` and `IMAGE_TAG` matching the tag you pushed
+
+== Reloading job parameters
+
+After Jenkinsfile parameter changes, run the job once with:
+
+`REFRESH_JENKINSFILE` = **true**
+
+The job aborts after reloading the parameter definitions.
+
+== Further reading
+
+* link:README.adoc[OnCloud overview]
+* link:AWS/build/README.adoc[AWS provisioner runbook]
+* link:Azure/build/README.adoc[Azure provisioner runbook]
+* link:AWS/build/CHANGELOG.md[AWS changelog]
+* link:Azure/build/CHANGELOG.md[Azure changelog]

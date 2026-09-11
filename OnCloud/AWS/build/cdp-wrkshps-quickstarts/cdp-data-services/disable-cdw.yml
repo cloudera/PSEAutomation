@@ -159,13 +159,93 @@
         msg: "All virtual warehouses are now removed."
       when: vw_ids | length == 0 or (vw_delete_check.stdout | default('0') | int == 0)
 
+    - name: List CDW database connectors
+      ansible.builtin.command: >
+        cdp dw list-connectors --cluster-id {{ cdw_cluster_id }}
+      register: cdw_connectors_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Set CDW connector list
+      ansible.builtin.set_fact:
+        cdw_connectors: >-
+          {{
+            (cdw_connectors_raw.stdout | default('{"connectors": []}', true) | from_json).connectors
+            | default([], true)
+          }}
+
+    - name: No CDW connectors to delete
+      ansible.builtin.debug:
+        msg: "No database connectors found for CDW cluster {{ cdw_cluster_id }}."
+      when: (cdw_connectors | default([], true) | length) == 0
+
+    - name: Delete CDW database connectors
+      ansible.builtin.command: >
+        cdp dw delete-connector
+        --cluster-id {{ cdw_cluster_id }}
+        --connector-id {{ item.id | default(item.connectorId) }}
+      loop: "{{ cdw_connectors }}"
+      loop_control:
+        label: "{{ item.name | default(item.id | default(item.connectorId)) }}"
+      register: cdw_connector_delete_results
+      changed_when: false
+      failed_when: false
+      when: (cdw_connectors | default([], true) | length) > 0
+
+    - name: Warn when CDW connector deletion failed
+      ansible.builtin.debug:
+        msg: >-
+          Failed to delete connector {{ item.item.name | default(item.item.id | default('unknown')) }}:
+          {{ item.stderr | default(item.msg) | default('unknown error') | regex_replace('\n', ' ') }}.
+      loop: "{{ cdw_connector_delete_results.results | default([]) }}"
+      when:
+        - cdw_connector_delete_results is defined
+        - item.rc | default(0) != 0
+
+    - name: Verify CDW connectors are removed
+      ansible.builtin.command: >
+        cdp dw list-connectors --cluster-id {{ cdw_cluster_id }}
+      register: cdw_connectors_check
+      until: >
+        (
+          (cdw_connectors_check.stdout | default('{"connectors": []}', true) | from_json).connectors
+          | default([], true)
+          | length
+        ) == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+      failed_when: false
+      when: (cdw_connectors | default([], true) | length) > 0
+
+    - name: Warn when CDW connectors could not be fully removed
+      ansible.builtin.debug:
+        msg: >-
+          Some database connectors may still exist on CDW cluster {{ cdw_cluster_id }}.
+          Cluster delete may be blocked until they are removed.
+      when: >-
+        (cdw_connectors | default([], true) | length) > 0 and
+        (cdw_connectors_check is defined) and
+        (
+          ((cdw_connectors_check.stdout | default('{"connectors": []}', true) | from_json).connectors | default([], true) | length) > 0
+        )
+
     - name: Remove CDW cluster
       cloudera.cloud.dw_cluster:
         cluster_id: "{{ cdw_cluster_id }}"
         env: "{{ cdp_env_name }}"
         wait: False
         state: absent
-      ignore_errors: true
+      register: cdw_cluster_delete
+      failed_when: false
+
+    - name: Warn when CDW cluster delete is blocked
+      ansible.builtin.debug:
+        msg: >-
+          CDW cluster {{ cdw_cluster_id }} could not be deleted
+          ({{ cdw_cluster_delete.msg | default('connectors or dependencies may still exist') }}).
+          Teardown will continue and the cluster may remain until dependencies are removed.
+      when: cdw_cluster_delete.failed | default(false)
 
     - name: Get CDW cluster status
       cloudera.cloud.dw_cluster_info:
@@ -189,9 +269,18 @@
         msg: "CDW cluster already removed for environment {{ cdp_env_name }}."
       when: (dw_cluster_status.clusters | default([], true) | length) == 0
 
+    - name: Warn when CDW cluster is still present after delete attempt
+      ansible.builtin.debug:
+        msg: >-
+          CDW cluster for {{ cdp_env_name }} is still in
+          {{ dw_cluster_status.clusters[0].status }} state after delete attempt.
+      when:
+        - (dw_cluster_status.clusters | default([], true) | length) > 0
+        - dw_cluster_status.clusters[0].status not in ["Deleting"]
+
     - name: Fail task if cluster deletion failed
       ansible.builtin.fail:
-        msg: "Cluster deletion failed."
+        msg: "CDW cluster deletion failed with status {{ dw_cluster_status.clusters[0].status }}."
       when:
         - (dw_cluster_status.clusters | default([], true) | length) > 0
         - dw_cluster_status.clusters[0].status in ["Error", "Failed"]

@@ -365,20 +365,29 @@ check_key_pair() {
 #---------------------------------------------------------------------------------------------------------------------#
 # Function to verify AWS pre-requisites
 aws_prereq() {
-   vpc_limit=$(aws service-quotas get-service-quota \
-      --service-code vpc \
-      --output json \
-      --region $aws_region \
-      --quota-code L-F678F1CE | jq -r '.[]["Value"]' | cut -d'.' -f1)
-
-   vpc_used=$(aws ec2 describe-vpcs --output json --region $aws_region | jq -r '.[] | length')
-   hol_check_info "VPC count in ${aws_region}: ${vpc_used}/${vpc_limit}"
-
-   if [ $vpc_limit -gt $vpc_used ]; then
-      hol_check_pass "VPC quota available"
+   local cdp_env_name="${workshop_name}-cdp-env"
+   # Only skip VPC quota on rerun when the CDP environment already exists (VPC was
+   # created with it). Partial-failure reruns may still need EIP/S3/other checks below.
+   if cdp environments describe-environment --environment-name "$cdp_env_name" >/dev/null 2>&1; then
+      hol_skip "CDP environment '${cdp_env_name}' already exists — skipping VPC quota check only"
+      hol_check_info "Continuing Elastic IP and S3 quota checks for partial-failure rerun"
    else
-      hol_quota_fail "VPC limit reached in ${aws_region}. Choose another region or remove unused VPCs."
+      vpc_limit=$(aws service-quotas get-service-quota \
+         --service-code vpc \
+         --output json \
+         --region $aws_region \
+         --quota-code L-F678F1CE | jq -r '.[]["Value"]' | cut -d'.' -f1)
+
+      vpc_used=$(aws ec2 describe-vpcs --output json --region $aws_region | jq -r '.[] | length')
+      hol_check_info "VPC count in ${aws_region}: ${vpc_used}/${vpc_limit}"
+
+      if [ $vpc_limit -gt $vpc_used ]; then
+         hol_check_pass "VPC quota available"
+      else
+         hol_quota_fail "VPC limit reached in ${aws_region}. Choose another region or remove unused VPCs."
+      fi
    fi
+
    eip_limit=$(aws service-quotas get-service-quota \
       --service-code ec2 \
       --output json \
@@ -1374,7 +1383,7 @@ deploy_cdw() {
 #--------------------------------------------------------------------------------------------------#
 disable_cdw() {
    hol_disable_service "cdw"
-   ansible-playbook $DS_CONFIG_DIR/disable-cdw.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cdw.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env"
 }
 #--------------------------------------------------------------------------------------------------#
@@ -1403,7 +1412,7 @@ deploy_cde() {
 #--------------------------------------------------------------------------------------------------#
 disable_cde() {
    hol_disable_service "cde"
-   ansible-playbook $DS_CONFIG_DIR/disable-cde.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cde.yml --extra-vars \
       "workshop_name=$workshop_name"
 }
 #--------------------------------------------------------------------------------------------------#
@@ -1426,7 +1435,7 @@ deploy_cai() {
 #--------------------------------------------------------------------------------------------------#
 disable_cai() {
    hol_disable_service "cai"
-   ansible-playbook $DS_CONFIG_DIR/disable-cai.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name"
 }
@@ -1484,7 +1493,7 @@ deploy_cdf() {
 #--------------------------------------------------------------------------------------------------#
 disable_cdf() {
    hol_disable_service "cdf"
-   ansible-playbook $DS_CONFIG_DIR/disable-cdf.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cdf.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name"
 }
@@ -1745,16 +1754,29 @@ enable_data_services() {
       return 0
    fi
 
-   hol_parallel_start
-   hol_info "Services: ${services_to_deploy[*]}"
-
    local pids=()
+   local service
+
+   hol_stop_service_log_tailers
+   for service in "${services_to_deploy[@]}"; do
+      hol_start_service_log_tailer "$(hol_service_short "$service")"
+   done
+
+   hol_parallel_start
+   hol_info "Services: ${services_to_deploy[*]} (live logs: /userconfig/.${workshop_name}/logs/)"
+
    for service in "${services_to_deploy[@]}"; do
       deploy_single_data_service "$service" &
       pids+=($!)
    done
 
    wait_for_pids "${pids[@]}"
+   hol_stop_service_log_tailers
+
+   hol_subsection "Deploy playbook logs" "📋"
+   for service in "${services_to_deploy[@]}"; do
+      hol_kv "$(hol_service_short "$service")" "/userconfig/.${workshop_name}/logs/$(hol_service_short "$service").log"
+   done
 }
 #--------------------------------------------------------------------------------------------------#
 disable_data_services() {
@@ -1787,5 +1809,10 @@ disable_data_services() {
    done
 
    wait_for_pids "${pids[@]}"
+
+   hol_subsection "Disable playbook logs" "📋"
+   for service in "${services_to_disable[@]}"; do
+      hol_kv "$(hol_service_short "$service")" "/userconfig/.${workshop_name}/logs/$(hol_service_short "$service").log"
+   done
 }
 #--------------------------------------------------------------------------------------------------#

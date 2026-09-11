@@ -16,19 +16,23 @@
 
     - name: Skip CDE teardown when service does not exist
       ansible.builtin.debug:
-        msg: "CDE service not found for {{ workshop_name }}-cde — skipping CDE disable."
+        msg: "CDE service not found for {{ workshop_name }}-cde — nothing to disable."
       when: (cde_service_info.services | default([], true) | length) == 0
 
     - name: End play when CDE service does not exist
       ansible.builtin.meta: end_play
       when: (cde_service_info.services | default([], true) | length) == 0
 
+    - name: Mark CDE teardown as started
+      ansible.builtin.set_fact:
+        cde_teardown_started: true
+
     - name: List CDE virtual clusters
       cloudera.cloud.de_virtual_cluster_info:
         cluster_name: "{{ workshop_name }}-cde"
         environment: "{{ workshop_name }}-cdp-env"
       register: virtualclusters
-      ignore_errors: true
+      failed_when: false
 
     - name: Extract the virtual clusters id
       ansible.builtin.set_fact:
@@ -36,9 +40,10 @@
       vars:
         query_string: "[].{vcId:vcId,clusterId:clusterId}"
 
-    - name: Print VC IDs
-      debug:
-        msg: "{{ vc_ids }}"
+    - name: No CDE virtual clusters to delete
+      ansible.builtin.debug:
+        msg: "No CDE virtual clusters found for {{ workshop_name }}-cde."
+      when: (vc_ids | default([], true) | length) == 0
 
     - name: Start virtual cluster deletions async
       ansible.builtin.command: >
@@ -49,8 +54,8 @@
       async: "{{ cde_async_timeout }}"
       poll: 0
       register: vc_delete_async
-      ignore_errors: true
-      when: vc_ids | length > 0
+      failed_when: false
+      when: (vc_ids | default([], true) | length) > 0
 
     - name: Wait for virtual cluster delete async jobs
       ansible.builtin.async_status:
@@ -60,8 +65,8 @@
       retries: "{{ cde_async_retries }}"
       delay: "{{ cde_async_delay }}"
       loop: "{{ vc_delete_async.results | default([]) | selectattr('ansible_job_id', 'defined') | list }}"
-      ignore_errors: true
-      when: vc_ids | length > 0
+      failed_when: false
+      when: (vc_ids | default([], true) | length) > 0
 
     - name: Deactivate CDE service
       cloudera.cloud.de:
@@ -70,11 +75,7 @@
         state: absent
         wait: False
       register: deactivation
-      ignore_errors: true
-
-    - name: Print Deactivation Result
-      debug:
-        msg: "Deactivation Result: {{ deactivation }}"
+      failed_when: false
 
     - name: Check status of CDE service until completely deleted
       cloudera.cloud.de_info:
@@ -88,24 +89,24 @@
         )
       retries: 60
       delay: 30
-      ignore_errors: true
+      failed_when: false
 
-    - name: Skip when CDE service was never activated
+    - name: Confirm CDE service deleted successfully
       ansible.builtin.debug:
-        msg: "CDE service not found for {{ workshop_name }}-cde — skipping CDE disable."
-      when: (serstatus.services | default([], true) | length) == 0
+        msg: "CDE service {{ workshop_name }}-cde deleted successfully."
+      when:
+        - cde_teardown_started | default(false)
+        - (serstatus.services | default([], true) | length) == 0
 
-    - name: End play when CDE service does not exist
+    - name: End play after successful CDE deletion
       ansible.builtin.meta: end_play
-      when: (serstatus.services | default([], true) | length) == 0
-
-    - name: Print status of CDE service
-      debug:
-        msg: "CDE Service status: {{ serstatus }}"
+      when:
+        - cde_teardown_started | default(false)
+        - (serstatus.services | default([], true) | length) == 0
 
     - name: Fail task if CDE service deletion failed
-      fail:
-        msg: "CDE Service Deletion Failed."
+      ansible.builtin.fail:
+        msg: "CDE service deletion failed with status {{ serstatus.services[0].status }}."
       when:
         - (serstatus.services | default([], true) | length) > 0
         - serstatus.services[0].status in ["Error", "Failed"]

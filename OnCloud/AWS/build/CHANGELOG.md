@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.3.1]
+## [3.3.2] - 2026-09-11
+
+### Added
+- Jenkins pipelines guide: `OnCloud/JENKINS-PIPELINES.adoc` (job inventory, parameters, stages, workflows).
+- Optional in-job Docker image build on deploy jobs: `BUILD_LOCAL_IMAGE`, `BUILD_IMAGE_TAG` (default `testbuildimage`), `IMAGE_BUILD_BRANCH`, `IMAGE_BUILD_TF_QS_VER`.
+- `jenkins/assignCdpEnvAdminRoles.sh` — assigns environment admin roles to `psejenkins` and CDP caller before provision/destroy (includes `DFFlowAdmin` for CDF flow stop).
+
+### Changed
+- Deploy Jenkinsfiles assign CDP env admin roles via shared script instead of inline shell (pre-run for machine user; post-provision for build user).
+- Parallel data-service disable playbooks stream tagged output to per-service log files (`hol_run_ansible_playbook`).
+
+### Fixed
+- CDF disable: correct deployment filter, stop flows before delete, `df_deployment` / service disable API usage.
+- CDE disable: accurate success messaging; skip re-enable when cluster already exists or is in progress; sanitize Azure instance types.
+- CDW disable: delete connectors before cluster removal.
+- CDF/CDE enable: sanitize instance type values corrupted by stdout capture from `resolve_azure_instance_type`.
+- AWS `aws_prereq`: skip VPC quota check when CDP environment already exists (partial-failure reruns).
+
+## [3.3.1] - 2026-09-08
 
 ### Changed
 - Jenkins `OWNER` parameter default is `pse-apac@cloudera.com`; when `PROVISION_CAII=YES`, `LOCAL_MACHINE_IP` cannot be `0.0.0.0/0` (use Jenkins agent IP or Cloudera VPN `208.127.31.110/32` / `208.127.31.11/32`).
@@ -29,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed `owner` env tag to `pse-owner` to avoid conflict with CDP account default tags.
 - Fixed rollback shell error (`[: -eq: unary operator expected`) in `destroy_cdp` and `destroy_hol_infra`.
 
-## [3.3.0]
+## [3.3.0] - 2026-09-08
 
 ### Added
 - Added support for tagging deployed AWS resources via the configuration file.
@@ -51,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Logging enhancements and error handling for keycloak deployment.
 
-## [3.2.0]
+## [3.2.0] - 2025-08-01
 
 ### Added
 - Added a new feature to provision and destroy CAII service

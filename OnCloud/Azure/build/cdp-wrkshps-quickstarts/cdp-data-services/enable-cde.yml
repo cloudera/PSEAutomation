@@ -61,13 +61,23 @@
       debug:
         msg: "{{ deservicestatus }}"
 
-    - name: Initialize CDE service existence flag
+    - name: Sanitize instance type value
       ansible.builtin.set_fact:
-        cde_service_exists: false
+        instance_type: >-
+          {{
+            (instance_type | regex_search('Standard_[A-Za-z0-9_]+'))
+            | default(instance_type, true)
+          }}
 
-    - name: Determine if CDE service needs to be created
+    - name: Initialize CDE service state flags
       ansible.builtin.set_fact:
-        cde_service_exists: >-
+        cde_service_present: false
+        cde_service_ready: false
+
+    - name: Determine CDE service state
+      ansible.builtin.set_fact:
+        cde_service_present: "{{ (deservicestatus.services | default([], true) | length) > 0 }}"
+        cde_service_ready: >-
           {{
             (deservicestatus.services | default([], true)
             | selectattr('status', 'equalto', 'ClusterCreationCompleted')
@@ -75,15 +85,18 @@
           }}
       when: deservicestatus is succeeded
 
-    - name: Skip provisioning when CDE service is already running
+    - name: Skip activation when CDE service already exists
       ansible.builtin.debug:
-        msg: "CDE service {{ workshop_name }}-cde is already running — skipping activation."
-      when: cde_service_exists
+        msg: >-
+          CDE service {{ workshop_name }}-cde already exists
+          (status: {{ deservicestatus.services[0].status | default('unknown') }}) —
+          skipping enable; waiting for completion if needed.
+      when: cde_service_present
 
     - name: Build CDE instance type attempt list
       ansible.builtin.set_fact:
         cde_instance_type_try_list: "{{ ([instance_type] + cde_instance_type_fallbacks) | unique }}"
-      when: not cde_service_exists
+      when: not cde_service_present
 
     - name: Activate CDE service if it does not exist
       ansible.builtin.shell: |
@@ -112,6 +125,11 @@
             echo "CDE instance type $t not available, trying next..." >&2
             continue
           fi
+          if grep -qiE 'already exists|CONFLICT' <<<"$last_err"; then
+            echo "CDE cluster already exists — continuing with status wait"
+            rm -f "$err_file"
+            exit 0
+          fi
           echo "$last_err" >&2
           exit 1
         done
@@ -119,7 +137,7 @@
         exit 1
       args:
         executable: /bin/bash
-      when: not cde_service_exists
+      when: not cde_service_present
       register: deservice
 
     - name: Check the CDE service status
