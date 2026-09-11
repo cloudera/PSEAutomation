@@ -5,13 +5,56 @@
   gather_facts: yes
   vars:
     cdf_async_timeout: 3600
-    cdf_async_retries: 120
-    cdf_async_delay: 30
+    cdf_verify_retries: 40
+    cdf_verify_delay: 30
 
   tasks:
     - name: Check and print variable status
       ansible.builtin.debug:
         msg: "cdp_env_name: {{ cdp_env_name }}, workshop_name: {{ workshop_name }}"
+
+    - name: Get CDP environment CRN
+      ansible.builtin.command: cdp environments describe-environment --environment-name "{{ cdp_env_name }}"
+      register: cdp_env_desc
+      changed_when: false
+      failed_when: false
+
+    - name: Set CDP environment facts
+      ansible.builtin.set_fact:
+        cdp_env_crn: "{{ (cdp_env_desc.stdout | from_json).environment.crn }}"
+      when: cdp_env_desc.rc == 0
+
+    - name: List CDF services for environment
+      ansible.builtin.command: cdp df list-services --no-paginate
+      register: cdf_list_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Set CDF service facts from list-services
+      ansible.builtin.set_fact:
+        cdf_list_state: >-
+          {{
+            (
+              (cdf_list_raw.stdout | default('{"services": []}', true) | from_json).services
+              | default([], true)
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            ).status.state | default('NOT_FOUND')
+          }}
+        cdf_service_crn: >-
+          {{
+            (
+              (cdf_list_raw.stdout | default('{"services": []}', true) | from_json).services
+              | default([], true)
+              | selectattr('name', 'equalto', cdp_env_name)
+              | map(attribute='crn')
+              | list
+              | first
+              | default('')
+            )
+          }}
 
     - name: Check if CDF service is enabled
       cloudera.cloud.df_service_info:
@@ -19,55 +62,68 @@
       register: df_service_info
       failed_when: false
 
-    - name: Set CDF service enabled flag
+    - name: Backfill CDF service CRN from service info
       ansible.builtin.set_fact:
-        cdf_service_enabled: >-
-          {{
-            df_service_info is succeeded and
-            (df_service_info.services | default([]) | length > 0) and
-            (df_service_info.services[0].status.state | default('NOT_ENABLED')) not in ['NOT_ENABLED', 'DISABLED']
-          }}
-
-    - name: Skip CDF teardown when service is not enabled
-      ansible.builtin.debug:
-        msg: "CDF is not enabled for environment {{ cdp_env_name }}. Skipping disable."
-      when: not cdf_service_enabled
-
-    - name: End play when CDF service is not enabled
-      ansible.builtin.meta: end_play
-      when: not cdf_service_enabled
-
-    - name: Get CDP environment CRN
-      ansible.builtin.command: cdp environments describe-environment --environment-name "{{ cdp_env_name }}"
-      register: cdp_env_desc
-      changed_when: false
-      check_mode: false
-
-    - name: Set CDP environment facts
-      ansible.builtin.set_fact:
-        cdp_env_crn: "{{ (cdp_env_desc.stdout | from_json).environment.crn }}"
+        cdf_service_crn: "{{ df_service_info.services[0].crn }}"
+      when:
+        - (cdf_service_crn | default('') | length) == 0
+        - (df_service_info.services | default([], true) | length) > 0
 
     - name: List CDF deployments
       ansible.builtin.command: cdp df list-deployments --no-paginate
       register: cdf_deployments_raw
       changed_when: false
       failed_when: false
-      check_mode: false
 
     - name: Set CDF deployments for environment
       ansible.builtin.set_fact:
         cdf_deployments: >-
           {{
-            (cdf_deployments_raw.stdout | default('{}') | from_json).deployments
-            | default([])
-            | selectattr('service.environmentCrn', 'equalto', cdp_env_crn)
-            | list
+            (cdf_deployments_raw.stdout | default('{"deployments": []}', true) | from_json).deployments
+            | default([], true)
+            | json_query("[?service.name=='" ~ cdp_env_name ~ "']")
+            | default([], true)
           }}
+
+    - name: Set CDF teardown requirement
+      ansible.builtin.set_fact:
+        cdf_needs_teardown: >-
+          {{
+            (
+              cdf_list_state not in ['NOT_FOUND', 'NOT_ENABLED', 'DISABLED']
+            ) or (
+              (cdf_service_crn | default('') | length) > 0 and
+              cdf_list_state not in ['NOT_ENABLED', 'DISABLED']
+            ) or (
+              (df_service_info.services | default([], true) | length) > 0 and
+              (df_service_info.services[0].status.state | default('NOT_ENABLED')) not in ['NOT_ENABLED', 'DISABLED']
+            ) or (
+              (cdf_deployments | default([], true) | length) > 0
+            )
+          }}
+
+    - name: Print current CDF teardown context
+      ansible.builtin.debug:
+        msg: >-
+          CDF teardown for {{ cdp_env_name }}:
+          list_state={{ cdf_list_state }},
+          service_crn={{ cdf_service_crn | default('n/a') }},
+          deployments={{ cdf_deployments | default([], true) | length }},
+          needs_teardown={{ cdf_needs_teardown }}
+
+    - name: Skip CDF teardown when service is not enabled
+      ansible.builtin.debug:
+        msg: "CDF is not enabled for environment {{ cdp_env_name }} — nothing to disable."
+      when: not cdf_needs_teardown
+
+    - name: End play when CDF service is not enabled
+      ansible.builtin.meta: end_play
+      when: not cdf_needs_teardown
 
     - name: No CDF deployments to delete
       ansible.builtin.debug:
         msg: "No CDF deployments found for environment {{ cdp_env_name }}."
-      when: cdf_deployments | length == 0
+      when: (cdf_deployments | default([], true) | length) == 0
 
     - name: Stop all flows in CDF deployments
       ansible.builtin.command: >
@@ -79,91 +135,133 @@
       loop_control:
         label: "{{ item.name }}"
       register: cdf_stop_flows_results
-      ignore_errors: true
-      when: cdf_deployments | length > 0
+      changed_when: false
+      failed_when: false
+      when:
+        - (cdf_deployments | default([], true) | length) > 0
+        - cdp_env_crn is defined
 
-    - name: Start CDF deployment terminations async
+    - name: Summarize CDF flow stop results
+      ansible.builtin.debug:
+        msg: >-
+          Stopped flows in {{ cdf_stop_flows_results.results | default([]) | selectattr('rc', 'equalto', 0) | list | length }}
+          of {{ cdf_deployments | length }} deployment(s).
+          {{
+            (
+              cdf_stop_flows_results.results | default([])
+              | rejectattr('rc', 'equalto', 0)
+              | map(attribute='item')
+              | map(attribute='name')
+              | list
+            ) | length > 0
+            | ternary(
+                'Could not stop flows for: '
+                ~ (
+                  cdf_stop_flows_results.results | default([])
+                  | rejectattr('rc', 'equalto', 0)
+                  | map(attribute='item')
+                  | map(attribute='name')
+                  | list
+                  | join(', ')
+                )
+                ~ '. Continuing with deployment termination.',
+                ''
+              )
+          }}
+      when:
+        - cdf_stop_flows_results is defined
+        - (cdf_deployments | default([], true) | length) > 0
+
+    - name: Terminate CDF deployments
       cloudera.cloud.df_deployment:
         dep_crn: "{{ item.crn }}"
-        df_name: "{{ cdp_env_name }}"
         state: absent
-        wait: false
       loop: "{{ cdf_deployments }}"
       loop_control:
         label: "{{ item.name }}"
-      async: "{{ cdf_async_timeout }}"
-      poll: 0
-      register: cdf_deployment_delete_async
-      ignore_errors: true
-      when: cdf_deployments | length > 0
-
-    - name: Build CDF deployment delete async job wait list
-      ansible.builtin.set_fact:
-        cdf_deployment_delete_jobs: >-
-          {{
-            cdf_deployment_delete_async.results | default([])
-            | selectattr('ansible_job_id', 'defined')
-            | list
-          }}
-      when: cdf_deployments | length > 0
-
-    - name: Wait for CDF deployment delete async jobs
-      ansible.builtin.async_status:
-        jid: "{{ item.ansible_job_id }}"
       register: cdf_deployment_delete_results
-      until: cdf_deployment_delete_results.finished
-      retries: "{{ cdf_async_retries }}"
-      delay: "{{ cdf_async_delay }}"
-      loop: "{{ cdf_deployment_delete_jobs | default([]) }}"
-      loop_control:
-        label: "{{ item.ansible_job_id }}"
-      ignore_errors: true
+      failed_when: false
+      when: (cdf_deployments | default([], true) | length) > 0
+
+    - name: Warn when CDF deployment termination failed
+      ansible.builtin.debug:
+        msg: >-
+          Failed to terminate deployment {{ item.item.name | default('unknown') }}:
+          {{ item.msg | default('unknown error') }}.
+          Continuing with CDF service disable.
+      loop: "{{ cdf_deployment_delete_results.results | default([]) }}"
       when:
-        - cdf_deployments | length > 0
-        - (cdf_deployment_delete_jobs | default([]) | length) > 0
+        - cdf_deployment_delete_results is defined
+        - item.failed | default(false)
+
+    - name: Disable CDF service with deployment termination
+      ansible.builtin.command: >
+        cdp df disable-service
+        --service-crn {{ cdf_service_crn }}
+        --no-persist
+        --terminate-deployments
+      register: cdf_disable_cmd
+      changed_when: cdf_disable_cmd.rc == 0
+      failed_when: false
+      when: (cdf_service_crn | default('') | length) > 0
+
+    - name: Disable CDF service via Ansible module when CLI is unavailable
+      cloudera.cloud.df_service:
+        df_crn: "{{ cdf_service_crn }}"
+        state: absent
+        terminate: true
+        persist: false
+        wait: true
+        timeout: "{{ cdf_async_timeout }}"
+      register: cdf_disable_module
+      failed_when: false
+      when:
+        - (cdf_service_crn | default('') | length) > 0
+        - cdf_disable_cmd is skipped or (cdf_disable_cmd.rc | default(1) != 0)
+
+    - name: Warn when CDF service disable returned an error
+      ansible.builtin.debug:
+        msg: >-
+          CDF service disable reported an issue for {{ cdp_env_name }}:
+          {{
+            cdf_disable_cmd.stderr | default(cdf_disable_module.msg | default('unknown error'))
+            | regex_replace('\n', ' ')
+          }}.
+      when: >
+        (cdf_disable_cmd is defined and not cdf_disable_cmd.skipped | default(false) and cdf_disable_cmd.rc | default(0) != 0)
+        or (cdf_disable_module is defined and not cdf_disable_module.skipped | default(true) and cdf_disable_module.failed | default(false))
 
     - name: Verify CDF deployments are removed
       ansible.builtin.command: cdp df list-deployments --no-paginate
       register: cdf_deployments_check
       until: >
         (
-          (cdf_deployments_check.stdout | default('{}') | from_json).deployments
-          | default([])
-          | selectattr('service.environmentCrn', 'equalto', cdp_env_crn)
-          | list
+          (cdf_deployments_check.stdout | default('{"deployments": []}', true) | from_json).deployments
+          | default([], true)
+          | json_query("[?service.name=='" ~ cdp_env_name ~ "']")
+          | default([], true)
           | length
         ) == 0
-      retries: 50
-      delay: 30
+      retries: "{{ cdf_verify_retries }}"
+      delay: "{{ cdf_verify_delay }}"
       changed_when: false
-      ignore_errors: true
-      check_mode: false
-      when: cdf_deployments | length > 0
+      failed_when: false
+      when: (cdf_deployments | default([], true) | length) > 0
 
     - name: Warn when CDF deployments could not be fully removed
       ansible.builtin.debug:
         msg: >-
           Some CDF deployments may still exist for {{ cdp_env_name }}.
-          Proceeding with CDF service disable.
+          Manual cleanup may be required in the CDP DataFlow UI.
       when: >-
-        (cdf_deployments | length > 0) and
+        (cdf_deployments | default([], true) | length) > 0 and
         (cdf_deployments_check is defined) and
         (
-        ((cdf_deployments_check.stdout | default('{}') | from_json).deployments | default([]))
-        | selectattr('service.environmentCrn', 'equalto', cdp_env_crn)
-        | list | length > 0
+          ((cdf_deployments_check.stdout | default('{"deployments": []}', true) | from_json).deployments | default([], true))
+          | json_query("[?service.name=='" ~ cdp_env_name ~ "']")
+          | default([], true)
+          | length > 0
         )
-
-    - name: Disable CDF service
-      cloudera.cloud.df_service:
-        name: "{{ cdp_env_name }}"
-        state: absent
-        terminate: true
-        persist: false
-        wait: true
-        timeout: "{{ cdf_async_timeout }}"
-      register: cdf_disable_result
-      ignore_errors: true
 
     - name: Verify CDF service is disabled
       cloudera.cloud.df_service_info:
@@ -171,16 +269,17 @@
       register: df_service_verify
       until: >
         df_service_verify is failed or
-        (df_service_verify.services | default([]) | length == 0) or
+        (df_service_verify.services | default([], true) | length == 0) or
         (df_service_verify.services[0].status.state | default('NOT_ENABLED')) in ['NOT_ENABLED', 'DISABLED']
-      retries: 50
-      delay: 30
-      ignore_errors: true
+      retries: "{{ cdf_verify_retries }}"
+      delay: "{{ cdf_verify_delay }}"
+      failed_when: false
 
     - name: Print CDF disable success message
       ansible.builtin.debug:
         msg: "Successfully disabled CDF for environment {{ cdp_env_name }}."
       when: >
         df_service_verify is failed or
-        (df_service_verify.services | default([]) | length == 0) or
-        (df_service_verify.services[0].status.state | default('NOT_ENABLED')) in ['NOT_ENABLED', 'DISABLED']
+        (df_service_verify.services | default([], true) | length == 0) or
+        (df_service_verify.services[0].status.state | default('NOT_ENABLED')) in ['NOT_ENABLED', 'DISABLED'] or
+        cdf_list_state in ['NOT_ENABLED', 'DISABLED', 'NOT_FOUND']

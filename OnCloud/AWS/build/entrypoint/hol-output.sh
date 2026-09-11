@@ -170,42 +170,67 @@ hol_parallel_start() {
    hol_section "⚡  Deploying data services in parallel"
 }
 
-hol_ansible_log_file() {
-   local service_tag="${HOL_SERVICE_TAG:-ansible}"
+HOL_LOG_TAILER_PIDS=()
+
+hol_service_log_file_by_tag() {
+   local service_tag="$1"
    local workshop="${workshop_name:-hol}"
    local log_dir="/userconfig/.${workshop}/logs"
    mkdir -p "$log_dir"
    echo "${log_dir}/${service_tag}.log"
 }
 
+hol_ansible_log_file() {
+   hol_service_log_file_by_tag "${HOL_SERVICE_TAG:-ansible}"
+}
+
+hol_start_service_log_tailer() {
+   local tag="$1"
+   local log_file
+   log_file="$(hol_service_log_file_by_tag "$tag")"
+   touch "$log_file"
+
+   (
+      tail -n 0 -F "$log_file" 2>/dev/null | while IFS= read -r line || [[ -n "$line" ]]; do
+         printf '[%s] %s\n' "$tag" "$line"
+      done
+   ) &
+   HOL_LOG_TAILER_PIDS+=($!)
+}
+
+hol_stop_service_log_tailers() {
+   local pid
+   for pid in "${HOL_LOG_TAILER_PIDS[@]}"; do
+      kill "$pid" 2>/dev/null || true
+   done
+   HOL_LOG_TAILER_PIDS=()
+   sleep 0.2
+}
+
 hol_run_ansible_playbook() {
-   local log_file tag rc
-   tag="${HOL_SERVICE_TAG:-?}"
+   local log_file tag rc stream_cmd
+   tag="${HOL_SERVICE_TAG:-ansible}"
    log_file="$(hol_ansible_log_file)"
    : >"$log_file"
 
-   hol_info "Streaming ${tag} deploy output (log: ${log_file})"
+   hol_info "${tag} playbook log: ${log_file}"
 
-   set +o pipefail
-   HOL_SERVICE_TAG= ANSIBLE_FORCE_COLOR=0 PYTHONUNBUFFERED=1 ansible-playbook "$@" 2>&1 | while IFS= read -r line || [[ -n "$line" ]]; do
-      local plain="$line"
-      if [[ "$plain" == "[${tag}] "* ]]; then
-         plain="${plain#"[${tag}] "}"
-      elif [[ "$plain" == "[${tag}]" ]]; then
-         plain=""
-      fi
-      if [[ -n "$plain" ]]; then
-         printf '[%s] %s\n' "$tag" "$plain"
-         printf '%s\n' "$plain" >>"$log_file"
-      else
-         printf '[%s]\n' "$tag"
-      fi
-   done
-   rc=${PIPESTATUS[0]:-1}
-   set -o pipefail
+   if command -v stdbuf >/dev/null 2>&1; then
+      stream_cmd=(stdbuf -oL -eL)
+   else
+      stream_cmd=()
+   fi
+
+   "${stream_cmd[@]}" env \
+      HOL_SERVICE_TAG= \
+      ANSIBLE_STDOUT_CALLBACK=default \
+      ANSIBLE_FORCE_COLOR=0 \
+      PYTHONUNBUFFERED=1 \
+      ansible-playbook -v "$@" >>"$log_file" 2>&1
+   rc=$?
 
    if (( rc != 0 )); then
-      hol_warn "Deploy failed — full ${tag} log: ${log_file}"
+      hol_warn "${tag} playbook failed — full log: ${log_file}"
       return "$rc"
    fi
    return 0

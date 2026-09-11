@@ -2371,17 +2371,17 @@ resolve_azure_instance_type() {
    for sku in "${deduped[@]}"; do
       if azure_vm_sku_available "$sku"; then
          if [[ -n "$requested" && "$sku" != "$requested" ]]; then
-            hol_warn "Requested instance type '${requested}' unavailable in ${azure_region}; using ${sku}"
+            hol_warn "Requested instance type '${requested}' unavailable in ${azure_region}; using ${sku}" >&2
          else
-            hol_info "Using Azure instance type ${sku}"
+            hol_info "Using Azure instance type ${sku}" >&2
          fi
          echo "$sku"
          return 0
       fi
-      hol_warn "Azure instance type ${sku} is not offered in ${azure_region}"
+      hol_warn "Azure instance type ${sku} is not offered in ${azure_region}" >&2
    done
 
-   hol_warn "No preferred instance type verified in ${azure_region}; defaulting to ${deduped[0]}"
+   hol_warn "No preferred instance type verified in ${azure_region}; defaulting to ${deduped[0]}" >&2
    echo "${deduped[0]}"
 }
 
@@ -2411,7 +2411,7 @@ deploy_cdw() {
 #--------------------------------------------------------------------------------------------------#
 disable_cdw() {
    hol_disable_service "cdw"
-   ansible-playbook $DS_CONFIG_DIR/disable-cdw.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cdw.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env"
 }
 #--------------------------------------------------------------------------------------------------#
@@ -2454,7 +2454,7 @@ deploy_cde() {
 #--------------------------------------------------------------------------------------------------#
 disable_cde() {
    hol_disable_service "cde"
-   ansible-playbook $DS_CONFIG_DIR/disable-cde.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cde.yml --extra-vars \
       "workshop_name=$workshop_name"
 }
 #--------------------------------------------------------------------------------------------------#
@@ -2488,7 +2488,7 @@ deploy_cai() {
 #--------------------------------------------------------------------------------------------------#
 disable_cai() {
    hol_disable_service "cai"
-   ansible-playbook $DS_CONFIG_DIR/disable-cai.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name"
 }
@@ -2548,7 +2548,7 @@ deploy_cdf() {
 #--------------------------------------------------------------------------------------------------#
 disable_cdf() {
    hol_disable_service "cdf"
-   ansible-playbook $DS_CONFIG_DIR/disable-cdf.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cdf.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name"
 }
@@ -2818,9 +2818,15 @@ enable_data_services() {
    local failed=0
    local pids=()
    local delay=0
+   local service
+
+   hol_stop_service_log_tailers
+   for service in "${services_to_deploy[@]}"; do
+      hol_start_service_log_tailer "$(hol_service_short "$service")"
+   done
 
    hol_parallel_start
-   hol_info "Services: ${services_to_deploy[*]}"
+   hol_info "Services: ${services_to_deploy[*]} (live logs: /userconfig/.${workshop_name}/logs/)"
 
    for service in "${services_to_deploy[@]}"; do
       (
@@ -2834,6 +2840,7 @@ enable_data_services() {
    done
 
    wait_for_pids "${pids[@]}" || failed=1
+   hol_stop_service_log_tailers
    return $failed
 }
 #--------------------------------------------------------------------------------------------------#
@@ -2867,5 +2874,10 @@ disable_data_services() {
    done
 
    wait_for_pids "${pids[@]}"
+
+   hol_subsection "Disable playbook logs" "📋"
+   for service in "${services_to_disable[@]}"; do
+      hol_kv "$(hol_service_short "$service")" "/userconfig/.${workshop_name}/logs/$(hol_service_short "$service").log"
+   done
 }
 #--------------------------------------------------------------------------------------------------#

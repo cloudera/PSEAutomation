@@ -24,6 +24,14 @@
     cdf_poll_delay: 60
 
   tasks:
+    - name: Sanitize instance type value
+      ansible.builtin.set_fact:
+        instance_type: >-
+          {{
+            (instance_type | regex_search('Standard_[A-Za-z0-9_]+'))
+            | default(instance_type, true)
+          }}
+
     - name: Check and print variable status
       ansible.builtin.debug:
         msg:

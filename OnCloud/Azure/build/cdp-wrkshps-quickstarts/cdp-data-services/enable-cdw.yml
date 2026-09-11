@@ -56,33 +56,59 @@
         cdw_cluster_failed: "{{ cdw_cluster_status_value in cdw_terminal_failure_statuses }}"
         cdw_cluster_in_progress: "{{ cdw_cluster_status_value in cdw_in_progress_statuses }}"
 
-    - name: Delete failed CDW cluster before retry
-      cloudera.cloud.dw_cluster:
-        cluster_id: "{{ cdw_cluster_id }}"
-        state: absent
-        wait: true
-        timeout: 3600
+    - name: Remove failed CDW cluster before retry
       when:
         - cdw_cluster_failed
         - cdw_cluster_id | length > 0
-      register: cdw_delete_result
+      block:
+        - name: Report failed CDW cluster to remove
+          ansible.builtin.debug:
+            msg: >-
+              CDW cluster {{ cdw_cluster_id }} is in {{ cdw_cluster_status_value }} state —
+              requesting deletion before re-activation.
 
-    - name: Wait for failed CDW cluster deletion
-      cloudera.cloud.dw_cluster_info:
-        env: "{{ cdp_env_name }}"
-      register: cdw_delete_wait
-      until: (cdw_delete_wait.clusters | default([], true) | length) == 0
-      retries: 40
-      delay: 30
-      when: cdw_cluster_failed
+        - name: Request CDW cluster deletion (Ansible module)
+          cloudera.cloud.dw_cluster:
+            cluster_id: "{{ cdw_cluster_id }}"
+            state: absent
+            wait: false
+          register: cdw_delete_result
+          failed_when: false
 
-    - name: Refresh CDW cluster facts after failed cluster deletion
+        - name: Request CDW cluster deletion (CDP CLI fallback)
+          ansible.builtin.command: >
+            cdp dw delete-cluster --cluster-id "{{ cdw_cluster_id }}"
+          register: cdw_cli_delete
+          changed_when: cdw_cli_delete.rc == 0
+          failed_when: false
+          when: cdw_delete_result.failed | default(false)
+
+        - name: Wait until CDW cluster is removed
+          cloudera.cloud.dw_cluster_info:
+            env: "{{ cdp_env_name }}"
+          register: cdw_delete_wait
+          until: (cdw_delete_wait.clusters | default([], true) | length) == 0
+          retries: 60
+          delay: 30
+          failed_when: false
+
+        - name: Fail when CDW cluster deletion did not complete
+          ansible.builtin.fail:
+            msg: >-
+              CDW cluster {{ cdw_cluster_id }} still exists after delete was requested
+              (last status: {{ cdw_delete_wait.clusters[0].status | default('unknown') }}).
+              Manual cleanup: cdp dw delete-cluster --cluster-id {{ cdw_cluster_id }}
+          when: (cdw_delete_wait.clusters | default([], true) | length) > 0
+
+    - name: Refresh CDW cluster facts after failed cluster cleanup
       cloudera.cloud.dw_cluster_info:
         env: "{{ cdp_env_name }}"
       register: existing_dwcluster
-      when: cdw_cluster_failed
+      when:
+        - cdw_cluster_failed
+        - cdw_cluster_id | length > 0
 
-    - name: Reset CDW cluster facts after failed cluster deletion
+    - name: Reset CDW cluster facts after failed cluster cleanup
       ansible.builtin.set_fact:
         cdw_clusters: "{{ existing_dwcluster.clusters | default([], true) }}"
         cdw_cluster_status_value: >-
@@ -97,12 +123,29 @@
             if ((existing_dwcluster.clusters | default([], true)) | length) > 0
             else ''
           }}
-    - name: Reset CDW cluster state flags after failed cluster deletion
+      when:
+        - cdw_cluster_failed
+        - cdw_cluster_id | length > 0
+        - existing_dwcluster is defined
+
+    - name: Reset CDW cluster state flags after failed cluster cleanup
       ansible.builtin.set_fact:
         cdw_cluster_running: "{{ cdw_cluster_status_value == 'Running' }}"
         cdw_cluster_failed: "{{ cdw_cluster_status_value in cdw_terminal_failure_statuses }}"
         cdw_cluster_in_progress: "{{ cdw_cluster_status_value in cdw_in_progress_statuses }}"
-      when: cdw_cluster_failed
+      when:
+        - cdw_cluster_failed
+        - cdw_cluster_id | length > 0
+        - existing_dwcluster is defined
+
+    - name: Fail when failed CDW cluster blocks re-activation
+      ansible.builtin.fail:
+        msg: >-
+          CDW cluster still present in {{ cdw_cluster_status_value }} state after cleanup.
+          Re-run after: cdp dw delete-cluster --cluster-id {{ cdw_cluster_id }}
+      when:
+        - cdw_cluster_failed | default(false)
+        - (cdw_clusters | default([], true) | length) > 0
 
     - name: Skip activation when CDW cluster is already running
       ansible.builtin.debug:

@@ -55,6 +55,7 @@ Long-form guides live outside this folder:
 ----
 OnCloud/
 ├── README.adoc                 ← this file
+├── JENKINS-PIPELINES.adoc      ← Jenkins job reference (build, deploy, parameters)
 ├── AWS/build/                  ← AWS Docker image, entrypoint, Jenkinsfiles, playbooks
 │   ├── README.adoc
 │   ├── Dockerfile
@@ -69,6 +70,8 @@ OnCloud/
 ----
 
 == Jenkins (CI)
+
+Full pipeline reference (parameters, stages, local image build, role assignment): link:JENKINS-PIPELINES.adoc[Jenkins pipelines guide].
 
 |===
 | Job | Path
@@ -85,6 +88,8 @@ OnCloud/
 | Azure workshop deploy
 | `OnCloud/Azure/build/Jenkinsfile.DeployHoL`
 |===
+
+Deploy jobs support optional in-job image build (`BUILD_LOCAL_IMAGE` + `BUILD_IMAGE_TAG`, default `testbuildimage`) for branch testing without pushing to Docker Hub.
 
 Azure automation is developed on the `azure-automation` branch until merged to `main`.
 
