@@ -2676,7 +2676,7 @@ deploy_single_data_service() {
       DEFAULT_CDE_INITIAL_INSTANCES=10
       DEFAULT_CDE_MIN_INSTANCES=10
       DEFAULT_CDE_MAX_INSTANCES=40
-      DEFAULT_CDE_SPARK_VERSION="AUTO"
+      DEFAULT_CDE_SPARK_VERSION="SPARK3"
       DEFAULT_CDE_VC_TIER="CORE"
       cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
       cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
@@ -2685,6 +2685,9 @@ deploy_single_data_service() {
       cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
       cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
       cde_spark_version="${cde_spark_version:-$DEFAULT_CDE_SPARK_VERSION}"
+      if [[ "${cde_spark_version^^}" == "AUTO" || -z "$cde_spark_version" ]]; then
+         cde_spark_version="SPARK3"
+      fi
       cde_vc_tier="${cde_vc_tier:-$DEFAULT_CDE_VC_TIER}"
       hol_service_vars \
          "Instance Type" "$cde_instance_type" \
@@ -2813,28 +2816,13 @@ enable_data_services() {
    fi
 
    local failed=0
-   local parallel_services=()
-   local service
-
-   for service in "${services_to_deploy[@]}"; do
-      if [[ "$service" == "cdw" ]]; then
-         hol_info "Deploying CDW first (sequential) before other data services"
-         deploy_single_data_service "cdw" || failed=1
-      else
-         parallel_services+=("$service")
-      fi
-   done
-
-   if [ "${#parallel_services[@]}" -eq 0 ]; then
-      return $failed
-   fi
-
-   hol_parallel_start
-   hol_info "Services: ${parallel_services[*]}"
-
    local pids=()
    local delay=0
-   for service in "${parallel_services[@]}"; do
+
+   hol_parallel_start
+   hol_info "Services: ${services_to_deploy[*]}"
+
+   for service in "${services_to_deploy[@]}"; do
       (
          if (( delay > 0 )); then
             sleep "$delay"

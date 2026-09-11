@@ -1362,7 +1362,7 @@ count_elements() {
 deploy_cdw() {
    number_vw_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
 
-   ansible-playbook $DS_CONFIG_DIR/enable-cdw.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cdw.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       env_lb_public_subnet=$ENV_PUBLIC_SUBNETS \
       env_wrkr_private_subnet=$ENV_PRIVATE_SUBNETS \
@@ -1388,7 +1388,7 @@ deploy_cde() {
       cde_instance_type=$CDE_INSTANCE_TYPE
    fi
 
-   ansible-playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
       instance_type=$cde_instance_type \
@@ -1410,7 +1410,7 @@ disable_cde() {
 #--------------------------------------------------------------------------------------------------#
 deploy_cai() {
    #number_vws_to_create=$(( ($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0) ))
-   ansible-playbook $DS_CONFIG_DIR/enable-cai.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
       ws_instance_type=$cai_ws_instance_type \
@@ -1479,7 +1479,7 @@ deploy_cdf() {
          }' > "$extra_vars_file"
    fi
 
-   ansible-playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}"
+   hol_run_ansible_playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}"
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cdf() {
@@ -1612,13 +1612,16 @@ deploy_single_data_service() {
       DEFAULT_CDE_INITIAL_INSTANCES=10
       DEFAULT_CDE_MIN_INSTANCES=10
       DEFAULT_CDE_MAX_INSTANCES=40
-      DEFAULT_CDE_SPARK_VERSION="AUTO"
+      DEFAULT_CDE_SPARK_VERSION="SPARK3"
       DEFAULT_CDE_VC_TIER="CORE"
       cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
       cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
       cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
       cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
       cde_spark_version="${cde_spark_version:-$DEFAULT_CDE_SPARK_VERSION}"
+      if [[ "${cde_spark_version^^}" == "AUTO" || -z "$cde_spark_version" ]]; then
+         cde_spark_version="SPARK3"
+      fi
       cde_vc_tier="${cde_vc_tier:-$DEFAULT_CDE_VC_TIER}"
       hol_service_vars \
          "Instance Type" "$cde_instance_type" \

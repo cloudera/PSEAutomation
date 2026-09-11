@@ -19,8 +19,9 @@ Assigns **Storage Blob Data Contributor** on the CDP log container to the `${env
 When `ENABLE_DATA_SERVICES` includes `CDW`, creates `${env_prefix}-cdw-identity` and assigns:
 
 * A custom role with link:https://docs.cloudera.com/data-warehouse/cloud/azure-environments/topics/dw-azure-environments-minimum-permissions.html[CDW minimum permissions] on the CDP resource group
+* **Contributor** on the CDP resource group (required for AKS provisioning per link:https://docs.cloudera.com/data-warehouse/cloud/azure-environments/topics/dw-azure-environment-requirements-checklist.html[CDW Azure checklist])
 * **Managed Identity Operator** on the CDP resource group (allows the CDW AKS identity to use other managed identities in the same resource group)
-* **Storage Blob Data Owner** on the CDP datalake storage account (link:https://docs.cloudera.com/data-warehouse/cloud/azure-environments/topics/dw-azure-environment-requirements-checklist.html[CDW Azure checklist])
+* **Storage Blob Data Owner** on the CDP datalake storage account
 
 The following legacy single-server PostgreSQL actions are excluded because they are not available on Azure today:
 
@@ -45,7 +46,7 @@ The CDP Terraform quickstart assigns **Contributor** to the environment credenti
 When `ENABLE_DATA_SERVICES` includes `CAI` or `PROVISION_CAII` is `yes`, grants datalake storage roles required for `cdp ml create-model-registry` (per link:https://docs.cloudera.com/cdp-public-cloud/cloud/requirements-azure/topics/mc-az-minimal-setup-for-cloud-storage.html[Cloudera Azure minimal cloud storage setup]):
 
 * `${env_prefix}-dladmin-identity` — **Storage Blob Data Owner** and **Storage Account Contributor** on the datalake storage account
-* `${env_prefix}-log-identity` — **Storage Account Contributor** and **Storage Blob Data Contributor** on the datalake storage account (model registry path under the data container)
+* `${env_prefix}-logs-identity` — **Storage Account Contributor** and **Storage Blob Data Contributor** on the datalake storage account (model registry path under the data container)
 
 Applied in `azure_enhancements()` before CAI/CAII workspace and registry provisioning.
 

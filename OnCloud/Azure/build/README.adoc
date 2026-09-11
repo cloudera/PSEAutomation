@@ -48,6 +48,61 @@ docker run --rm --platform linux/amd64 \
 
 Workshop access details are written to `~/hol-userconfig/{WORKSHOP_NAME}.txt`.
 
+==== Optional: run in background (`-d`)
+
+Provision and destroy can take 1–3+ hours. The commands above use `docker run --rm` and stream output to your terminal.
+
+To run detached instead, omit `--rm`, add `-d`, and set a container name:
+
+[source,bash]
+----
+WORKSHOP=myworkshop   # same as WORKSHOP_NAME in configfile
+
+docker run -d --name hol-${WORKSHOP}-provision \
+  --platform linux/amd64 \
+  -v ~/hol-userconfig:/userconfig \
+  -v $HOME/.cdp:/root/.cdp \
+  -v $HOME/.azure:/root/.azure \
+  -v $HOME/.aws:/root/.aws \
+  clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest provision
+----
+
+Follow the container log:
+
+[source,bash]
+----
+docker logs -f hol-${WORKSHOP}-provision
+----
+
+When the run finishes, remove the container:
+
+[source,bash]
+----
+docker rm hol-${WORKSHOP}-provision
+----
+
+During data service deploys, per-service Ansible logs are also written to `~/hol-userconfig/.{WORKSHOP_NAME}/logs/` (`CDW.log`, `CDE.log`, `CAI.log`, `CDF.log`):
+
+[source,bash]
+----
+tail -f ~/hol-userconfig/.myworkshop/logs/CDW.log
+----
+
+NOTE: Do not combine `--rm` with `-d` if you need `docker logs -f` after the container exits.
+
+To keep foreground mode and save output to a file:
+
+[source,bash]
+----
+docker run --rm --platform linux/amd64 \
+  -v ~/hol-userconfig:/userconfig \
+  -v $HOME/.cdp:/root/.cdp \
+  -v $HOME/.azure:/root/.azure \
+  -v $HOME/.aws:/root/.aws \
+  clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest provision \
+  2>&1 | tee ~/hol-userconfig/provision.log
+----
+
 === 4. Destroy
 
 Use the same `userconfig` directory (state is stored under `~/hol-userconfig/.{WORKSHOP_NAME}/`):
@@ -61,6 +116,8 @@ docker run --rm \
   -v $HOME/.aws:/root/.aws \
   clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest destroy
 ----
+
+Use the same optional `-d` / `docker logs -f` pattern as provision (replace the container name, e.g. `hol-${WORKSHOP}-destroy`).
 
 NOTE: Image is `linux/amd64`. On Apple Silicon, always include `--platform linux/amd64`.
 

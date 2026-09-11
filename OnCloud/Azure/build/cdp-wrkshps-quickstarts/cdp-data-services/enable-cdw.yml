@@ -192,12 +192,29 @@
         - dw_cluster_status.clusters[0].status in cdw_terminal_failure_statuses
         - cdw_cluster_id | length > 0
 
+    - name: Extract CDW failure message
+      ansible.builtin.set_fact:
+        cdw_failure_message: >-
+          {{
+            (cdw_cluster_describe.stdout | from_json).cluster.message
+            | default((cdw_cluster_describe.stdout | from_json).message, true)
+            | default('', true)
+          }}
+      when:
+        - cdw_cluster_describe is defined
+        - cdw_cluster_describe.stdout is defined
+        - cdw_cluster_describe.stdout | length > 0
+      failed_when: false
+
     - name: Fail task on Cluster Creation Failed
       ansible.builtin.fail:
         msg: >-
           CDW cluster creation failed for {{ cdp_env_name }}
           (status={{ dw_cluster_status.clusters[0].status }}).
-          {{ cdw_cluster_describe.stdout | default('Run: cdp dw describe-cluster for details.') }}
+          {{ cdw_failure_message | default('No status message returned.', true) }}
+          Check Azure Activity Log for AKS create failures on {{ azure_subnet_name }}.
+          Re-run provision to delete the failed cluster and retry.
+          Full output: cdp dw describe-cluster --cluster-id {{ cdw_cluster_id }}
       when:
         - (dw_cluster_status.clusters | default([], true) | length) > 0
         - dw_cluster_status.clusters[0].status in cdw_terminal_failure_statuses

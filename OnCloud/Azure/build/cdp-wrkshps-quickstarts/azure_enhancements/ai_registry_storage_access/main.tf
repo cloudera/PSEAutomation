@@ -30,7 +30,7 @@ data "azurerm_user_assigned_identity" "datalake_admin" {
 }
 
 data "azurerm_user_assigned_identity" "logger" {
-  name                = "${var.env_prefix}-log-identity"
+  name                = "${var.env_prefix}-logs-identity"
   resource_group_name = var.resource_group_name
 }
 

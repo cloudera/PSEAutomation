@@ -170,6 +170,47 @@ hol_parallel_start() {
    hol_section "⚡  Deploying data services in parallel"
 }
 
+hol_ansible_log_file() {
+   local service_tag="${HOL_SERVICE_TAG:-ansible}"
+   local workshop="${workshop_name:-hol}"
+   local log_dir="/userconfig/.${workshop}/logs"
+   mkdir -p "$log_dir"
+   echo "${log_dir}/${service_tag}.log"
+}
+
+hol_run_ansible_playbook() {
+   local log_file tag rc
+   tag="${HOL_SERVICE_TAG:-?}"
+   log_file="$(hol_ansible_log_file)"
+   : >"$log_file"
+
+   hol_info "Streaming ${tag} deploy output (log: ${log_file})"
+
+   set +o pipefail
+   HOL_SERVICE_TAG= ANSIBLE_FORCE_COLOR=0 PYTHONUNBUFFERED=1 ansible-playbook "$@" 2>&1 | while IFS= read -r line || [[ -n "$line" ]]; do
+      local plain="$line"
+      if [[ "$plain" == "[${tag}] "* ]]; then
+         plain="${plain#"[${tag}] "}"
+      elif [[ "$plain" == "[${tag}]" ]]; then
+         plain=""
+      fi
+      if [[ -n "$plain" ]]; then
+         printf '[%s] %s\n' "$tag" "$plain"
+         printf '%s\n' "$plain" >>"$log_file"
+      else
+         printf '[%s]\n' "$tag"
+      fi
+   done
+   rc=${PIPESTATUS[0]:-1}
+   set -o pipefail
+
+   if (( rc != 0 )); then
+      hol_warn "Deploy failed — full ${tag} log: ${log_file}"
+      return "$rc"
+   fi
+   return 0
+}
+
 hol_role_ok() {
    hol_ok "Role '${1}' assigned to group '${2}'"
 }
