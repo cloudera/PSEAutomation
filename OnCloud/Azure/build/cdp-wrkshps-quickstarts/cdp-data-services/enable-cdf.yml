@@ -22,6 +22,8 @@
       - PROVISIONING
     cdf_poll_retries: 80
     cdf_poll_delay: 60
+    cdf_enable_api_retries: 5
+    cdf_enable_retry_delay: 45
 
   tasks:
     - name: Sanitize instance type value
@@ -303,7 +305,27 @@
         - not cdf_service_healthy | default(false)
         - not cdf_service_in_progress | default(false)
       register: cdf_enable_result
+      until: >-
+        (
+          (cdf_enable_result.msg | default('') | string) is not search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while)')
+        ) or (
+          (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while)')
+          and (cdf_enable_result.msg | default('') | string) is not search('(?i)try again later')
+        )
+      retries: "{{ cdf_enable_api_retries }}"
+      delay: "{{ cdf_enable_retry_delay }}"
       failed_when: false
+
+    - name: Set CDF enable API outcome flags
+      ansible.builtin.set_fact:
+        cdf_enable_api_failed: >-
+          {{
+            cdf_enable_result.failed | default(false) or
+            (
+              (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while)')
+            )
+          }}
+      when: cdf_enable_result is defined
 
     - name: Print CDF enable API result
       ansible.builtin.debug:
@@ -311,8 +333,21 @@
           CDF enable API result:
           changed={{ cdf_enable_result.changed | default(false) }},
           failed={{ cdf_enable_result.failed | default(false) }},
+          api_error={{ cdf_enable_api_failed | default(false) }},
           msg={{ cdf_enable_result.msg | default('n/a') }}
       when: cdf_enable_result is defined
+
+    - name: Fail fast when CDF enable API returned an error
+      ansible.builtin.fail:
+        msg: >-
+          CDF enable API failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
+          (retried transient "try again later" / 500 responses):
+          {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}.
+          Verify environment IAM roles (EnvironmentAdmin/Owner) and user sync completed
+          (assignCdpEnvAdminRoles.sh assigns DFFlowAdmin for flows, not DF enable).
+      when:
+        - cdf_enable_result is defined
+        - cdf_enable_api_failed | default(false)
 
     - name: Wait for CDF creation
       cloudera.cloud.df_service_info:
@@ -328,7 +363,9 @@
       retries: "{{ cdf_poll_retries }}"
       delay: "{{ cdf_poll_delay }}"
       failed_when: false
-      when: not cdf_service_healthy | default(false)
+      when:
+        - not cdf_service_healthy | default(false)
+        - not cdf_enable_api_failed | default(false)
 
     - name: Set final CDF health flag
       ansible.builtin.set_fact:
@@ -361,16 +398,6 @@
             )
             else cdf_current_detailed_state
           }}
-
-    - name: Fail when CDF enable API returned an error
-      ansible.builtin.fail:
-        msg: >-
-          CDF enable API failed for {{ cdp_env_name }}:
-          {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}
-      when:
-        - not cdf_final_healthy | default(false)
-        - cdf_enable_result is defined
-        - cdf_enable_result.failed | default(false)
 
     - name: Fail when CDF did not reach healthy state
       ansible.builtin.fail:

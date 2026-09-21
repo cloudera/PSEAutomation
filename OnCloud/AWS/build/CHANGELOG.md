@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- CDF enable: `cloudera.cloud.df_service` can return `failed=false` with an INTERNAL/`[500]` authorization error in `msg`; `enable-cdf.yml` now retries transient "try again later" responses, fails fast before the health poll, and treats error text in `msg` as failure (not only `changed=false`).
 - Keycloak IDP provisioning: `cdp environments sync-all-users` retries on 409 `CONFLICT` when another user sync is already running; logs a plain-English wait/retry message (optional request id) instead of only the raw CLI error (waits via `get-environment-user-sync-state` / `sync-status`, then backoff; tunable via `HOL_CDP_USER_SYNC_*` env vars).
 - Jenkins `CDE_VC_TIER` default is `CORE` (choice order and PollSCM downstream param), matching `enable-cde.yml` and `hol-functions.sh`; DeployHoL previously used `ALLP` when it was first in the Jenkins choice list.
 - CDE `create-vc` no longer receives Jenkins alias `AUTO`: `deploy_cde` resolves via `hol_resolve_cde_spark_version` before Ansible (`spark_version_requested` vs CLI `spark_version`); playbook re-validates, logs the exact `--spark-version` value, and fails fast on `AUTO`/`SPARK3` ( `cdp de enable-service` is unchanged — it does not take a Spark version).
