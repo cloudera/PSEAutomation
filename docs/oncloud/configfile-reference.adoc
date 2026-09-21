@@ -149,7 +149,7 @@ If omitted, a key pair is generated automatically.
 
 | `CDE_VC_TIER`
 | CDE
-| Virtual cluster tier (for example `CORE`)
+| Virtual cluster tier: `ALLP` (default in Jenkins; All Purpose pool) or `CORE` (HoL 1-1 on Core pool). PollSCM passes `ALLP` to downstream deploy jobs.
 
 | `CAI_WS_INSTANCE_TYPE`
 | CAI

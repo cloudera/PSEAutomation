@@ -36,7 +36,7 @@ DATALAKE_VERSION:7.3.2
 #CDE_MIN_INSTANCES:0
 #CDE_MAX_INSTANCES:25
 #CDE_SPARK_VERSION:AUTO
-#CDE_VC_TIER:CORE
+#CDE_VC_TIER:ALLP
 # When CAI or PROVISION_CAII is enabled, CDP Terraform also provisions a premium
 # Azure Files NFS share (secure transfer disabled) with private endpoints in the CDP VNet.
 # Each CAI workbench uses a dedicated subdirectory ({WORKSHOP_NAME}-cai-ws) with chown 8536:8536.
