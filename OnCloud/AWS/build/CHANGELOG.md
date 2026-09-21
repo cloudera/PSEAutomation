@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Parallel data-service Ansible logs use default console verbosity (no `-v` / JSON summarization); tailers only prefix service tags and compact skip lines.
+- Parallel data-service Ansible logs: `ansible-playbook -v` with standard callback JSON (no ok/changed summarization); tailers prefix service tags and compact skip lines only.
+- CDE on Python 3.12: patch `cdpcli.shorthand` via `hol-patch-python-deps.sh` (locate file without importing shorthand, drop stale `.pyc`) at entrypoint, `hol_enable_data_services`, and each `hol_run_ansible_playbook`.
 - Drop `summarize-json` / `hol_summarize_ansible_result_json` and all ok/changed result rewriting in `hol-ansible-log-format.py` (debug `msg` lists no longer collapse to `N item(s)`).
 - Ansible callback scan warning: `hol-ansible-log-format.py` is CLI-only (parallel tailers use `format-tagged-line` for skip compaction; no result JSON summarization).
 - CDF (and other selected data services) were skipped during parallel provision because the config value and entrypoint function shared the name `enable_data_services`; selection is now stored in `HOL_ENABLE_DATA_SERVICES` and invoked via `hol_enable_data_services()`. Legacy `CML` tokens map to `CAI`. PollSCM passes `ENABLE_DATA_SERVICES` as a string parameter so downstream deploy jobs receive `CDF` reliably.
