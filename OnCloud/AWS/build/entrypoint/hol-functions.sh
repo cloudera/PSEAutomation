@@ -1356,6 +1356,95 @@ destroy_cai_inference() {
 update_cdp_user_group() {
    cdp iam update-group --group-name $workshop_name-aw-cdp-user-group --sync-membership-on-user-login
 }
+
+# CDP environments sync-all-users can return 409 when another USER_SYNC is already running
+# (e.g. assignCdpEnvAdminRoles.sh). Tunables: HOL_CDP_USER_SYNC_MAX_ATTEMPTS (12),
+# HOL_CDP_USER_SYNC_RETRY_SLEEP_SEC (30), HOL_CDP_USER_SYNC_WAIT_SEC (600), HOL_CDP_USER_SYNC_POLL_SEC (15).
+hol_cdp_user_sync_conflict() {
+   grep -qiE 'Status Code: 409|Error Code: CONFLICT|USER_SYNC.*conflict|syncAllUsers' <<<"$1"
+}
+
+hol_cdp_environment_user_sync_in_progress() {
+   local env_name="$1"
+   local state status op_id sync_status
+
+   state=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null | jq -r '.state // empty')
+   [[ "$state" == "null" ]] && state=""
+   if [[ -n "$state" ]] && grep -qiE 'RUNNING|IN_PROGRESS|SYNCING|SYNC_IN_PROGRESS|USER_SYNC' <<<"$state"; then
+      return 0
+   fi
+   if [[ -n "$state" ]] && grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|IDLE|READY|NOT_RUNNING|NONE' <<<"$state"; then
+      return 1
+   fi
+
+   op_id=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null | jq -r '.userSyncOperationId // empty')
+   [[ "$op_id" == "null" ]] && op_id=""
+   if [[ -n "$op_id" ]]; then
+      sync_status=$(cdp environments sync-status --operation-id "$op_id" 2>/dev/null | jq -r '.status // empty')
+      [[ "$sync_status" == "null" ]] && sync_status=""
+      if [[ -n "$sync_status" ]] && grep -qiE 'RUNNING|IN_PROGRESS|PENDING' <<<"$sync_status"; then
+         return 0
+      fi
+      if [[ -n "$sync_status" ]] && grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|FAILED|ERROR' <<<"$sync_status"; then
+         return 1
+      fi
+   fi
+
+   status=$(cdp environments last-sync-status --environment "$env_name" 2>/dev/null | jq -r '.status // empty')
+   [[ "$status" == "null" ]] && status=""
+   if [[ -n "$status" ]] && grep -qiE 'RUNNING|IN_PROGRESS|PENDING' <<<"$status"; then
+      return 0
+   fi
+   return 1
+}
+
+hol_cdp_wait_for_environment_user_sync() {
+   local env_name="$1"
+   local max_wait_sec="${2:-${HOL_CDP_USER_SYNC_WAIT_SEC:-600}}"
+   local poll_sec="${HOL_CDP_USER_SYNC_POLL_SEC:-15}"
+   local elapsed=0
+
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      if ! hol_cdp_environment_user_sync_in_progress "$env_name"; then
+         return 0
+      fi
+      hol_step "User sync in progress for '${env_name}' — waiting ${poll_sec}s..."
+      sleep "$poll_sec"
+      elapsed=$((elapsed + poll_sec))
+   done
+   hol_warn "Timed out after ${max_wait_sec}s waiting for user sync on '${env_name}'"
+   return 1
+}
+
+hol_cdp_sync_all_users_resilient() {
+   local env_name="$1"
+   local max_attempts="${HOL_CDP_USER_SYNC_MAX_ATTEMPTS:-12}"
+   local retry_sleep="${HOL_CDP_USER_SYNC_RETRY_SLEEP_SEC:-30}"
+   local wait_max_sec="${HOL_CDP_USER_SYNC_WAIT_SEC:-600}"
+   local attempt=1 output exit_status
+
+   while [[ $attempt -le $max_attempts ]]; do
+      output=$(cdp environments sync-all-users --environment-names "$env_name" 2>&1)
+      exit_status=$?
+      if [[ $exit_status -eq 0 ]]; then
+         hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" \
+            || hol_warn "User sync wait incomplete for '${env_name}' — continuing provision"
+         hol_ok "CDP user sync completed for environment '${env_name}'"
+         return 0
+      fi
+      if hol_cdp_user_sync_conflict "$output"; then
+         hol_warn "CDP user sync already in progress for '${env_name}' (attempt ${attempt}/${max_attempts}) — waiting before retry"
+         hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" \
+            || hol_warn "User sync wait incomplete for '${env_name}' — retrying sync-all-users"
+         sleep "$retry_sleep"
+         attempt=$((attempt + 1))
+         continue
+      fi
+      hol_fail "cdp environments sync-all-users failed for '${env_name}': $output"
+   done
+   hol_fail "cdp environments sync-all-users for '${env_name}' still conflicting after ${max_attempts} attempts"
+}
+
 #--------------------------------------------------------------------------------------------------#
 # Function to destroy CDP Environment.
 destroy_cdp() {
@@ -1534,7 +1623,7 @@ cdp_idp_setup_user() {
       fi
    done
 
-   cdp environments sync-all-users --environment-names $workshop_name-cdp-env
+   hol_cdp_sync_all_users_resilient "$workshop_name-cdp-env" || return 1
    sleep 5
    hol_subsection "Generating workshop report" "📄"
    cd /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
