@@ -1767,7 +1767,7 @@ deploy_cdw() {
       workshop_name=$workshop_name \
       vw_size=$cdw_vrtl_warehouse_size \
       cdvc_size=$cdw_dataviz_size \
-      number_vw_to_create=$number_vw_to_create"
+      number_vw_to_create=$number_vw_to_create" || return $?
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cdw() {
@@ -1839,7 +1839,7 @@ deploy_cde() {
       spark_version=$cde_spark_resolved \
       datalake_version=${datalake_version:-} \
       vc_tier=$cde_vc_tier \
-      number_vc_to_create=$number_vc_to_create"
+      number_vc_to_create=$number_vc_to_create" || return $?
 
 }
 #--------------------------------------------------------------------------------------------------#
@@ -1862,7 +1862,7 @@ deploy_cai() {
       enable_gpu=$cai_enable_gpu \
       gpu_instance_type=$cai_gpu_instance_type \
       minimum_gpu_instances=$cai_min_gpu_instances \
-      maximum_gpu_instances=$cai_max_gpu_instances"
+      maximum_gpu_instances=$cai_max_gpu_instances" || return $?
    #number_vws_to_create=$number_vws_to_create"
 }
 #--------------------------------------------------------------------------------------------------#
@@ -1921,7 +1921,7 @@ deploy_cdf() {
          }' > "$extra_vars_file"
    fi
 
-   hol_run_ansible_playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}"
+   hol_run_ansible_playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}" || return $?
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cdf() {

@@ -391,6 +391,7 @@ sh """
             steps {
                 sh 'echo "Stage :: Run Docker Container"'
                 script {
+                    // Non-zero container exit (including ansible-playbook propagated via hol_enable_data_services) fails this stage.
                     sh "docker run --name hol-provisioner-azure-${BUILD_NUMBER} -i -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp -v ${env.AZURE_CONFIG_DIR}:/root/.azure -v ${env.AWS_CONFIG_DIR}:/root/.aws ${env.DOCKER_IMAGE} ${params.ACTION}"
                 }
             }
@@ -400,10 +401,6 @@ sh """
                 script {
                     sh "docker logs hol-provisioner-azure-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log 2>&1 || true"
                     def logOutput = readFile("${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log")
-                    def dockerExit = sh(
-                        script: "docker inspect hol-provisioner-azure-${BUILD_NUMBER} --format='{{.State.ExitCode}}' 2>/dev/null || echo 1",
-                        returnStdout: true
-                    ).trim()
 
                     def parserCandidates = [
                         "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/provisionFailureParser.groovy",
@@ -418,12 +415,29 @@ sh """
                         errorMessages = failureParser.extract(logOutput)
                     }
 
-                    if (dockerExit != '0' || !errorMessages.isEmpty()) {
-                        if (errorMessages.isEmpty()) {
-                            errorMessages = ["Docker provisioner exited with code ${dockerExit}"]
+                    def isAnsibleFailure = { String message ->
+                        def lower = (message ?: '').toLowerCase()
+                        return (lower.contains('fatal:') && (lower.contains('failed!') || lower.contains('unreachable!'))) ||
+                            lower.contains('unreachable!') ||
+                            lower.contains('ansible recap') ||
+                            (lower.contains('playbook failed') && lower.contains('full log')) ||
+                            lower.contains('data service playbooks failed') ||
+                            (lower =~ /failed=[1-9]/) ||
+                            (lower =~ /unreachable=[1-9]/)
+                    }
+                    def ansibleFailures = errorMessages.findAll { isAnsibleFailure(it) }
+                    if (ansibleFailures.isEmpty()) {
+                        logOutput.readLines().each { line ->
+                            def trimmed = line.trim()
+                            if (isAnsibleFailure(trimmed)) {
+                                ansibleFailures << trimmed
+                            }
                         }
+                    }
+
+                    if (!ansibleFailures.isEmpty()) {
                         currentBuild.result = 'FAILURE'
-                        currentBuild.description = errorMessages.take(10).join('\n')
+                        currentBuild.description = ansibleFailures.unique().take(10).join('\n')
                         error(currentBuild.description)
                     }
                 }
@@ -550,6 +564,11 @@ sh """
             script {
                 def errorLog = currentBuild.description ?: ""
                 def logFile = "${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log"
+                def containerName = env.HOL_PROVISIONER_CONTAINER ?: "hol-provisioner-azure-${BUILD_NUMBER}"
+
+                if (!fileExists(logFile)) {
+                    sh "docker logs ${containerName} > ${logFile} 2>&1 || true"
+                }
 
                 if ((!errorLog || errorLog == "Unknown error occurred.") && fileExists(logFile)) {
                     def parserCandidates = [

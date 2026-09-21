@@ -298,6 +298,9 @@ hol_run_ansible_playbook() {
 
    if (( rc != 0 )); then
       hol_warn "${tag} playbook failed — full log: ${log_file}"
+      if [[ -f "$log_file" ]]; then
+         grep -E '(^fatal: |fatal: \[|UNREACHABLE!|failed=[1-9]|unreachable=[1-9]|^PLAY RECAP)' "$log_file" | tail -40 >&2 || true
+      fi
       return "$rc"
    fi
    return 0

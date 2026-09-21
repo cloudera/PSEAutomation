@@ -141,6 +141,14 @@ def extract(String logOutput) {
             addMessage(line.trim())
         }
 
+        if (line.contains('playbook failed') && line.contains('full log:')) {
+            addMessage(line.trim())
+        }
+
+        if (line.contains('One or more data service playbooks failed')) {
+            addMessage(line.trim())
+        }
+
         if (line.contains('ERROR:') || line.contains('❌') || line.contains('Infrastructure Provisioning For')) {
             if (!isIgnorableMessage(line)) {
                 addMessage(line.trim())

@@ -2816,7 +2816,7 @@ deploy_cdw() {
       cdw_managed_identity_id=$CDW_MANAGED_IDENTITY_ID \
       vw_size=$cdw_vrtl_warehouse_size \
       cdvc_size=$cdw_dataviz_size \
-      number_vw_to_create=$number_vw_to_create"
+      number_vw_to_create=$number_vw_to_create" || return $?
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cdw() {
@@ -2902,7 +2902,7 @@ deploy_cde() {
       vc_tier=$cde_vc_tier \
       number_vc_to_create=$number_vc_to_create \
       cde_cluster_managed_identity_id=$CDE_CLUSTER_MANAGED_IDENTITY_ID \
-      cde_vc_managed_identity_id=$CDE_VC_MANAGED_IDENTITY_ID"
+      cde_vc_managed_identity_id=$CDE_VC_MANAGED_IDENTITY_ID" || return $?
 
 }
 #--------------------------------------------------------------------------------------------------#
@@ -2937,7 +2937,7 @@ deploy_cai() {
       minimum_gpu_instances=$cai_min_gpu_instances \
       maximum_gpu_instances=$cai_max_gpu_instances \
       cai_existing_nfs=${CAI_EXISTING_NFS:-} \
-      cai_nfs_version=${cai_nfs_version:-4.1}"
+      cai_nfs_version=${cai_nfs_version:-4.1}" || return $?
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cai() {
@@ -2997,7 +2997,7 @@ deploy_cdf() {
          }' > "$extra_vars_file"
    fi
 
-   hol_run_ansible_playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}"
+   hol_run_ansible_playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}" || return $?
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cdf() {
