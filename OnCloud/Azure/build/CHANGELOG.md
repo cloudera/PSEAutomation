@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- CDF enable: replace silent single-task `until` retries with explicit per-attempt debug, async `df_service` (`env_crn`, `wait: false`) plus `async_status` polling (600s HTTP cap), and `df_service_info` health poll unchanged — CDF.log updates each attempt instead of ~5min gaps during authorizing [500] retries.
+- CDF enable fail message: when pre-enable checks show env-scoped DFAdmin on the CDP caller, fail text points to CDP DataFlow control-plane / authorization [500] (workshop-group `resourceAssignments` are unrelated).
+- Jenkins DeployHoL `Check Logs for Failures`: fail the build with `error()` when the provisioner exit code is non-zero or `provisionFailureParser` finds errors (stops SUCCESS post-stages after CDF playbook failure).
 - Jenkins `BUILD_LOCAL_IMAGE`: pass `HOL_GIT_REVISION` (`git rev-parse HEAD`) into Docker build so HoL COPY layers (playbooks, entrypoint, assign script) rebuild when the checkout commit changes; full `CACHED` on rebuild of the same commit is expected and still correct.
 - CDF enable fail message: when pre-enable checks show env-scoped DFAdmin on the CDP caller, playbook no longer blames missing IAM; logs caller identity and points to CDP DataFlow control-plane / transient authorization [500] (workshop-group resourceAssignments are unrelated).
 - CDF enable on first workshop provision: Jenkins pre-container role assignment skipped when the CDP environment did not exist yet, so `psejenkins` lacked environment-scoped `DFAdmin` when `cdp df enable-service` ran (group `resourceAssignments` only show workshop roles like `EnvironmentUser`/`DWAdmin`, not pipeline machine-user roles). Provisioner now runs `assignCdpEnvAdminRoles.sh` after env creation and before data services; script is baked into the Docker image; `sync-all-users` uses `--environment-names`.

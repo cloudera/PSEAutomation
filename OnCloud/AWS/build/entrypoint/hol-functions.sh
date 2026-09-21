@@ -2224,6 +2224,7 @@ hol_enable_data_services() {
 
    hol_assign_pipeline_cdp_env_admin_roles || return 1
 
+   local failed=0
    local pids=()
    local service
 
@@ -2240,13 +2241,17 @@ hol_enable_data_services() {
       pids+=($!)
    done
 
-   wait_for_pids "${pids[@]}"
+   wait_for_pids "${pids[@]}" || failed=1
    hol_stop_service_log_tailers
+   if (( failed != 0 )); then
+      hol_warn "One or more data service playbooks failed — see /userconfig/.${workshop_name}/logs/*.log"
+   fi
 
    hol_subsection "Deploy playbook logs" "📋"
    for service in "${services_to_deploy[@]}"; do
       hol_kv "$(hol_service_short "$service")" "/userconfig/.${workshop_name}/logs/$(hol_service_short "$service").log"
    done
+   return $failed
 }
 #--------------------------------------------------------------------------------------------------#
 disable_data_services() {

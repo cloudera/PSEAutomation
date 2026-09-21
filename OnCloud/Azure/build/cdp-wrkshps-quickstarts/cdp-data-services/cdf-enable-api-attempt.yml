@@ -1,0 +1,132 @@
+---
+- name: Log CDF enable API attempt
+  ansible.builtin.debug:
+    msg: >-
+      CDF enable API attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }}
+      for {{ cdp_env_name }} (HTTP timeout {{ cdf_enable_http_timeout }}s per attempt;
+      env-scoped DFAdmin on caller={{ cdf_caller_has_df_admin | default('unknown') }})
+
+- name: Submit CDF enable request (async)
+  cloudera.cloud.df_service:
+    env_crn: "{{ cdf_env_crn }}"
+    nodes_min: "{{ minimum_nodes | int }}"
+    nodes_max: "{{ maximum_nodes | int }}"
+    instance_type: "{{ instance_type if (instance_type | default('') | length > 0) else omit }}"
+    public_loadbalancer: "{{ use_public_load_balancer | bool }}"
+    cluster_subnets: "{{ cdf_cluster_subnets | default(omit) }}"
+    loadbalancer_subnets: "{{ cdf_lb_subnets | default(omit) }}"
+    cluster_subnets_filter: "{{ 'private' if cdf_cluster_subnets is not defined else omit }}"
+    loadbalancer_subnets_filter: "{{ 'public' if cdf_lb_subnets is not defined else omit }}"
+    state: present
+    wait: false
+  async: "{{ cdf_enable_http_timeout | int }}"
+  poll: 0
+  register: cdf_enable_async_submit
+  failed_when: false
+
+- name: Wait for CDF enable HTTP call to finish
+  ansible.builtin.async_status:
+    jid: "{{ cdf_enable_async_submit.ansible_job_id }}"
+  register: cdf_enable_async_poll
+  until: cdf_enable_async_poll.finished
+  retries: "{{ cdf_enable_async_poll_retries }}"
+  delay: "{{ cdf_enable_async_poll_delay }}"
+  when: cdf_enable_async_submit.ansible_job_id is defined
+  failed_when: false
+
+- name: Build CDF enable attempt result facts
+  ansible.builtin.set_fact:
+    cdf_enable_attempt_result: >-
+      {{
+        cdf_enable_async_poll
+        if (
+          cdf_enable_async_submit.ansible_job_id is defined and
+          (cdf_enable_async_poll.finished | default(false))
+        )
+        else {
+          'failed': true,
+          'changed': false,
+          'msg': (
+            'CDF enable API call timed out after '
+            ~ (cdf_enable_http_timeout | string)
+            ~ 's (attempt '
+            ~ (cdf_enable_attempt | string)
+            ~ '/'
+            ~ (cdf_enable_api_retries | string)
+            ~ ')'
+          )
+        }
+      }}
+    cdf_enable_msg: >-
+      {{
+        (
+          cdf_enable_async_poll.msg
+          if (
+            cdf_enable_async_submit.ansible_job_id is defined and
+            (cdf_enable_async_poll.finished | default(false))
+          )
+          else (
+            'CDF enable API call timed out after '
+            ~ (cdf_enable_http_timeout | string)
+            ~ 's (attempt '
+            ~ (cdf_enable_attempt | string)
+            ~ ')'
+          )
+        ) | default('') | string
+      }}
+    cdf_enable_has_api_error: >-
+      {{
+        (
+          (
+            cdf_enable_async_poll.msg | default('')
+            if (
+              cdf_enable_async_submit.ansible_job_id is defined and
+              (cdf_enable_async_poll.finished | default(false))
+            )
+            else (
+              'CDF enable API call timed out after '
+              ~ (cdf_enable_http_timeout | string)
+              ~ 's'
+            )
+          ) | string
+        ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out)')
+      }}
+    cdf_enable_should_retry: >-
+      {{
+        (
+          (
+            (
+              cdf_enable_async_poll.msg | default('')
+              if (
+                cdf_enable_async_submit.ansible_job_id is defined and
+                (cdf_enable_async_poll.finished | default(false))
+              )
+              else ''
+            ) | string
+          ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while)')
+        ) and (
+          (
+            cdf_enable_async_poll.msg | default('') | string
+          ) is search('(?i)try again later')
+        ) and (
+          (cdf_enable_attempt | int) < (cdf_enable_api_retries | int)
+        )
+      }}
+
+- name: Record CDF enable API result for playbook
+  ansible.builtin.set_fact:
+    cdf_enable_result: "{{ cdf_enable_attempt_result }}"
+    cdf_enable_retry_done: "{{ not (cdf_enable_should_retry | default(false) | bool) }}"
+
+- name: Log CDF enable attempt outcome
+  ansible.builtin.debug:
+    msg: >-
+      CDF enable attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }} outcome:
+      api_error={{ cdf_enable_has_api_error | default(false) }},
+      will_retry={{ cdf_enable_should_retry | default(false) }},
+      msg={{ cdf_enable_msg | truncate(400, True, '...') }}
+
+- name: Pause before next CDF enable retry
+  ansible.builtin.pause:
+    seconds: "{{ cdf_enable_retry_delay | int }}"
+  when: cdf_enable_should_retry | default(false) | bool

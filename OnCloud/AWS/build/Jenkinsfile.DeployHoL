@@ -422,13 +422,13 @@ ENV_TAGS:${envTags}
                         errorMessages = failureParser.extract(logOutput)
                     }
 
-                    if (dockerExit != '0') {
+                    if (dockerExit != '0' || !errorMessages.isEmpty()) {
                         if (errorMessages.isEmpty()) {
                             errorMessages = ["Docker provisioner exited with code ${dockerExit}"]
                         }
                         currentBuild.result = 'FAILURE'
                         currentBuild.description = errorMessages.take(10).join('\n')
-                        println currentBuild.description
+                        error(currentBuild.description)
                     }
                 }
             }

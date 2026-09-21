@@ -3332,6 +3332,9 @@ hol_enable_data_services() {
 
    wait_for_pids "${pids[@]}" || failed=1
    hol_stop_service_log_tailers
+   if (( failed != 0 )); then
+      hol_warn "One or more data service playbooks failed — see /userconfig/.${workshop_name}/logs/*.log"
+   fi
    return $failed
 }
 #--------------------------------------------------------------------------------------------------#

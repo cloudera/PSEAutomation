@@ -24,6 +24,9 @@
     cdf_poll_delay: 60
     cdf_enable_api_retries: 5
     cdf_enable_retry_delay: 45
+    cdf_enable_http_timeout: 600
+    cdf_enable_async_poll_delay: 15
+    cdf_enable_async_poll_retries: "{{ ((cdf_enable_http_timeout | int) // (cdf_enable_async_poll_delay | int)) + 2 }}"
 
   tasks:
     - name: Check and print variable status
@@ -338,33 +341,23 @@
           - "Caller has environment-scoped DFAdmin: {{ cdf_caller_has_df_admin | default('unknown') }}"
           - "Workshop group resourceAssignments (DEUser/DWUser/etc.) are separate from pipeline machine-user roles."
 
-    - name: Enable CDF service
-      cloudera.cloud.df_service:
-        name: "{{ cdp_env_name }}"
-        nodes_min: "{{ minimum_nodes | int }}"
-        nodes_max: "{{ maximum_nodes | int }}"
-        instance_type: "{{ instance_type if (instance_type | default('') | length > 0) else omit }}"
-        public_loadbalancer: "{{ use_public_load_balancer | bool }}"
-        cluster_subnets: "{{ cdf_cluster_subnets | default(omit) }}"
-        loadbalancer_subnets: "{{ cdf_lb_subnets | default(omit) }}"
-        cluster_subnets_filter: "{{ 'private' if cdf_cluster_subnets is not defined else omit }}"
-        loadbalancer_subnets_filter: "{{ 'public' if cdf_lb_subnets is not defined else omit }}"
-        state: present
-        wait: false
+    - name: Initialize CDF enable retry loop
+      ansible.builtin.set_fact:
+        cdf_enable_retry_done: false
       when:
         - not cdf_service_healthy | default(false)
         - not cdf_service_in_progress | default(false)
-      register: cdf_enable_result
-      until: >-
-        (
-          (cdf_enable_result.msg | default('') | string) is not search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while)')
-        ) or (
-          (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while)')
-          and (cdf_enable_result.msg | default('') | string) is not search('(?i)try again later')
-        )
-      retries: "{{ cdf_enable_api_retries }}"
-      delay: "{{ cdf_enable_retry_delay }}"
-      failed_when: false
+
+    - name: Run CDF enable API attempts
+      ansible.builtin.include_tasks: cdf-enable-api-attempt.yml
+      loop: "{{ range(1, cdf_enable_api_retries | int + 1) | list }}"
+      loop_control:
+        loop_var: cdf_enable_attempt
+        label: "attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }}"
+      when:
+        - not cdf_service_healthy | default(false)
+        - not cdf_service_in_progress | default(false)
+        - not cdf_enable_retry_done | default(false)
 
     - name: Set CDF enable API outcome flags
       ansible.builtin.set_fact:
@@ -372,7 +365,7 @@
           {{
             cdf_enable_result.failed | default(false) or
             (
-              (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while)')
+              (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out)')
             )
           }}
       when: cdf_enable_result is defined
@@ -391,22 +384,27 @@
       ansible.builtin.fail:
         msg: >-
           CDF enable API failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
-          (retried while API msg contained "try again later"):
+          (retried only when API msg contained "try again later"):
           {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}.
           CDP caller={{ cdf_cdp_caller_name | default('unknown') }}
           (machine_user={{ cdf_cdp_caller_is_machine | default('unknown') }}),
-          env-scoped DFAdmin verified={{ cdf_caller_has_df_admin | default('unknown') }}.
-          {% if cdf_caller_has_df_admin | default(false) %}
-          DFAdmin is present on the caller — persistent INTERNAL/authorizing [500] after retries is usually
-          a CDP DataFlow control-plane or authorization-service issue (not workshop-group IAM).
+          env-scoped DFAdmin on caller={{ cdf_caller_has_df_admin | default('unknown') }}.
+          Workshop group resourceAssignments (DEUser/DWUser/etc.) do not grant enable-service rights
+          and are unrelated to this check.
+          {% if cdf_caller_has_df_admin | default(false) | bool %}
+          DFAdmin is present on the CDP API caller — persistent INTERNAL/authorizing [500] after retries
+          indicates a CDP DataFlow control-plane or authorization-service issue, not missing pipeline IAM.
           Check DataFlow console → Environments → {{ cdp_env_name }} → Alerts/Event History;
           retry manually from the Jenkins agent:
           cdp df enable-service --environment-name {{ cdp_env_name }} --min-k8s-node-count {{ minimum_nodes }} --max-k8s-node-count {{ maximum_nodes }}.
           If it still fails, open a Cloudera support case with environment CRN {{ cdf_env_crn | default('n/a') }}.
-          {% else %}
+          {% elif cdf_caller_has_df_admin is defined and (cdf_caller_roles_raw is defined) and not (cdf_caller_has_df_admin | bool) %}
           Grant environment-scoped DFAdmin to the CDP caller (Jenkins assignCdpEnvAdminRoles.sh assigns
           psejenkins + ASSIGN_CALLER; DFFlowAdmin alone is insufficient for enable-service).
           Re-run assignCdpEnvAdminRoles.sh, then cdp environments sync-all-users --environment-names {{ cdp_env_name }}.
+          {% else %}
+          Could not verify env-scoped DFAdmin on the caller — confirm assignCdpEnvAdminRoles.sh succeeded
+          for psejenkins and sync-all-users completed, then retry enable.
           {% endif %}
       when:
         - cdf_enable_result is defined
