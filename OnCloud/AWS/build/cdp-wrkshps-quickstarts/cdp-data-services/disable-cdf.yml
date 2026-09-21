@@ -68,6 +68,7 @@
               | default({})
             ).status.detailedState | default('')
           }}
+        # Service CRN for `cdp df disable-service --service-crn` and df_service df_crn.
         cdf_service_crn: >-
           {{
             (
@@ -180,17 +181,19 @@
               (cdf_service_crn | default('') | length) == 0
             ) | bool
           }}
-        # Skip disable-service only when teardown is in flight or the service is
-        # absent with no resolvable CRN. Do not skip when state is ENABLING,
-        # GOOD_HEALTH, etc. merely because list-services omitted the CRN.
+        cdf_service_requires_disable: >-
+          {{
+            (
+              (cdf_list_state | default('NOT_FOUND') not in cdf_absent_states) or
+              (cdf_info_state | default('NOT_FOUND') not in cdf_absent_states) or
+              (cdf_current_state | default('NOT_FOUND') not in cdf_absent_states)
+            ) | bool
+          }}
         cdf_skip_disable_service: >-
           {{
             (
               cdf_disable_in_progress or
-              (
-                (cdf_current_state | default('NOT_FOUND') in cdf_absent_states) and
-                (cdf_service_crn | default('') | length) == 0
-              )
+              not cdf_service_requires_disable
             ) | bool
           }}
 
@@ -221,6 +224,7 @@
           service_crn={{ cdf_service_crn | default('n/a') }},
           deployments={{ cdf_deployments | default([], true) | length }},
           disable_in_progress={{ cdf_disable_in_progress }},
+          requires_disable={{ cdf_service_requires_disable | default(false) }},
           skip_disable_service={{ cdf_skip_disable_service }},
           fully_absent={{ cdf_fully_absent }},
           needs_teardown={{ cdf_needs_teardown }}
@@ -323,7 +327,7 @@
         - cdf_deployment_delete_results is defined
         - item.failed | default(false)
 
-    - name: Disable CDF service with deployment termination
+    - name: Disable CDF service via CLI (--service-crn)
       ansible.builtin.command: >
         cdp df disable-service
         --service-crn {{ cdf_service_crn }}
@@ -336,7 +340,7 @@
         - (cdf_service_crn | default('') | length) > 0
         - not cdf_skip_disable_service | default(false)
 
-    - name: Disable CDF service via Ansible module when CLI is unavailable
+    - name: Disable CDF service via Ansible module (df_crn or name fallback)
       cloudera.cloud.df_service:
         df_crn: "{{ cdf_service_crn if (cdf_service_crn | default('') | length) > 0 else omit }}"
         name: "{{ cdp_env_name if (cdf_service_crn | default('') | length) == 0 else omit }}"
