@@ -4,7 +4,7 @@
   connection: local
   gather_facts: yes
   vars:
-    instance_type: "Standard_D8s_v3"
+    instance_type: "Standard_D8s_v5"
     minimum_nodes: 3
     maximum_nodes: 10
     use_public_load_balancer: true

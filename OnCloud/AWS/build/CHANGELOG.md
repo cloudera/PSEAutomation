@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- CDF `cdp df enable-service`: AWS/Azure `enable-cdf.yml` playbook defaults and `deploy_cdf` instance-type defaults align with Jenkins/configfile (`m5.2xlarge` / `Standard_D8s_v5`); removed Azure-only `Standard_*` sanitization from AWS playbook (same as CDE). Both clouds use `cloudera.cloud.df_service` (`nodes_min`/`nodes_max`, `public_loadbalancer`, `cluster_subnets`, `loadbalancer_subnets` from Terraform subnet outputs).
 - CDE enable: removed Azure-only `Standard_*` instance-type sanitization from AWS `enable-cde.yml`; `deploy_cde` defaults `vc_tier` to `CORE` when unset (matches Azure).
 - CDF enable: `jenkins/assignCdpEnvAdminRoles.sh` now assigns `DFAdmin` (required for `cdp df enable-service`; `DFFlowAdmin` alone is insufficient). Enable playbook fail message documents DFAdmin vs transient 500 retries.
 - CDF enable: `cloudera.cloud.df_service` can return `failed=false` with an INTERNAL/`[500]` authorization error in `msg`; `enable-cdf.yml` now retries transient "try again later" responses, fails fast before the health poll, and treats error text in `msg` as failure (not only `changed=false`).

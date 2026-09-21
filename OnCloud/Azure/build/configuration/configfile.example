@@ -48,7 +48,7 @@ DATALAKE_VERSION:7.3.2
 #CAI_MIN_INSTANCES:1
 #CAI_MAX_INSTANCES:5
 #CAI_ENABLE_GPU:no
-# CDF (cdp df enable-service): min/max K8s nodes and public load balancer; requires DFAdmin on the CDP caller (Jenkins assignCdpEnvAdminRoles.sh).
+# CDF (cdp df enable-service): --min-k8s-node-count / --max-k8s-node-count, --use-public-load-balancer, --instance-type; cluster/LB subnets come from CDP Terraform outputs (not configfile). Requires DFAdmin on the CDP caller (Jenkins assignCdpEnvAdminRoles.sh).
 #CDF_INSTANCE_TYPE:Standard_D8s_v5
 #CDF_MIN_NODES:3
 #CDF_MAX_NODES:3

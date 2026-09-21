@@ -2056,7 +2056,7 @@ deploy_single_data_service() {
       ;;
    cdf)
       hol_init_service "cdf"
-      DEFAULT_CDF_INSTANCE_TYPE=""
+      DEFAULT_CDF_INSTANCE_TYPE="m5.2xlarge"
       DEFAULT_CDF_MIN_NODES=3
       DEFAULT_CDF_MAX_NODES=10
       DEFAULT_CDF_USE_PUBLIC_LB="true"
