@@ -1358,9 +1358,10 @@ update_cdp_user_group() {
    cdp iam update-group --group-name $workshop_name-aw-cdp-user-group --sync-membership-on-user-login
 }
 
-# CDP environments sync-all-users can return 409 when another USER_SYNC is already running
-# (e.g. assignCdpEnvAdminRoles.sh). Tunables: HOL_CDP_USER_SYNC_MAX_ATTEMPTS (12),
-# HOL_CDP_USER_SYNC_RETRY_SLEEP_SEC (30), HOL_CDP_USER_SYNC_WAIT_SEC (600), HOL_CDP_USER_SYNC_POLL_SEC (15).
+# CDP environments sync-all-users can return 409 CONFLICT for USER_SYNC (e.g. after IAM user
+# creation or assignCdpEnvAdminRoles.sh). Tunables: HOL_CDP_USER_SYNC_MAX_ATTEMPTS (12),
+# HOL_CDP_USER_SYNC_RETRY_SLEEP_SEC (30), HOL_CDP_USER_SYNC_STALE_CONFLICT_SLEEP_SEC (5),
+# HOL_CDP_USER_SYNC_WAIT_SEC (600), HOL_CDP_USER_SYNC_POLL_SEC (15).
 hol_cdp_user_sync_conflict() {
    local msg="$1"
    grep -q '409' <<<"$msg" || return 1
@@ -1374,47 +1375,91 @@ hol_cdp_user_sync_conflict_request_id() {
    [[ -n "$id" ]] && echo "$id"
 }
 
-hol_cdp_user_sync_conflict_notice() {
-   local output="$1" attempt="$2" max_attempts="$3"
-   local req_id msg="Another user sync is already running for this environment — waiting/retrying"
-   req_id=$(hol_cdp_user_sync_conflict_request_id "$output" || true)
-   if [[ -n "$req_id" ]]; then
-      hol_warn "${msg} (${req_id})"
-   else
-      hol_warn "$msg"
+hol_cdp_user_sync_error_summary() {
+   local msg="$1" line
+   while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      printf '%s' "$line"
+      return 0
+   done <<<"$msg"
+   printf '409 CONFLICT (sync-all-users)'
+}
+
+hol_cdp_user_sync_state_snapshot() {
+   local env_name="$1"
+   local sync_state_json state op_id sync_status last_status
+
+   sync_state_json=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null || true)
+   state=$(jq -r '.state // empty' <<<"$sync_state_json" 2>/dev/null)
+   [[ "$state" == "null" ]] && state=""
+   op_id=$(jq -r '.userSyncOperationId // empty' <<<"$sync_state_json" 2>/dev/null)
+   [[ "$op_id" == "null" ]] && op_id=""
+   sync_status=""
+   if [[ -n "$op_id" ]]; then
+      sync_status=$(cdp environments sync-status --operation-id "$op_id" 2>/dev/null | jq -r '.status // empty')
+      [[ "$sync_status" == "null" ]] && sync_status=""
    fi
-   hol_step "CDP user sync retry ${attempt}/${max_attempts} after conflict"
+   last_status=$(cdp environments last-sync-status --environment "$env_name" 2>/dev/null | jq -r '.status // empty')
+   [[ "$last_status" == "null" ]] && last_status=""
+
+   hol_kv "CDP user-sync state (get-environment-user-sync-state)" "${state:-unknown}"
+   [[ -n "$op_id" ]] && hol_kv "Latest user-sync operation id" "$op_id"
+   [[ -n "$sync_status" ]] && hol_kv "Latest operation status (sync-status)" "$sync_status"
+   [[ -n "$last_status" ]] && hol_kv "Last sync status (last-sync-status)" "$last_status"
+}
+
+hol_cdp_user_sync_conflict_notice() {
+   local output="$1" attempt="$2" max_attempts="$3" env_name="$4" in_progress="$5"
+   local req_id err_summary
+   err_summary=$(hol_cdp_user_sync_error_summary "$output")
+   req_id=$(hol_cdp_user_sync_conflict_request_id "$output" || true)
+   hol_warn "cdp environments sync-all-users returned 409 CONFLICT: ${err_summary}"
+   [[ -n "$req_id" ]] && hol_info "CDP HTTP request id (not the user-sync operation id): ${req_id}"
+   hol_cdp_user_sync_state_snapshot "$env_name"
+   if [[ "$in_progress" == "yes" ]]; then
+      hol_warn "User sync is in progress for '${env_name}' — waiting before retry"
+   else
+      hol_warn "No active user sync reported for '${env_name}' (409 may be a transient lock after IAM changes) — short backoff before retry"
+   fi
+   hol_step "CDP user sync retry ${attempt}/${max_attempts} after 409"
 }
 
 hol_cdp_environment_user_sync_in_progress() {
    local env_name="$1"
-   local state status op_id sync_status
+   local state status op_id sync_status sync_state_json
 
-   state=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null | jq -r '.state // empty')
+   sync_state_json=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null || true)
+   state=$(jq -r '.state // empty' <<<"$sync_state_json" 2>/dev/null)
    [[ "$state" == "null" ]] && state=""
-   if [[ -n "$state" ]] && grep -qiE 'RUNNING|IN_PROGRESS|SYNCING|SYNC_IN_PROGRESS|USER_SYNC' <<<"$state"; then
+
+   case "$state" in
+      SYNC_IN_PROGRESS) return 0 ;;
+      UP_TO_DATE|STALE|SYNC_FAILED) return 1 ;;
+   esac
+
+   if [[ -n "$state" ]] && grep -qiE 'RUNNING|IN_PROGRESS|SYNCING|SYNC_IN_PROGRESS' <<<"$state"; then
       return 0
    fi
    if [[ -n "$state" ]] && grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|IDLE|READY|NOT_RUNNING|NONE' <<<"$state"; then
       return 1
    fi
 
-   op_id=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null | jq -r '.userSyncOperationId // empty')
+   op_id=$(jq -r '.userSyncOperationId // empty' <<<"$sync_state_json" 2>/dev/null)
    [[ "$op_id" == "null" ]] && op_id=""
    if [[ -n "$op_id" ]]; then
       sync_status=$(cdp environments sync-status --operation-id "$op_id" 2>/dev/null | jq -r '.status // empty')
       [[ "$sync_status" == "null" ]] && sync_status=""
-      if [[ -n "$sync_status" ]] && grep -qiE 'RUNNING|IN_PROGRESS|PENDING' <<<"$sync_status"; then
+      if [[ -n "$sync_status" ]] && grep -qiE 'RUNNING|IN_PROGRESS|REQUESTED|PENDING' <<<"$sync_status"; then
          return 0
       fi
-      if [[ -n "$sync_status" ]] && grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|FAILED|ERROR' <<<"$sync_status"; then
+      if [[ -n "$sync_status" ]] && grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|FAILED|ERROR|REJECTED|TIMEDOUT' <<<"$sync_status"; then
          return 1
       fi
    fi
 
    status=$(cdp environments last-sync-status --environment "$env_name" 2>/dev/null | jq -r '.status // empty')
    [[ "$status" == "null" ]] && status=""
-   if [[ -n "$status" ]] && grep -qiE 'RUNNING|IN_PROGRESS|PENDING' <<<"$status"; then
+   if [[ -n "$status" ]] && grep -qiE 'RUNNING|IN_PROGRESS|REQUESTED|PENDING' <<<"$status"; then
       return 0
    fi
    return 1
@@ -1455,10 +1500,18 @@ hol_cdp_sync_all_users_resilient() {
          return 0
       fi
       if hol_cdp_user_sync_conflict "$output"; then
-         hol_cdp_user_sync_conflict_notice "$output" "$attempt" "$max_attempts"
-         hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" \
-            || hol_warn "User sync wait incomplete for '${env_name}' — retrying sync-all-users"
-         sleep "$retry_sleep"
+         local in_progress=no stale_sleep="${HOL_CDP_USER_SYNC_STALE_CONFLICT_SLEEP_SEC:-5}"
+         if hol_cdp_environment_user_sync_in_progress "$env_name"; then
+            in_progress=yes
+         fi
+         hol_cdp_user_sync_conflict_notice "$output" "$attempt" "$max_attempts" "$env_name" "$in_progress"
+         if [[ "$in_progress" == "yes" ]]; then
+            hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" \
+               || hol_warn "User sync wait incomplete for '${env_name}' — retrying sync-all-users"
+            sleep "$retry_sleep"
+         else
+            sleep "$stale_sleep"
+         fi
          attempt=$((attempt + 1))
          continue
       fi
