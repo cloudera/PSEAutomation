@@ -8,12 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Parallel data-service Ansible logs: `ansible-playbook -v` with standard callback JSON (no ok/changed summarization); tailers prefix `[CDE]`/`[CAI]` and compact skip lines only.
+- Parallel data-service Ansible logs use default console verbosity (no `-v` / JSON summarization); tailers only prefix `[CDE]`/`[CAI]` and compact skip lines.
 - CDE on Python 3.12: patch `cdpcli.shorthand` via `hol-patch-python-deps.sh` (locate file without importing shorthand, drop stale `.pyc`) at entrypoint, `hol_enable_data_services`, and each `hol_run_ansible_playbook`.
 - Drop `summarize-json` / `hol_summarize_ansible_result_json` and all ok/changed result rewriting in `hol-ansible-log-format.py` (debug `msg` lists no longer collapse to `N item(s)`).
 - Ansible callback scan warning: `hol-ansible-log-format.py` is CLI-only (parallel tailers use `format-tagged-line` for skip compaction; no result JSON summarization).
 - CDF was not triggered during parallel data-service provision when selected in Jenkins: config selection is stored in `HOL_ENABLE_DATA_SERVICES` (avoiding a name clash with `hol_enable_data_services()`), legacy `CML` maps to `CAI`, and PollSCM passes `ENABLE_DATA_SERVICES` as a string to downstream deploy jobs.
-- CDE tier sizing: CORE → Core 0–25 with initial 1; ALLP → All Purpose 0–25 with initial 1 and Core 0/0/0 (`cdp de enable-service` / `cloudera.cloud.de`). Active-tier initial is always 1 in HoL.
+- CDE enable applies Jenkins min/max/initial only to the active VC tier via `cdp de enable-service`; inactive tier (Core or All Purpose) is 0/0/0 (ALLP no longer leaves Core at 1/1/1; CORE explicitly zeros All Purpose).
 - CDE Core autoscaling defaults and PollSCM params aligned to min 0 / max 25; enable playbook fails when the service does not reach `ClusterCreationCompleted`.
 
 ## [1.0.0] - 2026-09-11

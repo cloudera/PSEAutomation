@@ -86,40 +86,38 @@
           skipping enable; waiting for completion if needed.
       when: cde_service_present
 
-    - name: Activate CDE service if it does not exist (CORE tier sizing)
-      cloudera.cloud.de:
-        name: "{{ workshop_name }}-cde"
-        env: "{{ cdp_env_name }}"
-        instance_type: "{{ instance_type }}"
-        minimum_instances: "{{ minimum_instances | int }}"
-        maximum_instances: "{{ maximum_instances | int }}"
-        initial_instances: 1
-        enable_public_endpoint: true
-        state: present
-        wait: no
-      when:
-        - not cde_service_present
-        - (vc_tier | default('CORE') | upper) == 'CORE'
-      register: deservice
+    - name: Set CDE instance group sizing for active VC tier
+      ansible.builtin.set_fact:
+        cde_core_minimum_instances: >-
+          {{ (minimum_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
+        cde_core_maximum_instances: >-
+          {{ (maximum_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
+        cde_core_initial_instances: >-
+          {{ (initial_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
+        cde_allp_minimum_instances: >-
+          {{ (minimum_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
+        cde_allp_maximum_instances: >-
+          {{ (maximum_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
+        cde_allp_initial_instances: >-
+          {{ (initial_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
+      when: not cde_service_present
 
-    - name: Activate CDE service if it does not exist (ALLP tier sizing)
+    - name: Activate CDE service if it does not exist
       cloudera.cloud.de:
         name: "{{ workshop_name }}-cde"
         env: "{{ cdp_env_name }}"
         instance_type: "{{ instance_type }}"
-        minimum_instances: 0
-        maximum_instances: 0
-        initial_instances: 0
+        minimum_instances: "{{ cde_core_minimum_instances | int }}"
+        maximum_instances: "{{ cde_core_maximum_instances | int }}"
+        initial_instances: "{{ cde_core_initial_instances | int }}"
         all_purpose_instance_type: "{{ instance_type }}"
-        all_purpose_minimum_instances: "{{ minimum_instances | int }}"
-        all_purpose_maximum_instances: "{{ maximum_instances | int }}"
-        all_purpose_initial_instances: 1
+        all_purpose_minimum_instances: "{{ cde_allp_minimum_instances | int }}"
+        all_purpose_maximum_instances: "{{ cde_allp_maximum_instances | int }}"
+        all_purpose_initial_instances: "{{ cde_allp_initial_instances | int }}"
         enable_public_endpoint: true
         state: present
         wait: no
-      when:
-        - not cde_service_present
-        - (vc_tier | default('CORE') | upper) == 'ALLP'
+      when: not cde_service_present
       register: deservice
 
     - name: Check the CDE service status

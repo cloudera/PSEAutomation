@@ -103,14 +103,17 @@
         set -o pipefail
         last_err=""
         vc_tier_upper="{{ vc_tier | default('CORE') | upper }}"
+        workshop_min="{{ minimum_instances | int }}"
+        workshop_max="{{ maximum_instances | int }}"
+        workshop_initial="{{ initial_instances | int }}"
         if [[ "$vc_tier_upper" == "ALLP" ]]; then
           core_min=0
           core_max=0
           core_initial=0
         else
-          core_min="{{ minimum_instances | int }}"
-          core_max="{{ maximum_instances | int }}"
-          core_initial=1
+          core_min="$workshop_min"
+          core_max="$workshop_max"
+          core_initial="$workshop_initial"
         fi
         allp_extra=()
         for t in {{ cde_instance_type_try_list | default([instance_type], true) | join(' ') }}; do
@@ -118,9 +121,16 @@
           if [[ "$vc_tier_upper" == "ALLP" ]]; then
             allp_extra=(
               --all-purpose-instance-type "$t"
-              --all-purpose-minimum-instances "{{ minimum_instances | int }}"
-              --all-purpose-maximum-instances "{{ maximum_instances | int }}"
-              --all-purpose-initial-instances "1"
+              --all-purpose-minimum-instances "$workshop_min"
+              --all-purpose-maximum-instances "$workshop_max"
+              --all-purpose-initial-instances "$workshop_initial"
+            )
+          else
+            allp_extra=(
+              --all-purpose-instance-type "$t"
+              --all-purpose-minimum-instances 0
+              --all-purpose-maximum-instances 0
+              --all-purpose-initial-instances 0
             )
           fi
           if cdp de enable-service \
