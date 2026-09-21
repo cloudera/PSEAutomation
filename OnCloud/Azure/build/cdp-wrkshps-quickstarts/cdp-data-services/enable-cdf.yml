@@ -343,8 +343,11 @@
           CDF enable API failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
           (retried transient "try again later" / 500 responses):
           {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}.
-          Verify environment IAM roles (EnvironmentAdmin/Owner) and user sync completed
-          (assignCdpEnvAdminRoles.sh assigns DFFlowAdmin for flows, not DF enable).
+          Verify the CDP caller has environment-scoped DFAdmin (required for cdp df enable-service;
+          assignCdpEnvAdminRoles.sh also assigns DFFlowAdmin for flow stop during destroy),
+          that Jenkins pre-stage role assignment succeeded, and user sync completed.
+          Persistent "authorizing" / [500] after retries usually indicates missing DFAdmin;
+          "try again later" responses are retried automatically.
       when:
         - cdf_enable_result is defined
         - cdf_enable_api_failed | default(false)

@@ -31,6 +31,7 @@ DATALAKE_VERSION:7.3.2
 # --- Optional: data service sizing overrides ---
 #CDW_VRTL_WAREHOUSE_SIZE:small
 #CDW_DATAVIZ_SIZE:small
+# CDE (cdp de enable-service): sizing applies to CORE or ALLP per CDE_VC_TIER; inactive tier is 0/0/0 in enable-cde.yml.
 #CDE_INSTANCE_TYPE:Standard_D8s_v5
 #CDE_INITIAL_INSTANCES:1
 #CDE_MIN_INSTANCES:0
@@ -47,6 +48,7 @@ DATALAKE_VERSION:7.3.2
 #CAI_MIN_INSTANCES:1
 #CAI_MAX_INSTANCES:5
 #CAI_ENABLE_GPU:no
+# CDF (cdp df enable-service): min/max K8s nodes and public load balancer; requires DFAdmin on the CDP caller (Jenkins assignCdpEnvAdminRoles.sh).
 #CDF_INSTANCE_TYPE:Standard_D8s_v5
 #CDF_MIN_NODES:3
 #CDF_MAX_NODES:3

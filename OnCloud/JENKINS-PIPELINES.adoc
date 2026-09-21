@@ -151,7 +151,7 @@ Typical stage order:
 2. **Create Config File** — writes `configfile` under the agent `userconfig` directory
 3. **Build Local Docker Image** — only when `BUILD_LOCAL_IMAGE=true`
 4. **Pull Docker Image** — only when `BUILD_LOCAL_IMAGE=false`
-5. **Assign CDP env admin roles for pipeline** — runs `jenkins/assignCdpEnvAdminRoles.sh` on the agent before the container starts; grants `psejenkins` (and CDP caller) environment admin roles including `DFFlowAdmin` for CDF flow stop during destroy
+5. **Assign CDP env admin roles for pipeline** — runs `jenkins/assignCdpEnvAdminRoles.sh` on the agent before the container starts; grants `psejenkins` (and CDP caller) environment admin roles including `DFAdmin` for CDF enable and `DFFlowAdmin` for flow stop during destroy
 6. **Run Docker Container** — `docker run` with mounted `userconfig`, `~/.cdp`, and cloud credentials
 7. **Check Logs for Failures** — parses provisioner log via `provisionFailureParser.groovy`
 8. **Assign admin roles to builduser** — provision only; grants `EnvironmentAdmin` / `Owner` (and related roles) to the human who triggered the job
@@ -161,7 +161,7 @@ Typical stage order:
 `OnCloud/{AWS,Azure}/build/jenkins/assignCdpEnvAdminRoles.sh` is invoked from Jenkins (not baked into the Docker image). It assigns idempotent environment-scoped roles:
 
 * `EnvironmentAdmin`, `Owner`
-* `DFFlowAdmin`, `DWAdmin`, `DEAdmin`, `MLAdmin`
+* `DFAdmin`, `DFFlowAdmin`, `DWAdmin`, `DEAdmin`, `MLAdmin`
 
 Targets (controlled by env vars):
 

@@ -29,6 +29,7 @@ fi
 ENV_ADMIN_ROLES=(
    EnvironmentAdmin
    Owner
+   DFAdmin
    DFFlowAdmin
    DWAdmin
    DEAdmin
