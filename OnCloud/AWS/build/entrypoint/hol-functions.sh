@@ -11,6 +11,200 @@ configure_git_for_userconfig() {
    git config --global --add safe.directory '*' 2>/dev/null || true
 }
 
+# Keycloak IP: persist per workshop at /userconfig/.${workshop_name}/keycloak_ip.
+# Legacy /userconfig/keycloak_ip is read-only fallback during migration. Parallel Jenkins
+# workshop jobs (e.g. PollSCM AWS+Azure on one agent) share the same host /userconfig mount.
+
+hol_keycloak_ip_path() {
+   local ns="${1:-${workshop_name:-}}"
+   if [[ -z "$ns" ]]; then
+      hol_fail "workshop_name is not set (cannot resolve Keycloak IP path)"
+   fi
+   echo "/userconfig/.${ns}/keycloak_ip"
+}
+
+hol_keycloak_ip_from_terraform() {
+   local kc_tf_dir="/userconfig/.${workshop_name}/keycloak_terraform_config"
+   local ip=""
+
+   [[ -n "${workshop_name:-}" && -d "$kc_tf_dir" ]] || return 1
+   ip=$(cd "$kc_tf_dir" && terraform output -raw elastic_ip 2>/dev/null || true)
+   [[ -n "$ip" && "$ip" != "null" ]] || return 1
+   printf '%s\n' "$ip"
+}
+
+hol_save_keycloak_ip() {
+   local ip="$1"
+   local path
+
+   [[ -n "$ip" ]] || hol_fail "Cannot save empty Keycloak IP"
+   [[ -n "${workshop_name:-}" ]] || hol_fail "workshop_name is not set (cannot save Keycloak IP)"
+   path=$(hol_keycloak_ip_path)
+   mkdir -p "/userconfig/.${workshop_name}"
+   printf '%s\n' "$ip" >"$path"
+}
+
+# Order: per-workshop keycloak_ip file, legacy /userconfig/keycloak_ip, then Terraform elastic_ip.
+# Partial destroy may leave a stale IP file if Keycloak destroy failed; cdp_idp_setup_user readiness
+# check catches unreachable hosts. Successful destroy_keycloak removes the IP file and tf/ansible dirs.
+resolve_keycloak_server_ip() {
+   local mode="${1:-required}"
+   local path legacy ip
+
+   [[ -n "${workshop_name:-}" ]] || hol_fail "workshop_name is not set (cannot resolve Keycloak IP)"
+   path=$(hol_keycloak_ip_path)
+
+   if [[ -f "$path" ]]; then
+      ip=$(tr -d '[:space:]' <"$path")
+      if [[ -n "$ip" ]]; then
+         printf '%s\n' "$ip"
+         return 0
+      fi
+   fi
+
+   legacy=/userconfig/keycloak_ip
+   if [[ -f "$legacy" ]]; then
+      ip=$(tr -d '[:space:]' <"$legacy")
+      if [[ -n "$ip" ]]; then
+         hol_warn "Using legacy Keycloak IP from ${legacy}; saving per-workshop copy at ${path}"
+         hol_save_keycloak_ip "$ip"
+         printf '%s\n' "$ip"
+         return 0
+      fi
+   fi
+
+   ip=$(hol_keycloak_ip_from_terraform 2>/dev/null || true)
+   if [[ -n "$ip" ]]; then
+      hol_warn "Keycloak IP file missing — recovered from Terraform output in /userconfig/.${workshop_name}/keycloak_terraform_config"
+      hol_save_keycloak_ip "$ip"
+      printf '%s\n' "$ip"
+      return 0
+   fi
+
+   if [[ "$mode" == "optional" ]]; then
+      return 1
+   fi
+   hol_fail "Keycloak server IP not found for workshop '${workshop_name}'. Checked: $(hol_keycloak_ip_path), legacy /userconfig/keycloak_ip, and terraform output elastic_ip under /userconfig/.${workshop_name}/keycloak_terraform_config. Parallel jobs on this Jenkins agent share /userconfig; use per-workshop storage and ensure Keycloak was not destroyed for this workshop."
+}
+
+hol_remove_keycloak_ip_on_destroy() {
+   rm -f "$(hol_keycloak_ip_path)"
+}
+
+# True when per-workshop keycloak_ip or Keycloak Terraform elastic_ip output exists (provision rerun).
+# Does not probe VM liveness; cdp_idp_setup_user waits for Keycloak HTTPS before Ansible.
+hol_keycloak_already_provisioned() {
+   resolve_keycloak_server_ip optional >/dev/null 2>&1
+}
+
+hol_keycloak_users_json_path() {
+   local hol_session_name="$1"
+   echo "/tmp/$(echo "$hol_session_name" | tr '[:upper:]' '[:lower:]').json"
+}
+
+# Validates keycloak_hol_user_fetch output for the workshop report. Always run fetch on rerun;
+# hol_write_keycloak_workshop_report replaces any prior Keycloak block in the report file.
+hol_load_keycloak_report_users() {
+   local hol_session_name="$1"
+   local json_path
+
+   json_path=$(hol_keycloak_users_json_path "$hol_session_name")
+   if [[ ! -f "$json_path" ]]; then
+      hol_fail "Keycloak user export not found at ${json_path}. keycloak_hol_user_fetch did not write users (Keycloak unreachable, IDP setup failed, or fetch playbook did not run)."
+   fi
+   sample_keycloak_user1=$(jq -r '.[0].username // "n/a"' "$json_path")
+   sample_keycloak_user2=$(jq -r '.[1].username // "n/a"' "$json_path")
+}
+
+# Remove an existing Keycloak block from the workshop report (rerun-safe).
+hol_strip_keycloak_workshop_report_section() {
+   local report_path="$1"
+   local ws="$2"
+
+   [[ -f "$report_path" ]] || return 0
+   awk -v ws="$ws" '
+   BEGIN { state=0 }
+   state == 0 {
+      if ($0 ~ /^={63}$/) { hold = $0 ORS; state = 1; next }
+      printf "%s", $0 ORS
+      next
+   }
+   state == 1 {
+      if (index($0, "Keycloak Details For") && index($0, ws)) { state = 2; hold = ""; next }
+      printf "%s%s", hold, $0 ORS
+      hold = ""
+      state = 0
+      next
+   }
+   state == 2 {
+      if ($0 ~ /^={63}$/) { state = 0 }
+      next
+   }
+   ' "$report_path"
+}
+
+# Write Keycloak report section once per workshop report file (replace prior block).
+hol_write_keycloak_workshop_report() {
+   local report_path="/userconfig/${workshop_name}.txt"
+   local tmp stripped
+
+   tmp=$(mktemp)
+   if [[ -f "$report_path" ]]; then
+      stripped=$(hol_strip_keycloak_workshop_report_section "$report_path" "$workshop_name")
+      printf '%s' "$stripped" | sed -e '${/^$/d;}' >"$tmp"
+      if [[ -s "$tmp" ]]; then
+         tail -c1 "$tmp" | read -r _ || echo >>"$tmp"
+      fi
+   else
+      : >"$tmp"
+   fi
+   cat >>"$tmp" <<EOF
+===============================================================
+            Keycloak Details For ${workshop_name} HOL:           
+===============================================================
+Keycloak Server IP: ${KEYCLOAK_SERVER_IP}
+Keycloak Admin HTTPS URL: https://${workshop_name}.${domain}
+Keycloak Admin User: admin
+Keycloak Admin Password: ${keycloak__admin_password}
+Keycloak SSO HTTPS URL: https://${workshop_name}.${domain}/realms/master/protocol/saml/clients/cdp-sso
+Numbers Of Users Created: ${number_of_workshop_users}
+Sample Usernames: User1: ${sample_keycloak_user1}, User2: ${sample_keycloak_user2}
+Default Password for HOL Users: ${workshop_user_default_password} 
+UserAssignment App Admin URL: http://${KEYCLOAK_SERVER_IP}:5000/admin
+UserAssignment App Participant URL: http://${KEYCLOAK_SERVER_IP}:5000/participant
+===============================================================
+EOF
+   mv "$tmp" "$report_path"
+}
+
+wait_for_keycloak_ready() {
+   local host="${1:-}"
+   local max_attempts="${2:-90}"
+   local attempt=0 url code
+
+   if [[ -z "$host" ]]; then
+      host=$(resolve_keycloak_server_ip optional || true)
+   fi
+   [[ -z "$host" ]] && hol_fail "Keycloak host is not set for readiness check"
+
+   url="https://${host}/realms/master/protocol/saml/descriptor"
+   hol_step "Waiting for Keycloak HTTPS (${host}) — up to $((max_attempts * 10 / 60)) min..."
+
+   while [[ $attempt -lt $max_attempts ]]; do
+      code=$(curl -sk --connect-timeout 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || echo "000")
+      if [[ "$code" == "200" ]]; then
+         hol_ok "Keycloak is ready"
+         return 0
+      fi
+      attempt=$((attempt + 1))
+      if [[ $((attempt % 6)) -eq 0 ]]; then
+         hol_info "Keycloak not ready yet (HTTP ${code}) — waited $((attempt * 10))s"
+      fi
+      sleep 10
+   done
+   hol_fail "Keycloak did not become ready on ${host} within $((max_attempts * 10 / 60)) minutes"
+}
+
 #TF_QUICKSTART_VERSION=v0.8.0
 USER_CONFIG_FILE="/userconfig/configfile"
 KEYGEN_TF_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/keypair_gen
@@ -617,28 +811,36 @@ setup_keycloak_ec2() {
    fi
 
    terraform init
-   # Extract only the first IP for Keycloak (admin access only)
-   kc_ip=$(echo "$local_ip" | cut -d',' -f1)
-
-   terraform apply -auto-approve \
-      -var "workshop_name=$workshop_name" \
-      -var "local_ip=$kc_ip" \
-      -var "instance_keypair=$aws_key_pair" \
-      -var "aws_region=$aws_region" \
-      -var "domain=$domain" \
-      -var "wildcard_fullchain=$FULLCHAIN" \
-      -var "wildcard_privkey=$PRIVKEY" \
-      -var "kc_security_group=$sg_name" \
-      -var "keycloak_admin_password=$keycloak__admin_password"
-
-   RETURN=$?
-   if [ $RETURN -eq 0 ]; then
-      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip)
-      hol_step "Saving Keycloak IP to /userconfig/keycloak_ip"
-      echo "$KEYCLOAK_SERVER_IP" >/userconfig/keycloak_ip
-      hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
+   if terraform state list 2>/dev/null | grep -q 'aws_instance.keycloak-server'; then
+      hol_skip "Keycloak EC2 already exists in Terraform state — skipping apply"
+      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip 2>/dev/null || true)
+      if [[ -n "$KEYCLOAK_SERVER_IP" ]]; then
+         hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
+         hol_kv "Keycloak instance IP" "$KEYCLOAK_SERVER_IP"
+      fi
    else
-      return 1
+      # Extract only the first IP for Keycloak (admin access only)
+      kc_ip=$(echo "$local_ip" | cut -d',' -f1)
+
+      terraform apply -auto-approve \
+         -var "workshop_name=$workshop_name" \
+         -var "local_ip=$kc_ip" \
+         -var "instance_keypair=$aws_key_pair" \
+         -var "aws_region=$aws_region" \
+         -var "domain=$domain" \
+         -var "wildcard_fullchain=$FULLCHAIN" \
+         -var "wildcard_privkey=$PRIVKEY" \
+         -var "kc_security_group=$sg_name" \
+         -var "keycloak_admin_password=$keycloak__admin_password"
+
+      RETURN=$?
+      if [ $RETURN -ne 0 ]; then
+         return 1
+      fi
+      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip)
+      hol_step "Saving Keycloak IP to $(hol_keycloak_ip_path)"
+      hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
+      hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
    fi
 
    # Fetch the public IP of the created Keycloak instance
@@ -703,9 +905,9 @@ destroy_keycloak() {
       -var "keycloak_admin_password=$keycloak__admin_password"
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
+      hol_remove_keycloak_ip_on_destroy
       rm -rf /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
       rm -rf /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
-      rm -rf /userconfig/keycloak_ip
       return 0
    else
       return 1
@@ -1253,11 +1455,15 @@ write_workshop_data_service_outputs() {
 # Function to configure IDP Client
 cdp_idp_setup_user() {
    # echo "keycloak__admin_password:$keycloak__admin_password"
-   KEYCLOAK_SERVER_IP=$(cat /userconfig/keycloak_ip)
+   KEYCLOAK_SERVER_IP=$(resolve_keycloak_server_ip optional || true)
+   if [[ -z "$KEYCLOAK_SERVER_IP" ]]; then
+      hol_fail "Cannot configure CDP IDP for '${workshop_name}': Keycloak server IP is empty after checking $(hol_keycloak_ip_path), legacy /userconfig/keycloak_ip, and Keycloak Terraform elastic_ip output. Re-provision Keycloak or restore the per-workshop IP file."
+   fi
+   hol_kv "Keycloak server IP" "$KEYCLOAK_SERVER_IP"
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
    hol_subsection "Configuring IDP in CDP" "🔗"
-   sleep 5
+   wait_for_keycloak_ready "$KEYCLOAK_SERVER_IP" 30 || return 1
    cdp_region=$(cdp environments describe-environment --environment-name $workshop_name-cdp-env | jq -r .environment.crn | cut -d: -f4)
    hol_kv "CDP region" "$cdp_region"
    ansible-playbook create_keycloak_client.yml --extra-vars \
@@ -1267,7 +1473,7 @@ cdp_idp_setup_user() {
       keycloak__cdp_idp_name=$workshop_name \
       keycloak__realm=master \
       keycloak__auth_realm=master \
-      cdp_region=$cdp_region"
+      cdp_region=$cdp_region" || hol_fail "create_keycloak_client playbook failed — Keycloak IDP client was not created"
    hol_subsection "Creating Users & Groups" "👥"
    sleep 5
    ansible-playbook keycloak_hol_user_setup.yml --extra-vars \
@@ -1279,7 +1485,7 @@ cdp_idp_setup_user() {
       number_user_to_create=$number_of_workshop_users \
       username_prefix=$workshop_user_prefix \
       default_user_password=$workshop_user_default_password \
-      reset_password_on_first_login=True"
+      reset_password_on_first_login=True" || hol_fail "keycloak_hol_user_setup playbook failed — workshop users were not created in Keycloak"
    sleep 10
    hol_subsection "Synchronising Keycloak users in CDP" "🔄"
    for i in $(seq -f "%02g" 1 1 $number_of_workshop_users); do
@@ -1290,8 +1496,13 @@ cdp_idp_setup_user() {
          --groups "$workshop_name-aw-cdp-user-group" \
          --first-name User-$workshop_user_prefix$i \
          --last-name User-$workshop_user_prefix$i 2>&1)
-      if echo "$output" | grep -q "ALREADY_EXISTS"; then
+      exit_status=$?
+      if [[ $exit_status -eq 0 ]]; then
+         hol_ok "CDP user '$workshop_user_prefix$i' created"
+      elif echo "$output" | grep -q "ALREADY_EXISTS"; then
          hol_skip "User '$workshop_user_prefix$i' already exists"
+      else
+         hol_fail "cdp iam create-user failed for '$workshop_user_prefix$i': $output"
       fi
    done
 
@@ -1304,26 +1515,12 @@ cdp_idp_setup_user() {
       keycloak__admin_password=$keycloak__admin_password \
       keycloak__domain=https://$KEYCLOAK_SERVER_IP \
       hol_keycloak_realm=master \
-      hol_session_name=$workshop_name-aw-cdp-user-group"
+      hol_session_name=$workshop_name-aw-cdp-user-group" || hol_fail "keycloak_hol_user_fetch playbook failed"
    sleep 5
    hol_step "Fetching workshop user details for report..."
-   sample_keycloak_user1=$(cat /tmp/$workshop_name-aw-cdp-user-group.json | jq -r '.[0].username')
-   sample_keycloak_user2=$(cat /tmp/$workshop_name-aw-cdp-user-group.json | jq -r '.[1].username')
+   hol_load_keycloak_report_users "$workshop_name-aw-cdp-user-group"
    sleep 5
-   echo "===============================================================" >>"/userconfig/$workshop_name.txt"
-   echo "            Keycloak Details For $workshop_name HOL:           " >>"/userconfig/$workshop_name.txt"
-   echo "===============================================================" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak Server IP: $KEYCLOAK_SERVER_IP" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak Admin HTTPS URL: https://$workshop_name.$domain" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak Admin User: admin" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak Admin Password: $keycloak__admin_password" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak SSO HTTPS URL: https://$workshop_name.$domain/realms/master/protocol/saml/clients/cdp-sso" >>"/userconfig/$workshop_name.txt"
-   echo "Numbers Of Users Created: $number_of_workshop_users" >>"/userconfig/$workshop_name.txt"
-   echo "Sample Usernames: User1: $sample_keycloak_user1, User2: $sample_keycloak_user2" >>"/userconfig/$workshop_name.txt"
-   echo "Default Password for HOL Users: $workshop_user_default_password " >>"/userconfig/$workshop_name.txt"
-   echo "UserAssignment App Admin URL: http://$KEYCLOAK_SERVER_IP:5000/admin" >>"/userconfig/$workshop_name.txt"
-   echo "UserAssignment App Participant URL: http://$KEYCLOAK_SERVER_IP:5000/participant" >>"/userconfig/$workshop_name.txt"
-   echo "===============================================================" >>"/userconfig/$workshop_name.txt"
+   hol_write_keycloak_workshop_report
    hol_ok "Workshop report saved to /userconfig/$workshop_name.txt"
 }
 #--------------------------------------------------------------------------------------------------#
@@ -1332,8 +1529,8 @@ cdp_idp_user_teardown() {
    hol_subsection "Deleting IDP users & group" "👥"
    
    local kc_ansible_dir="/userconfig/.$USER_NAMESPACE/keycloak_ansible_config"
-   if [[ -f /userconfig/keycloak_ip && -d "$kc_ansible_dir" && -f "$kc_ansible_dir/keycloak_hol_user_teardown.yml" ]]; then
-      KEYCLOAK_SERVER_IP=$(cat /userconfig/keycloak_ip)
+   KEYCLOAK_SERVER_IP=$(resolve_keycloak_server_ip optional || true)
+   if [[ -n "$KEYCLOAK_SERVER_IP" && -d "$kc_ansible_dir" && -f "$kc_ansible_dir/keycloak_hol_user_teardown.yml" ]]; then
       hol_info "Keycloak server IP: $KEYCLOAK_SERVER_IP"
       cd "$kc_ansible_dir"
       ansible-playbook keycloak_hol_user_teardown.yml --extra-vars \

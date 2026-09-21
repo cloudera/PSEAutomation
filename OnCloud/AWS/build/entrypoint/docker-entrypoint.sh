@@ -25,14 +25,18 @@ provision)
     cdp_prereq
     check_key_pair
     if [ "$provision_keycloak" == "yes" ]; then
-        # setup_keycloak_ec2 $keycloak_sg_name
-        setup_keycloak_ec2
-        if [ $? -ne 0 ]; then
-            hol_warn "Keycloak provisioning failed — rolling back"
-            destroy_keycloak
-            hol_provision_failed "$workshop_name"
-        else
+        if hol_keycloak_already_provisioned; then
+            hol_skip "Keycloak already provisioned for this workshop"
             hol_milestone "Keycloak Server Provisioned" "🔐"
+        else
+            setup_keycloak_ec2
+            if [ $? -ne 0 ]; then
+                hol_warn "Keycloak provisioning failed — rolling back"
+                destroy_keycloak
+                hol_provision_failed "$workshop_name"
+            else
+                hol_milestone "Keycloak Server Provisioned" "🔐"
+            fi
         fi
     else
         hol_skip "Keycloak provisioning skipped (configfile)"
@@ -52,7 +56,7 @@ provision)
     fi
     update_cdp_user_group
     if [ "$provision_keycloak" == "yes" ]; then
-        cdp_idp_setup_user
+        cdp_idp_setup_user || hol_provision_failed "$workshop_name"
     fi
 
     parallel_pids=()

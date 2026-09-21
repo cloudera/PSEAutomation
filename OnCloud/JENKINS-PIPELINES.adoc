@@ -174,8 +174,16 @@ Targets (controlled by env vars):
 Optional scheduled jobs that:
 
 . Watch upstream repos (for example `cdp-tf-quickstarts`)
-. Trigger AWS and Azure **image build** jobs in parallel
-. Trigger **test deploy** jobs when builds succeed
+. Run **Test Deploy** and **Test Destroy** against AWS and Azure deploy jobs in parallel
+
+By default, deploy and destroy downstream jobs are triggered with `BUILD_LOCAL_IMAGE=true` and `BUILD_IMAGE_TAG=testbuildimage` (same tag for provision and destroy in the poll run). Branch parameters:
+
+* AWS PollSCM: `BUILD_BRANCH`, `AZURE_BUILD_BRANCH`, `BUILD_IMAGE_TAG`
+* Azure PollSCM: `AWS_BUILD_BRANCH`, `AZURE_BUILD_BRANCH`, `BUILD_IMAGE_TAG`
+
+All deploy jobs mount the same host directory (`HOL_AUTO_EXEC_DIR/userconfig`) as `/userconfig` in the container. Use **unique `WORKSHOP_NAME` values** for concurrent runs so per-workshop state (Keycloak IP, Terraform, `.workshop/` dirs) does not collide.
+
+The **Build Test Images** stage keeps the registry build job triggers (`hol-automation-build-aws` / `hol-automation-build-azure`) in a commented block. Uncomment that `parallel { ... }` block to push images to Docker Hub before deploy instead of using local builds.
 
 Adjust `REMOTE_JOB_*` names in the Jenkinsfile to match your Jenkins folder layout.
 

@@ -36,8 +36,8 @@ provision)
         hol_milestone "CDP Environment Provisioned" "☁️"
     fi
     if [ "$provision_keycloak" == "yes" ]; then
-        if [[ -f /userconfig/keycloak_ip ]]; then
-            hol_skip "Keycloak already provisioned during CDP setup"
+        if hol_keycloak_already_provisioned; then
+            hol_skip "Keycloak already provisioned for this workshop"
             hol_milestone "Keycloak Server Provisioned" "🔐"
         else
             setup_keycloak_vm
@@ -55,7 +55,7 @@ provision)
     fi
     update_cdp_user_group
     if [ "$provision_keycloak" == "yes" ]; then
-        cdp_idp_setup_user
+        cdp_idp_setup_user || hol_provision_failed "$workshop_name"
     fi
 
     parallel_pids=()

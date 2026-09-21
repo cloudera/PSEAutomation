@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDW disable: delete connectors before cluster removal.
 - CDF/CDE enable: sanitize instance type values corrupted by stdout capture from `resolve_azure_instance_type`.
 - AWS `aws_prereq`: skip VPC quota check when CDP environment already exists (partial-failure reruns).
+- Keycloak IP: store per workshop at `/userconfig/.{workshop}/keycloak_ip` with Terraform `elastic_ip` fallback (avoids parallel Jenkins jobs clobbering shared `/userconfig/keycloak_ip`); fail clearly when user JSON export is missing after fetch.
+- Partial-failure reruns: skip Keycloak Terraform apply when instance already in state; skip full Keycloak EC2 setup when per-workshop IP/state exists; wait for Keycloak HTTPS before IDP Ansible; treat non-`ALREADY_EXISTS` CDP `create-user` errors as fatal; fail provision when IDP setup returns non-zero (e.g. stale IP after failed destroy).
+- Workshop report: replace existing Keycloak section in `/userconfig/{workshop}.txt` on IDP reruns instead of appending duplicates.
 
 ## [3.3.1] - 2026-09-08
 

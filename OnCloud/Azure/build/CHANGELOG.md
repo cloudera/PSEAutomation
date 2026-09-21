@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - CDF/CDE/CDW disable playbooks aligned with AWS fixes (flow stop, connector teardown, deployment delete).
 - `resolve_azure_instance_type` logs to stderr so command-substitution no longer corrupts instance type variables.
+- Keycloak IP: per-workshop file under `/userconfig/.{workshop}/keycloak_ip` with Terraform fallback; IDP setup fails fast if user export JSON is missing.
+- Partial-failure reruns: skip Keycloak VM apply when resource already in state; skip Keycloak provisioning when IP/state exists; HTTPS readiness before IDP Ansible; stricter CDP user-create errors; fail provision when IDP setup returns non-zero.
+- Workshop report: replace existing Keycloak section in `/userconfig/{workshop}.txt` on IDP reruns instead of appending duplicates.
+- Keycloak destroy: when CDP terraform context is gone, recover network variables from Keycloak state (or fail) instead of skipping destroy and leaving per-workshop IP/state behind.
 
 ## [0.1.0] - 2026-09-10
 

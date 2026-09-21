@@ -11,7 +11,9 @@ pipeline {
     }
 
     parameters {
-        string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Branch to be used for building Docker image')
+        string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Git branch for AWS local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
+        string(name: 'AZURE_BUILD_BRANCH', defaultValue: 'azure-automation', description: 'Git branch for Azure local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
+        string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testbuildimage', description: 'Local Docker image tag passed to deploy/destroy when BUILD_LOCAL_IMAGE=true')
     }
     
     triggers {
@@ -30,7 +32,9 @@ pipeline {
         stage('Build Test Images') {
             steps {
                 script {
-                    // Define parameters for build image jobs
+                    echo 'Skipping registry image build — deploy/destroy jobs build locally (BUILD_LOCAL_IMAGE=true).'
+                    // Registry image build (re-enable to push to Docker Hub before deploy):
+                    /*
                     parallel(
                         'AWS': {
                             echo 'Triggering hol-automation-build-aws job...'
@@ -44,11 +48,12 @@ pipeline {
                             echo 'Triggering hol-automation-build-azure job...'
                             build job: 'hol-automation-build-azure',
                                 parameters: [
-                                    string(name: 'BUILD_BRANCH', value: "${params.BUILD_BRANCH}")
+                                    string(name: 'BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}")
                                 ],
                                 propagate: true
                         }
                     )
+                    */
                 }
             }
         }
@@ -93,7 +98,11 @@ pipeline {
                         string(name: 'CDF_MAX_NODES', value: '3'),
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'ACTION', value: 'provision'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain')
+                        string(name: 'IMAGE_TAG', value: 'testmain'),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_BUILD_BRANCH', value: "${params.BUILD_BRANCH}"),
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'v0.15.0')
                     ]
 
                     // Define common parameters for Azure deploy
@@ -128,7 +137,11 @@ pipeline {
                         string(name: 'CDF_MAX_NODES', value: '3'),
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'ACTION', value: 'provision'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain')
+                        string(name: 'IMAGE_TAG', value: 'testmain'),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
 
                     parallel(
@@ -222,7 +235,11 @@ pipeline {
                         string(name: 'CDF_MAX_NODES', value: '3'),
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain')
+                        string(name: 'IMAGE_TAG', value: 'testmain'),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_BUILD_BRANCH', value: "${params.BUILD_BRANCH}"),
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'v0.15.0')
                     ]
 
                     // Define common parameters for Azure destroy
@@ -257,7 +274,11 @@ pipeline {
                         string(name: 'CDF_MAX_NODES', value: '3'),
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain')
+                        string(name: 'IMAGE_TAG', value: 'testmain'),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
 
                     parallel(
