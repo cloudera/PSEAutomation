@@ -44,7 +44,7 @@ DATALAKE_VERSION:7.3.2
 #CAI_GPU_INSTANCE_TYPE:g4dn.xlarge
 #CAI_MIN_GPU_INSTANCES:0
 #CAI_MAX_GPU_INSTANCES:10
-# CDF (cdp df enable-service): --min-k8s-node-count / --max-k8s-node-count, --use-public-load-balancer, --instance-type; cluster/LB subnets come from CDP Terraform outputs (not configfile). Requires env-scoped DFAdmin on the CDP caller (assignCdpEnvAdminRoles.sh after Terraform).
+# CDF (cdp df enable-service): --min-k8s-node-count / --max-k8s-node-count, --use-public-load-balancer. Cluster/LB subnets come from CDP Terraform outputs (not configfile). CDF_INSTANCE_TYPE is optional; leave it unset so CDP chooses the default node type. Setting it requires the actor to have permission to set custom DataFlow instance types. Requires env-scoped DFAdmin on the CDP caller (assignCdpEnvAdminRoles.sh after Terraform).
 #CDF_INSTANCE_TYPE:m5.2xlarge
 #CDF_MIN_NODES:3
 #CDF_MAX_NODES:10

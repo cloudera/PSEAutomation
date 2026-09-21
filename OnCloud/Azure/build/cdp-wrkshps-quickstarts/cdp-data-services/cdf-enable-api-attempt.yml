@@ -10,7 +10,7 @@
     name: "{{ cdp_env_name }}"
     nodes_min: "{{ minimum_nodes | int }}"
     nodes_max: "{{ maximum_nodes | int }}"
-    instance_type: "{{ instance_type if (instance_type | default('') | length > 0) else omit }}"
+    instance_type: "{{ (instance_type | default('') | trim) if (instance_type | default('') | trim | length > 0) else omit }}"
     public_loadbalancer: "{{ use_public_load_balancer | bool }}"
     cluster_subnets: "{{ cdf_cluster_subnets | default(omit) }}"
     loadbalancer_subnets: "{{ cdf_lb_subnets | default(omit) }}"

@@ -4,7 +4,9 @@
   connection: local
   gather_facts: yes
   vars:
-    instance_type: "Standard_D8s_v5"
+    # instance_type is optional. Leave it unset so df_service omits it and CDP
+    # chooses the default node type. A non-empty extra-var requires permission
+    # to set custom DataFlow instance types.
     minimum_nodes: 3
     maximum_nodes: 10
     use_public_load_balancer: true
@@ -36,13 +38,14 @@
             (instance_type | regex_search('Standard_[A-Za-z0-9_]+'))
             | default(instance_type, true)
           }}
+      when: instance_type is defined and (instance_type | string | trim | length) > 0
 
     - name: Check and print variable status
       ansible.builtin.debug:
         msg:
           - "cdp_env_name: {{ cdp_env_name }}"
           - "workshop_name: {{ workshop_name }}"
-          - "instance_type: {{ instance_type }}"
+          - "instance_type: {{ (instance_type | default('') | trim) if (instance_type | default('') | trim | length > 0) else 'omitted' }}"
           - "minimum_nodes: {{ minimum_nodes }}"
           - "maximum_nodes: {{ maximum_nodes }}"
           - "use_public_load_balancer: {{ use_public_load_balancer }}"

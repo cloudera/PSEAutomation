@@ -3297,18 +3297,20 @@ deploy_single_data_service() {
       ;;
    cdf)
       hol_init_service "cdf"
-      DEFAULT_CDF_INSTANCE_TYPE="Standard_D8s_v5"
+      DEFAULT_CDF_INSTANCE_TYPE=""
       DEFAULT_CDF_MIN_NODES=3
       DEFAULT_CDF_MAX_NODES=10
       DEFAULT_CDF_USE_PUBLIC_LB="true"
       cdf_instance_type="${cdf_instance_type:-$DEFAULT_CDF_INSTANCE_TYPE}"
-      cdf_instance_type=$(resolve_azure_instance_type "$cdf_instance_type" \
-         Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
+      if [[ -n "${cdf_instance_type}" ]]; then
+         cdf_instance_type=$(resolve_azure_instance_type "$cdf_instance_type" \
+            Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
+      fi
       cdf_min_nodes="${cdf_min_nodes:-$DEFAULT_CDF_MIN_NODES}"
       cdf_max_nodes="${cdf_max_nodes:-$DEFAULT_CDF_MAX_NODES}"
       cdf_use_public_lb="${cdf_use_public_lb:-$DEFAULT_CDF_USE_PUBLIC_LB}"
       hol_service_vars \
-         "Instance Type" "$cdf_instance_type" \
+         "Instance Type" "${cdf_instance_type:-CDP default}" \
          "Min Nodes" "$cdf_min_nodes" \
          "Max Nodes" "$cdf_max_nodes" \
          "Use Public Load Balancer" "$cdf_use_public_lb"

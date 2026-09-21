@@ -2217,7 +2217,7 @@ deploy_single_data_service() {
       ;;
    cdf)
       hol_init_service "cdf"
-      DEFAULT_CDF_INSTANCE_TYPE="m5.2xlarge"
+      DEFAULT_CDF_INSTANCE_TYPE=""
       DEFAULT_CDF_MIN_NODES=3
       DEFAULT_CDF_MAX_NODES=10
       DEFAULT_CDF_USE_PUBLIC_LB="true"
@@ -2226,7 +2226,7 @@ deploy_single_data_service() {
       cdf_max_nodes="${cdf_max_nodes:-$DEFAULT_CDF_MAX_NODES}"
       cdf_use_public_lb="${cdf_use_public_lb:-$DEFAULT_CDF_USE_PUBLIC_LB}"
       hol_service_vars \
-         "Instance Type" "$cdf_instance_type" \
+         "Instance Type" "${cdf_instance_type:-CDP default}" \
          "Min Nodes" "$cdf_min_nodes" \
          "Max Nodes" "$cdf_max_nodes" \
          "Use Public Load Balancer" "$cdf_use_public_lb"
