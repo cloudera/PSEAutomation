@@ -227,6 +227,23 @@ hol_fixup_cloudera_cloud_python() {
          sed -i 's/SEMVER = re.compile("(\\d+/SEMVER = re.compile(r"(\\d+/' "$f"
          hol_info "Patched cloudera.cloud SEMVER regex in ${f}"
       fi
+      f="${collection_root}/plugins/module_utils/cdp_de.py"
+      if [[ -f "$f" ]] && grep -q 'Must match regex:.*\[a-zA-Z0-9\\-\.\]' "$f" 2>/dev/null; then
+         python3 - "$f" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text2, n = re.subn(
+    r'f"Invalid service name: \{name\}\. Must match regex: \^\[a-zA-Z\]\[a-zA-Z0-9\\-\\.\]\+\[a-zA-Z0-9\]\$"',
+    r'f"Invalid service name: {name}. Must match regex: ^[a-zA-Z][a-zA-Z0-9\\\\-\\\\.]+[a-zA-Z0-9]$"',
+    text,
+    count=1,
+)
+if n:
+    path.write_text(text2, encoding="utf-8")
+    print(f"hol-patch: fixed CDE name regex f-string in {path}")
+PY
+      fi
    done
    hol_warn "hol-patch-python-deps.sh missing — cdpcli/cloudera.cloud may emit SyntaxWarning on Python 3.12+"
 }
@@ -275,6 +292,7 @@ hol_run_ansible_playbook() {
       ANSIBLE_STDOUT_CALLBACK=default \
       ANSIBLE_FORCE_COLOR=0 \
       PYTHONUNBUFFERED=1 \
+      PYTHONWARNINGS="${HOL_ANSIBLE_PYTHONWARNINGS:-ignore::SyntaxWarning}" \
       ansible-playbook "$@" >>"$log_file" 2>&1
    rc=$?
 

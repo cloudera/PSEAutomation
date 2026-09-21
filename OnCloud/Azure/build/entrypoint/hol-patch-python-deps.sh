@@ -13,6 +13,46 @@ hol_patch_cdp_service() {
    done < <(find /root/.ansible/collections/ansible_collections/cloudera/cloud -name 'cdp_service.py' 2>/dev/null || true)
 }
 
+hol_patch_cdp_de() {
+   python3 <<'PY'
+import pathlib
+import re
+import sys
+
+roots = [
+    pathlib.Path("/root/.ansible/collections/ansible_collections/cloudera/cloud"),
+]
+for root in roots:
+    if not root.is_dir():
+        continue
+    for path in root.rglob("cdp_de.py"):
+        text = path.read_text(encoding="utf-8")
+        orig = text
+        text, n = re.subn(
+            r'f"Invalid service name: \{name\}\. Must match regex: \^\[a-zA-Z\]\[a-zA-Z0-9\\-\\.\]\+\[a-zA-Z0-9\]\$"',
+            r'f"Invalid service name: {name}. Must match regex: ^[a-zA-Z][a-zA-Z0-9\\\\-\\\\.]+[a-zA-Z0-9]$"',
+            text,
+            count=1,
+        )
+        if text != orig:
+            path.write_text(text, encoding="utf-8")
+            cache = path.parent / "__pycache__"
+            if cache.is_dir():
+                for pyc in cache.glob("cdp_de*.pyc"):
+                    try:
+                        pyc.unlink()
+                    except OSError:
+                        pass
+            print(f"hol-patch: fixed CDE name regex f-string in {path}")
+        elif "Must match regex:" in orig and "[a-zA-Z0-9\\-\\.]" not in orig:
+            if re.search(r'\[a-zA-Z0-9\\-\.\]', orig):
+                print(
+                    f"hol-patch: cdp_de.py still has invalid f-string escapes (no match): {path}",
+                    file=sys.stderr,
+                )
+PY
+}
+
 hol_patch_cdpcli_shorthand() {
    python3 <<'PY'
 import importlib.util
@@ -71,4 +111,5 @@ PY
 }
 
 hol_patch_cdp_service
+hol_patch_cdp_de
 hol_patch_cdpcli_shorthand
