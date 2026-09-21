@@ -275,7 +275,7 @@ hol_run_ansible_playbook() {
       ANSIBLE_STDOUT_CALLBACK=default \
       ANSIBLE_FORCE_COLOR=0 \
       PYTHONUNBUFFERED=1 \
-      ansible-playbook -v "$@" >>"$log_file" 2>&1
+      ansible-playbook "$@" >>"$log_file" 2>&1
    rc=$?
 
    if (( rc != 0 )); then
