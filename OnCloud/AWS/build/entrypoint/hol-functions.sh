@@ -1080,6 +1080,7 @@ EOF
    fi
 
    assign_environment_base_roles
+   hol_assign_pipeline_cdp_env_admin_roles || return 1
 
    cdp_provision_status=0
    if [ $cdp_provision_status -eq 0 ]; then
@@ -1879,6 +1880,40 @@ disable_cdf() {
 #--------------------------------------------------------------------------------------------------#
 
 #---------------------------Start of functions for required roles to access data services-----------------------#
+hol_assign_pipeline_cdp_env_admin_roles() {
+   hol_subsection "Assigning CDP env admin roles for pipeline caller" "🔐"
+   local env_name="${workshop_name}-cdp-env"
+   local script="" candidate
+   local candidates=(
+      "/usr/local/bin/assignCdpEnvAdminRoles.sh"
+      "/repo/OnCloud/AWS/build/jenkins/assignCdpEnvAdminRoles.sh"
+      "/repo/OnCloud/Azure/build/jenkins/assignCdpEnvAdminRoles.sh"
+   )
+
+   for candidate in "${candidates[@]}"; do
+      if [[ -f "$candidate" ]]; then
+         script="$candidate"
+         break
+      fi
+   done
+
+   if [[ -z "$script" ]]; then
+      hol_fail "assignCdpEnvAdminRoles.sh not found — cannot grant DFAdmin before data services"
+   fi
+
+   chmod +x "$script"
+   if ! CDP_ENV_NAME="$env_name" \
+      WORKSHOP_NAME="$workshop_name" \
+      CDP_MACHINE_USERNAME="${CDP_MACHINE_USERNAME:-psejenkins}" \
+      ASSIGN_BUILD_USER=false \
+      ASSIGN_MACHINE_USER=true \
+      ASSIGN_CALLER=true \
+      "$script"; then
+      hol_fail "CDP env admin role assignment failed for '${env_name}' (DFAdmin required for CDF enable)"
+   fi
+   hol_ok "Pipeline caller env admin roles assigned on ${env_name}"
+}
+
 assign_environment_base_roles() {
    hol_subsection "Assigning EnvironmentUser resource role" "🔐"
    local resource_roles=("EnvironmentUser")
@@ -2133,6 +2168,8 @@ hol_enable_data_services() {
       hol_info "No data services selected"
       return 0
    fi
+
+   hol_assign_pipeline_cdp_env_admin_roles || return 1
 
    local pids=()
    local service

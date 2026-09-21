@@ -125,6 +125,7 @@ When `BUILD_LOCAL_IMAGE=true` (branch testing without publishing):
 BUILD_IMAGE_TAG=testbuildimage
 IMAGE_BUILD_BRANCH=azure-automation
 → git checkout branch
+→ `docker build` with `--build-arg HOL_GIT_REVISION=$(git rev-parse HEAD)` (invalidates HoL COPY layers when the checkout commit changes; all steps `CACHED` on rebuild of the same commit is normal)
 → docker build -t clouderapartners/…-provisioner[-azure]:testbuildimage
 → docker run … provision|destroy   (same tag for both actions in the job)
 ----
@@ -151,14 +152,14 @@ Typical stage order:
 2. **Create Config File** — writes `configfile` under the agent `userconfig` directory
 3. **Build Local Docker Image** — only when `BUILD_LOCAL_IMAGE=true`
 4. **Pull Docker Image** — only when `BUILD_LOCAL_IMAGE=false`
-5. **Assign CDP env admin roles for pipeline** — runs `jenkins/assignCdpEnvAdminRoles.sh` on the agent before the container starts; grants `psejenkins` (and CDP caller) environment admin roles including `DFAdmin` for CDF enable and `DFFlowAdmin` for flow stop during destroy
+5. **Assign CDP env admin roles for pipeline** — runs `jenkins/assignCdpEnvAdminRoles.sh` on the agent before the container starts (when the environment already exists). On first provision the environment is not created yet, so the provisioner runs the same script inside the container after Terraform creates the env and again before parallel data-service deploy. Grants `psejenkins` (and CDP caller) environment admin roles including `DFAdmin` for CDF enable and `DFFlowAdmin` for flow stop during destroy
 6. **Run Docker Container** — `docker run` with mounted `userconfig`, `~/.cdp`, and cloud credentials
 7. **Check Logs for Failures** — parses provisioner log via `provisionFailureParser.groovy`
 8. **Assign admin roles to builduser** — provision only; grants `EnvironmentAdmin` / `Owner` (and related roles) to the human who triggered the job
 
 === CDP role assignment script
 
-`OnCloud/{AWS,Azure}/build/jenkins/assignCdpEnvAdminRoles.sh` is invoked from Jenkins (not baked into the Docker image). It assigns idempotent environment-scoped roles:
+`OnCloud/{AWS,Azure}/build/jenkins/assignCdpEnvAdminRoles.sh` is invoked from Jenkins on the agent and from `hol_assign_pipeline_cdp_env_admin_roles()` in the provisioner image (`/usr/local/bin/assignCdpEnvAdminRoles.sh`). It assigns idempotent environment-scoped roles:
 
 * `EnvironmentAdmin`, `Owner`
 * `DFAdmin`, `DFFlowAdmin`, `DWAdmin`, `DEAdmin`, `MLAdmin`

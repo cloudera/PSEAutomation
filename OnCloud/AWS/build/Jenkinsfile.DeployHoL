@@ -339,8 +339,11 @@ ENV_TAGS:${envTags}
                     sh """
                         set -e
                         test -f ${dockerfileDir}/Dockerfile
+                        HOL_GIT_REVISION=\$(git rev-parse HEAD)
+                        echo "Docker build HOL_GIT_REVISION=\${HOL_GIT_REVISION}"
                         docker build --platform linux/amd64 \\
                           --build-arg TF_QUICKSTART_VERSION=${tfQsVer} \\
+                          --build-arg HOL_GIT_REVISION=\${HOL_GIT_REVISION} \\
                           -t ${env.DOCKER_IMAGE} ${dockerfileDir}
                         docker images | grep '${buildImageTag}' || true
                     """
@@ -374,6 +377,7 @@ ENV_TAGS:${envTags}
                         return
                     }
                     sh """
+                        set -e
                         chmod +x '${assignScript}'
                         WORKSHOP_NAME='${params.WORKSHOP_NAME}' \
                         BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' \
@@ -446,6 +450,7 @@ ENV_TAGS:${envTags}
                         return
                     }
                     sh """
+                        set -e
                         chmod +x '${assignScript}'
                         WORKSHOP_NAME='${params.WORKSHOP_NAME}' \
                         BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' \

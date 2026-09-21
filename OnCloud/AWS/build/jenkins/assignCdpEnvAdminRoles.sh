@@ -189,8 +189,19 @@ if [ "$ASSIGN_BUILD_USER" = "true" ] && [ -n "$BUILD_USER_ID" ]; then
    fi
 fi
 
-cdp environments sync-all-users --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
+cdp environments sync-all-users --environment-names "$CDP_ENV_NAME" >/dev/null 2>&1 || true
 cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
+
+if [ "$ASSIGN_MACHINE_USER" = "true" ] && [ -n "$CDP_ENV_CRN" ]; then
+   machine_user_crn="$(resolve_machine_user_crn "$CDP_MACHINE_USERNAME")"
+   if [ -n "$machine_user_crn" ]; then
+      if machine_user_has_resource_role "$machine_user_crn" "DFAdmin"; then
+         echo "Verified: ${CDP_MACHINE_USERNAME} has DFAdmin on ${CDP_ENV_NAME} (${CDP_ENV_CRN})"
+      else
+         echo "WARN: ${CDP_MACHINE_USERNAME} does not show DFAdmin on ${CDP_ENV_NAME} after assignment — enable-service may fail until IAM/sync propagates."
+      fi
+   fi
+fi
 
 if [ "$assign_failed" -ne 0 ]; then
    exit 1
