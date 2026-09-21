@@ -93,7 +93,7 @@
         instance_type: "{{ instance_type }}"
         minimum_instances: "{{ minimum_instances | int }}"
         maximum_instances: "{{ maximum_instances | int }}"
-        initial_instances: "{{ initial_instances | int }}"
+        initial_instances: 1
         enable_public_endpoint: true
         state: present
         wait: no
@@ -107,13 +107,13 @@
         name: "{{ workshop_name }}-cde"
         env: "{{ cdp_env_name }}"
         instance_type: "{{ instance_type }}"
-        minimum_instances: 1
-        maximum_instances: 1
-        initial_instances: 1
+        minimum_instances: 0
+        maximum_instances: 0
+        initial_instances: 0
         all_purpose_instance_type: "{{ instance_type }}"
         all_purpose_minimum_instances: "{{ minimum_instances | int }}"
         all_purpose_maximum_instances: "{{ maximum_instances | int }}"
-        all_purpose_initial_instances: "{{ initial_instances | int }}"
+        all_purpose_initial_instances: 1
         enable_public_endpoint: true
         state: present
         wait: no

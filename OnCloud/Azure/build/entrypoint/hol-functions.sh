@@ -2665,7 +2665,6 @@ disable_cdw() {
 deploy_cde() {
    number_vc_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
    DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
-   DEFAULT_CDE_INITIAL_INSTANCES=1
    DEFAULT_CDE_MIN_INSTANCES=0
    DEFAULT_CDE_MAX_INSTANCES=25
    if [ -z "${CDE_INSTANCE_TYPE+x}" ] || [ -z "$CDE_INSTANCE_TYPE" ]; then
@@ -2673,7 +2672,8 @@ deploy_cde() {
    else
       cde_instance_type=$CDE_INSTANCE_TYPE
    fi
-   cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
+   # Active tier initial/current is always 1 (ignore CDE_INITIAL_INSTANCES from Jenkins/config).
+   cde_initial_instances=1
    cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
    cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
    cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
@@ -2925,7 +2925,6 @@ deploy_single_data_service() {
    cde)
       hol_init_service "cde"
       DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
-      DEFAULT_CDE_INITIAL_INSTANCES=1
       DEFAULT_CDE_MIN_INSTANCES=0
       DEFAULT_CDE_MAX_INSTANCES=25
       DEFAULT_CDE_SPARK_VERSION="SPARK3"
@@ -2933,7 +2932,7 @@ deploy_single_data_service() {
       cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
       cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
          Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
-      cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
+      cde_initial_instances=1
       cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
       cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
       cde_spark_version="${cde_spark_version:-$DEFAULT_CDE_SPARK_VERSION}"

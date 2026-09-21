@@ -104,13 +104,13 @@
         last_err=""
         vc_tier_upper="{{ vc_tier | default('CORE') | upper }}"
         if [[ "$vc_tier_upper" == "ALLP" ]]; then
-          core_min=1
-          core_max=1
-          core_initial=1
+          core_min=0
+          core_max=0
+          core_initial=0
         else
           core_min="{{ minimum_instances | int }}"
           core_max="{{ maximum_instances | int }}"
-          core_initial="{{ initial_instances | int }}"
+          core_initial=1
         fi
         allp_extra=()
         for t in {{ cde_instance_type_try_list | default([instance_type], true) | join(' ') }}; do
@@ -120,7 +120,7 @@
               --all-purpose-instance-type "$t"
               --all-purpose-minimum-instances "{{ minimum_instances | int }}"
               --all-purpose-maximum-instances "{{ maximum_instances | int }}"
-              --all-purpose-initial-instances "{{ initial_instances | int }}"
+              --all-purpose-initial-instances "1"
             )
           fi
           if cdp de enable-service \
