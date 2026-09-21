@@ -1359,9 +1359,12 @@ update_cdp_user_group() {
 }
 
 # CDP environments sync-all-users can return 409 CONFLICT for USER_SYNC (e.g. after IAM user
-# creation or assignCdpEnvAdminRoles.sh). Tunables: HOL_CDP_USER_SYNC_MAX_ATTEMPTS (12),
+# creation or assignCdpEnvAdminRoles.sh). The body may name usersync:<uuid> as running while
+# get-environment-user-sync-state still shows UP_TO_DATE / COMPLETED for a different operation.
+# Poll the id from the conflict body. Tunables: HOL_CDP_USER_SYNC_MAX_ATTEMPTS (12),
 # HOL_CDP_USER_SYNC_RETRY_SLEEP_SEC (30), HOL_CDP_USER_SYNC_STALE_CONFLICT_SLEEP_SEC (5),
 # HOL_CDP_USER_SYNC_WAIT_SEC (600), HOL_CDP_USER_SYNC_POLL_SEC (15).
+# HOL_CDP_USER_SYNC_DEBUG=1 prints the full CDP error, HTTP request id, and status snapshot.
 hol_cdp_user_sync_conflict() {
    local msg="$1"
    grep -q '409' <<<"$msg" || return 1
@@ -1408,20 +1411,40 @@ hol_cdp_user_sync_state_snapshot() {
    [[ -n "$last_status" ]] && hol_kv "Last sync status (last-sync-status)" "$last_status"
 }
 
-hol_cdp_user_sync_conflict_notice() {
-   local output="$1" attempt="$2" max_attempts="$3" env_name="$4" in_progress="$5"
-   local req_id err_summary
+# usersync:<uuid> from a 409 body (CRN or bare). Prefer the id nearest the word "running".
+hol_cdp_user_sync_conflict_operation_id() {
+   local msg="$1" flat="" line="" uuid="" off="" run_off="" best="" best_dist=999999 dist
+   flat=$(printf '%s' "$msg" | tr '\n' ' ')
+   run_off=$(printf '%s' "$flat" | grep -boEi 'running' | head -1 | cut -d: -f1 || true)
+   while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      off=${line%%:*}
+      uuid=$(printf '%s' "${line#*:}" | sed -E 's/^[Uu][Ss][Ee][Rr][Ss][Yy][Nn][Cc]://')
+      if [[ -z "$run_off" ]]; then
+         printf '%s\n' "$uuid"
+         return 0
+      fi
+      if [[ $off -gt $run_off ]]; then
+         dist=$((off - run_off))
+      else
+         dist=$((run_off - off))
+      fi
+      if [[ $dist -lt $best_dist ]]; then
+         best_dist=$dist
+         best=$uuid
+      fi
+   done < <(printf '%s' "$flat" | grep -boEi 'usersync:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' || true)
+   [[ -n "$best" ]] && printf '%s\n' "$best"
+}
+
+hol_cdp_user_sync_debug_conflict() {
+   local output="$1" env_name="$2" req_id="" err_summary=""
+   [[ "${HOL_CDP_USER_SYNC_DEBUG:-0}" == "1" ]] || return 0
    err_summary=$(hol_cdp_user_sync_error_summary "$output")
    req_id=$(hol_cdp_user_sync_conflict_request_id "$output" || true)
    hol_warn "cdp environments sync-all-users returned 409 CONFLICT: ${err_summary}"
    [[ -n "$req_id" ]] && hol_info "CDP HTTP request id (not the user-sync operation id): ${req_id}"
    hol_cdp_user_sync_state_snapshot "$env_name"
-   if [[ "$in_progress" == "yes" ]]; then
-      hol_warn "User sync is in progress for '${env_name}' — waiting before retry"
-   else
-      hol_warn "No active user sync reported for '${env_name}' (409 may be a transient lock after IAM changes) — short backoff before retry"
-   fi
-   hol_step "CDP user sync retry ${attempt}/${max_attempts} after 409"
 }
 
 hol_cdp_environment_user_sync_in_progress() {
@@ -1468,6 +1491,7 @@ hol_cdp_environment_user_sync_in_progress() {
 hol_cdp_wait_for_environment_user_sync() {
    local env_name="$1"
    local max_wait_sec="${2:-${HOL_CDP_USER_SYNC_WAIT_SEC:-600}}"
+   local quiet="${3:-}"
    local poll_sec="${HOL_CDP_USER_SYNC_POLL_SEC:-15}"
    local elapsed=0
 
@@ -1475,11 +1499,54 @@ hol_cdp_wait_for_environment_user_sync() {
       if ! hol_cdp_environment_user_sync_in_progress "$env_name"; then
          return 0
       fi
-      hol_step "User sync in progress for '${env_name}' — waiting ${poll_sec}s..."
+      if [[ "$quiet" != "quiet" ]]; then
+         hol_step "User sync in progress for '${env_name}' — waiting ${poll_sec}s..."
+      fi
       sleep "$poll_sec"
       elapsed=$((elapsed + poll_sec))
    done
    hol_warn "Timed out after ${max_wait_sec}s waiting for user sync on '${env_name}'"
+   return 1
+}
+
+# 0 = still active, 1 = terminal, 2 = status unknown (do not treat as "no active sync").
+hol_cdp_user_sync_operation_liveness() {
+   local op_id="$1" status=""
+   status=$(cdp environments sync-status --operation-id "$op_id" 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)
+   [[ "$status" == "null" ]] && status=""
+   if [[ -z "$status" ]]; then
+      return 2
+   fi
+   if grep -qiE 'RUNNING|IN_PROGRESS|REQUESTED|PENDING|SYNCING' <<<"$status"; then
+      return 0
+   fi
+   if grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|FAILED|ERROR|REJECTED|TIMEDOUT|TIMED_OUT|CANCELLED|CANCELED' <<<"$status"; then
+      return 1
+   fi
+   return 2
+}
+
+# Poll the usersync id named by the 409. Quiet: the caller already printed one waiting line.
+# Returns 0 when the operation is no longer active, 1 on timeout, 2 when status is unknown.
+hol_cdp_wait_for_user_sync_operation() {
+   local op_id="$1"
+   local max_wait_sec="${2:-${HOL_CDP_USER_SYNC_WAIT_SEC:-600}}"
+   local poll_sec="${HOL_CDP_USER_SYNC_POLL_SEC:-15}"
+   local elapsed=0 live=0
+
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      live=0
+      hol_cdp_user_sync_operation_liveness "$op_id" || live=$?
+      if [[ $live -eq 1 ]]; then
+         return 0
+      fi
+      if [[ $live -eq 2 ]]; then
+         return 2
+      fi
+      sleep "$poll_sec"
+      elapsed=$((elapsed + poll_sec))
+   done
+   hol_warn "Timed out after ${max_wait_sec}s waiting for user sync ${op_id}"
    return 1
 }
 
@@ -1500,16 +1567,23 @@ hol_cdp_sync_all_users_resilient() {
          return 0
       fi
       if hol_cdp_user_sync_conflict "$output"; then
-         local in_progress=no stale_sleep="${HOL_CDP_USER_SYNC_STALE_CONFLICT_SLEEP_SEC:-5}"
-         if hol_cdp_environment_user_sync_in_progress "$env_name"; then
-            in_progress=yes
-         fi
-         hol_cdp_user_sync_conflict_notice "$output" "$attempt" "$max_attempts" "$env_name" "$in_progress"
-         if [[ "$in_progress" == "yes" ]]; then
-            hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" \
-               || hol_warn "User sync wait incomplete for '${env_name}' — retrying sync-all-users"
+         local running_op="" stale_sleep="${HOL_CDP_USER_SYNC_STALE_CONFLICT_SLEEP_SEC:-5}"
+         running_op=$(hol_cdp_user_sync_conflict_operation_id "$output" || true)
+         hol_cdp_user_sync_debug_conflict "$output" "$env_name"
+         if [[ -n "$running_op" ]]; then
+            # Do not consult latest sync-status here: it can be a different COMPLETED op.
+            hol_warn "User sync already running (${running_op}) — waiting"
+            hol_step "CDP user sync retry ${attempt}/${max_attempts}"
+            hol_cdp_wait_for_user_sync_operation "$running_op" "$wait_max_sec" || true
+            sleep "$retry_sleep"
+         elif hol_cdp_environment_user_sync_in_progress "$env_name"; then
+            hol_warn "User sync already running — waiting"
+            hol_step "CDP user sync retry ${attempt}/${max_attempts}"
+            hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" quiet || true
             sleep "$retry_sleep"
          else
+            hol_warn "User sync conflict — retrying"
+            hol_step "CDP user sync retry ${attempt}/${max_attempts}"
             sleep "$stale_sleep"
          fi
          attempt=$((attempt + 1))
@@ -1517,7 +1591,7 @@ hol_cdp_sync_all_users_resilient() {
       fi
       hol_fail "cdp environments sync-all-users failed for '${env_name}': $output"
    done
-   hol_fail "cdp environments sync-all-users for '${env_name}' still conflicting after ${max_attempts} attempts"
+   hol_fail "cdp environments sync-all-users for '${env_name}' still conflicting after ${max_attempts} attempts: ${output}"
 }
 
 #--------------------------------------------------------------------------------------------------#
@@ -1934,7 +2008,7 @@ disable_cdf() {
 
 #---------------------------Start of functions for required roles to access data services-----------------------#
 hol_assign_pipeline_cdp_env_admin_roles() {
-   hol_subsection "Assigning CDP env admin roles (API caller + optional BUILD_USER_ID)" "🔐"
+   hol_subsection "Assigning CDP env admin roles (psejenkins, CDP caller, BUILD_USER_ID)" "🔐"
    local env_name="${workshop_name}-cdp-env"
    local script="" candidate
    local candidates=(
@@ -1958,17 +2032,14 @@ hol_assign_pipeline_cdp_env_admin_roles() {
    if ! CDP_ENV_NAME="$env_name" \
       WORKSHOP_NAME="$workshop_name" \
       BUILD_USER_ID="${BUILD_USER_ID:-}" \
-      CDP_MACHINE_USERNAME="${CDP_MACHINE_USERNAME:-}" \
+      CDP_MACHINE_USERNAME="${CDP_MACHINE_USERNAME:-psejenkins}" \
       ASSIGN_BUILD_USER=true \
+      ASSIGN_MACHINE_USER=true \
       ASSIGN_CALLER=true \
       "$script"; then
       hol_fail "CDP env admin role assignment failed for '${env_name}' (DFAdmin required for CDF enable)"
    fi
-   if [[ -n "${BUILD_USER_ID:-}" ]]; then
-      hol_ok "Env admin roles assigned on ${env_name} (CDP ~/.cdp caller + BUILD_USER_ID when distinct)"
-   else
-      hol_ok "Env admin roles assigned on ${env_name} (CDP ~/.cdp API caller)"
-   fi
+   hol_ok "Env admin roles assigned on ${env_name} (psejenkins, CDP ~/.cdp caller, BUILD_USER_ID when set)"
 }
 
 assign_environment_base_roles() {

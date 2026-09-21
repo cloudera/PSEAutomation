@@ -7,8 +7,9 @@ set -uo pipefail
 WORKSHOP_NAME="${WORKSHOP_NAME:-}"
 CDP_ENV_NAME="${CDP_ENV_NAME:-}"
 BUILD_USER_ID="${BUILD_USER_ID:-}"
-CDP_MACHINE_USERNAME="${CDP_MACHINE_USERNAME:-}"
+CDP_MACHINE_USERNAME="${CDP_MACHINE_USERNAME:-psejenkins}"
 ASSIGN_BUILD_USER="${ASSIGN_BUILD_USER:-true}"
+ASSIGN_MACHINE_USER="${ASSIGN_MACHINE_USER:-true}"
 ASSIGN_CALLER="${ASSIGN_CALLER:-true}"
 
 CALLER_IS_MACHINE=""
@@ -294,25 +295,41 @@ assign_human_user_by_workload() {
 
 build_user_label=""
 build_workload_username=""
-if [ "$ASSIGN_BUILD_USER" = "true" ] && [ -n "$BUILD_USER_ID" ]; then
+if [ "$ASSIGN_BUILD_USER" = "true" ] && [ -n "$BUILD_USER_ID" ] && [ "$BUILD_USER_ID" != "$CDP_MACHINE_USERNAME" ]; then
    build_workload_username="${BUILD_USER_ID//_/.}"
+   build_user_label="$BUILD_USER_ID"
 fi
 
-echo "Assigning environment admin roles on ${CDP_ENV_NAME}"
-echo "Roles: ${ENV_ADMIN_ROLES[*]}"
-if [ -n "$build_workload_username" ]; then
-   echo "Additional human executor: ${BUILD_USER_ID} (when distinct from CDP caller)"
+if [ -n "$build_user_label" ]; then
+   echo "Assigning admin roles to machine user '${CDP_MACHINE_USERNAME}' and build user '${build_user_label}' on ${CDP_ENV_NAME}"
+else
+   echo "Assigning admin roles to machine user '${CDP_MACHINE_USERNAME}' on ${CDP_ENV_NAME}"
 fi
+echo "Roles: ${ENV_ADMIN_ROLES[*]}"
 
 assign_failed=0
 assigned_machine_users=()
 assigned_human_users=()
 
+if [ "$ASSIGN_MACHINE_USER" = "true" ]; then
+   machine_user_crn="$(resolve_machine_user_crn "$CDP_MACHINE_USERNAME")"
+   if [ -n "$machine_user_crn" ]; then
+      assign_machine_user_roles "$CDP_MACHINE_USERNAME" "$machine_user_crn" || assign_failed=1
+      assigned_machine_users+=("$CDP_MACHINE_USERNAME")
+   else
+      echo "WARN: Machine user '${CDP_MACHINE_USERNAME}' not found — skipping pipeline machine user role assignment."
+   fi
+fi
+
 if [ "$ASSIGN_CALLER" = "true" ]; then
    if resolve_cdp_api_caller; then
       if [ "$CALLER_IS_MACHINE" = "true" ]; then
-         assign_machine_user_roles "$CALLER_NAME" "$CALLER_CRN" || assign_failed=1
-         assigned_machine_users+=("$CALLER_NAME")
+         if [[ ! " ${assigned_machine_users[*]} " =~ " ${CALLER_NAME} " ]]; then
+            assign_machine_user_roles "$CALLER_NAME" "$CALLER_CRN" || assign_failed=1
+            assigned_machine_users+=("$CALLER_NAME")
+         else
+            echo "INFO: CDP API caller '${CALLER_NAME}' already received env admin roles as pipeline machine user — skipping duplicate"
+         fi
       else
          assign_human_user_by_workload "${CALLER_WORKLOAD:-$CALLER_NAME}" || assign_failed=1
       fi
@@ -322,18 +339,20 @@ if [ "$ASSIGN_CALLER" = "true" ]; then
 fi
 
 if [ -n "$build_workload_username" ] && ! caller_matches_build_user "$build_workload_username"; then
-   build_user_label="$BUILD_USER_ID"
    assign_human_user_by_workload "$build_workload_username" || assign_failed=1
 fi
 
 cdp environments sync-all-users --environment-names "$CDP_ENV_NAME" >/dev/null 2>&1 || true
 cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
 
-if [ "$CALLER_IS_MACHINE" = "true" ] && [ -n "$CALLER_CRN" ]; then
-   if machine_user_has_resource_role "$CALLER_CRN" "DFAdmin"; then
-      echo "Verified: ${CALLER_NAME} has DFAdmin on ${CDP_ENV_NAME} (${CDP_ENV_CRN})"
-   else
-      echo "WARN: ${CALLER_NAME} does not show DFAdmin on ${CDP_ENV_NAME} after assignment — enable-service may fail until IAM/sync propagates."
+if [ "$ASSIGN_MACHINE_USER" = "true" ]; then
+   machine_user_crn="$(resolve_machine_user_crn "$CDP_MACHINE_USERNAME")"
+   if [ -n "$machine_user_crn" ]; then
+      if machine_user_has_resource_role "$machine_user_crn" "DFAdmin"; then
+         echo "Verified: ${CDP_MACHINE_USERNAME} has DFAdmin on ${CDP_ENV_NAME} (${CDP_ENV_CRN})"
+      else
+         echo "WARN: ${CDP_MACHINE_USERNAME} does not show DFAdmin on ${CDP_ENV_NAME} after assignment — enable-service may fail until IAM/sync propagates."
+      fi
    fi
 fi
 

@@ -166,7 +166,8 @@ Typical stage order:
 
 Targets (controlled by env vars):
 
-* CDP API caller from active `~/.cdp` credentials (`ASSIGN_CALLER`) — human via `cdp iam get-user`, machine user via access-key match (or `CDP_MACHINE_USERNAME` when Jenkins passes it)
+* Pipeline machine user `psejenkins` (`ASSIGN_MACHINE_USER`, default on)
+* CDP API caller from active `~/.cdp` credentials (`ASSIGN_CALLER`) when not already covered — human via `cdp iam get-user`, machine user via access-key match
 * Jenkins build user / executor (`BUILD_USER_ID`, `ASSIGN_BUILD_USER`) when distinct from the caller — pre-container when env exists, in-container after Terraform, and provision post-stage
 * Standalone `docker run`: caller-only unless `-e BUILD_USER_ID=…` (not a configfile key)
 
