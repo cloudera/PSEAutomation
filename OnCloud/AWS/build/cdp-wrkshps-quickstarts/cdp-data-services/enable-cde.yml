@@ -88,14 +88,6 @@
       debug:
         msg: "{{ deservicestatus }}"
 
-    - name: Sanitize instance type value
-      ansible.builtin.set_fact:
-        instance_type: >-
-          {{
-            (instance_type | regex_search('Standard_[A-Za-z0-9_]+'))
-            | default(instance_type, true)
-          }}
-
     - name: Initialize CDE service state flags
       ansible.builtin.set_fact:
         cde_service_present: false

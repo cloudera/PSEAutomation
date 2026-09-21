@@ -1772,6 +1772,7 @@ deploy_cde() {
    local cde_spark_requested="${cde_spark_version:-AUTO}"
    local cde_spark_resolved
    cde_spark_resolved="$(hol_resolve_cde_spark_version "$cde_spark_requested" "${datalake_version:-}")"
+   cde_vc_tier="${cde_vc_tier:-CORE}"
 
    hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \

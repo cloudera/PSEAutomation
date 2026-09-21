@@ -132,49 +132,39 @@
         cde_instance_type_try_list: "{{ ([instance_type] + cde_instance_type_fallbacks) | unique }}"
       when: not cde_service_present
 
+    - name: Set CDE instance group sizing for active VC tier
+      ansible.builtin.set_fact:
+        cde_core_minimum_instances: >-
+          {{ (minimum_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
+        cde_core_maximum_instances: >-
+          {{ (maximum_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
+        cde_core_initial_instances: >-
+          {{ (initial_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
+        cde_allp_minimum_instances: >-
+          {{ (minimum_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
+        cde_allp_maximum_instances: >-
+          {{ (maximum_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
+        cde_allp_initial_instances: >-
+          {{ (initial_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
+      when: not cde_service_present
+
     - name: Activate CDE service if it does not exist
       ansible.builtin.shell: |
         set -o pipefail
         last_err=""
-        vc_tier_upper="{{ vc_tier | default('CORE') | upper }}"
-        workshop_min="{{ minimum_instances | int }}"
-        workshop_max="{{ maximum_instances | int }}"
-        workshop_initial="{{ initial_instances | int }}"
-        if [[ "$vc_tier_upper" == "ALLP" ]]; then
-          core_min=0
-          core_max=0
-          core_initial=0
-        else
-          core_min="$workshop_min"
-          core_max="$workshop_max"
-          core_initial="$workshop_initial"
-        fi
-        allp_extra=()
         for t in {{ cde_instance_type_try_list | default([instance_type], true) | join(' ') }}; do
           err_file="$(mktemp)"
-          if [[ "$vc_tier_upper" == "ALLP" ]]; then
-            allp_extra=(
-              --all-purpose-instance-type "$t"
-              --all-purpose-minimum-instances "$workshop_min"
-              --all-purpose-maximum-instances "$workshop_max"
-              --all-purpose-initial-instances "$workshop_initial"
-            )
-          else
-            allp_extra=(
-              --all-purpose-instance-type "$t"
-              --all-purpose-minimum-instances 0
-              --all-purpose-maximum-instances 0
-              --all-purpose-initial-instances 0
-            )
-          fi
           if cdp de enable-service \
             --name "{{ workshop_name }}-cde" \
             --env "{{ cdp_env_name }}" \
             --instance-type "$t" \
-            --minimum-instances "$core_min" \
-            --maximum-instances "$core_max" \
-            --initial-instances "$core_initial" \
-            "${allp_extra[@]}" \
+            --minimum-instances "{{ cde_core_minimum_instances | int }}" \
+            --maximum-instances "{{ cde_core_maximum_instances | int }}" \
+            --initial-instances "{{ cde_core_initial_instances | int }}" \
+            --all-purpose-instance-type "$t" \
+            --all-purpose-minimum-instances "{{ cde_allp_minimum_instances | int }}" \
+            --all-purpose-maximum-instances "{{ cde_allp_maximum_instances | int }}" \
+            --all-purpose-initial-instances "{{ cde_allp_initial_instances | int }}" \
             --enable-public-endpoint \
             --azure-service-managed-identity "{{ cde_cluster_managed_identity_id }}" \
             --azure-virtual-cluster-managed-identities "{{ cde_vc_managed_identity_id }}" \
