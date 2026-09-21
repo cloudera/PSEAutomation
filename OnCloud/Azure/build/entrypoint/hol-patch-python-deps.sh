@@ -15,15 +15,19 @@ hol_patch_cdp_service() {
 
 hol_patch_cdpcli_shorthand() {
    python3 <<'PY'
+import importlib.util
 import pathlib
 import re
+import sys
 
-try:
-    import cdpcli.shorthand as mod
-except ImportError:
+spec = importlib.util.find_spec("cdpcli")
+if spec is None or not spec.origin:
     raise SystemExit(0)
 
-path = pathlib.Path(mod.__file__)
+path = pathlib.Path(spec.origin).resolve().parent / "shorthand.py"
+if not path.is_file():
+    raise SystemExit(0)
+
 text = path.read_text(encoding="utf-8")
 orig = text
 
@@ -53,7 +57,16 @@ sub_line(
 
 if text != orig:
     path.write_text(text, encoding="utf-8")
+    cache = path.parent / "__pycache__"
+    if cache.is_dir():
+        for pyc in cache.glob("shorthand*.pyc"):
+            try:
+                pyc.unlink()
+            except OSError:
+                pass
     print(f"hol-patch: fixed cdpcli shorthand escapes in {path}")
+elif any(" = u'" in line for line in orig.splitlines() if "_START_WORD" in line or "_FIRST_FOLLOW_CHARS" in line or "_SECOND_FOLLOW_CHARS" in line):
+    print("hol-patch: cdpcli shorthand still has u'' regex constants (no match)", file=sys.stderr)
 PY
 }
 
