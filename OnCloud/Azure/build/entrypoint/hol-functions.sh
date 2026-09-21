@@ -215,6 +215,36 @@ DS_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/cdp-data-services
 ENHANCEMENTS_TF_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/azure_enhancements/
 CAII_SCRIPTS_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/CAII
 USER_ACTION=$1
+
+# ENABLE_DATA_SERVICES config (CSV, optional brackets). Must not use the name
+# enable_data_services — hol_enable_data_services() is the provision entrypoint.
+HOL_ENABLE_DATA_SERVICES=""
+
+hol_trim() {
+   local s="$1"
+   s="${s#"${s%%[![:space:]]*}"}"
+   s="${s%"${s##*[![:space:]]}"}"
+   printf '%s' "$s"
+}
+
+hol_normalize_data_service_token() {
+   local token
+   token=$(hol_trim "$1" | tr '[:upper:]' '[:lower:]')
+   case "$token" in
+   cml) printf '%s' "cai" ;;
+   none | "") printf '%s' "" ;;
+   *) printf '%s' "$token" ;;
+   esac
+}
+
+hol_enabled_data_services_csv() {
+   local raw="${HOL_ENABLE_DATA_SERVICES:-}"
+   raw="${raw//[/}"
+   raw="${raw//]/}"
+   raw=$(echo "$raw" | tr '[:upper:]' '[:lower:]')
+   printf '%s' "$raw"
+}
+
 validating_variables() {
    hol_subsection "Validating configfile & input parameters" "📋"
    sleep 10
@@ -439,7 +469,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             local_ip=$value
             ;;
          ENABLE_DATA_SERVICES)
-            enable_data_services=$value
+            HOL_ENABLE_DATA_SERVICES=$value
             ;;
          CDW_VRTL_WAREHOUSE_SIZE)
             cdw_vrtl_warehouse_size=$(echo $value | tr '[:upper:]' '[:lower:]')
@@ -1236,25 +1266,22 @@ build_cdp_ingress_cidr_tf_list() {
 }
 
 should_provision_cdw() {
-   local selected_services="${enable_data_services//[/}"
-   selected_services="${selected_services//]/}"
-   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
-   [[ ",${selected_services}," == *",cdw,"* ]]
+   local csv
+   csv=$(hol_enabled_data_services_csv)
+   [[ ",${csv}," == *",cdw,"* ]]
 }
 
 should_provision_cde() {
-   local selected_services="${enable_data_services//[/}"
-   selected_services="${selected_services//]/}"
-   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
-   [[ ",${selected_services}," == *",cde,"* ]]
+   local csv
+   csv=$(hol_enabled_data_services_csv)
+   [[ ",${csv}," == *",cde,"* ]]
 }
 
 should_apply_ai_registry_storage_access() {
    [[ "${provision_caii:-no}" == "yes" ]] && return 0
-   local selected_services="${enable_data_services//[/}"
-   selected_services="${selected_services//]/}"
-   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
-   [[ ",${selected_services}," == *",cai,"* ]]
+   local csv
+   csv=$(hol_enabled_data_services_csv)
+   [[ ",${csv}," == *",cai,"* ]]
 }
 
 resolve_datalake_storage_account() {
@@ -1272,10 +1299,9 @@ resolve_datalake_storage_account() {
 # Return 0 when CAI or CAII is selected and Azure NFS should be provisioned.
 should_provision_cai_nfs() {
    [[ "${provision_caii:-no}" == "yes" ]] && return 0
-   local selected_services="${enable_data_services//[/}"
-   selected_services="${selected_services//]/}"
-   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
-   [[ ",${selected_services}," == *",cai,"* ]]
+   local csv
+   csv=$(hol_enabled_data_services_csv)
+   [[ ",${csv}," == *",cai,"* ]]
 }
 
 cdp_nfs_enabled_in_state() {
@@ -2367,11 +2393,9 @@ workshop_output_file() {
 
 workshop_services_include() {
    local service="$1"
-   local normalized="${enable_data_services:-}"
-   normalized="${normalized//[/}"
-   normalized="${normalized//]/}"
-   normalized=$(echo "$normalized" | tr '[:upper:]' '[:lower:]')
-   [[ ",${normalized}," == *",${service},"* ]]
+   local csv
+   csv=$(hol_enabled_data_services_csv)
+   [[ ",${csv}," == *",${service},"* ]]
 }
 
 append_workshop_output_section() {
@@ -2408,7 +2432,7 @@ write_workshop_data_service_outputs() {
    out="$(workshop_output_file)"
    append_workshop_output_section "Data Services & Identities: ${workshop_name}"
    {
-      echo "Enabled Data Services: ${enable_data_services:-n/a}"
+      echo "Enabled Data Services: ${HOL_ENABLE_DATA_SERVICES:-n/a}"
       if workshop_services_include cdw; then
          echo "CDW Managed Identity: ${CDW_MANAGED_IDENTITY_ID:-n/a}"
       fi
@@ -2641,11 +2665,17 @@ disable_cdw() {
 deploy_cde() {
    number_vc_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
    DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
+   DEFAULT_CDE_INITIAL_INSTANCES=1
+   DEFAULT_CDE_MIN_INSTANCES=0
+   DEFAULT_CDE_MAX_INSTANCES=25
    if [ -z "${CDE_INSTANCE_TYPE+x}" ] || [ -z "$CDE_INSTANCE_TYPE" ]; then
       cde_instance_type=$DEFAULT_CDE_INSTANCE_TYPE
    else
       cde_instance_type=$CDE_INSTANCE_TYPE
    fi
+   cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
+   cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
+   cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
    cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
       Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
 
@@ -2895,9 +2925,9 @@ deploy_single_data_service() {
    cde)
       hol_init_service "cde"
       DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
-      DEFAULT_CDE_INITIAL_INSTANCES=10
-      DEFAULT_CDE_MIN_INSTANCES=10
-      DEFAULT_CDE_MAX_INSTANCES=40
+      DEFAULT_CDE_INITIAL_INSTANCES=1
+      DEFAULT_CDE_MIN_INSTANCES=0
+      DEFAULT_CDE_MAX_INSTANCES=25
       DEFAULT_CDE_SPARK_VERSION="SPARK3"
       DEFAULT_CDE_VC_TIER="CORE"
       cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
@@ -3013,23 +3043,24 @@ disable_single_data_service() {
    return $status
 }
 
-enable_data_services() {
-   local selected_services="${enable_data_services//[/}"
-   selected_services="${selected_services//]/}"
-   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
+hol_enable_data_services() {
+   local selected_services csv
+   selected_services=$(hol_enabled_data_services_csv)
 
    IFS=',' read -ra data_services <<<"$selected_services"
    local services_to_deploy=()
-   local service
+   local service token
+
+   hol_info "ENABLE_DATA_SERVICES config: ${HOL_ENABLE_DATA_SERVICES:-n/a}"
 
    for service in "${data_services[@]}"; do
-      service=$(echo "$service" | xargs)
-      [[ -z "$service" || "$service" == "none" ]] && continue
-      if [[ "$service" == "cai" && "$provision_caii" == "yes" ]]; then
+      token=$(hol_normalize_data_service_token "$service")
+      [[ -z "$token" ]] && continue
+      if [[ "$token" == "cai" && "$provision_caii" == "yes" ]]; then
          hol_skip "CAI skipped in data services list — provisioned by CAII"
          continue
       fi
-      services_to_deploy+=("$service")
+      services_to_deploy+=("$token")
    done
 
    if [ "${#services_to_deploy[@]}" -eq 0 ]; then
@@ -3067,18 +3098,17 @@ enable_data_services() {
 }
 #--------------------------------------------------------------------------------------------------#
 disable_data_services() {
-   local selected_services="${enable_data_services//[/}"
-   selected_services="${selected_services//]/}"
-   selected_services=$(echo "$selected_services" | tr '[:upper:]' '[:lower:]')
+   local selected_services token
+   selected_services=$(hol_enabled_data_services_csv)
 
    IFS=',' read -ra data_services <<<"$selected_services"
    local services_to_disable=()
    local service
 
    for service in "${data_services[@]}"; do
-      service=$(echo "$service" | xargs)
-      [[ -z "$service" || "$service" == "none" ]] && continue
-      services_to_disable+=("$service")
+      token=$(hol_normalize_data_service_token "$service")
+      [[ -z "$token" ]] && continue
+      services_to_disable+=("$token")
    done
 
    if [ "${#services_to_disable[@]}" -eq 0 ]; then
@@ -3090,12 +3120,20 @@ disable_data_services() {
    hol_info "Services: ${services_to_disable[*]}"
 
    local pids=()
+   local service
+
+   hol_stop_service_log_tailers
+   for service in "${services_to_disable[@]}"; do
+      hol_start_service_log_tailer "$(hol_service_short "$service")"
+   done
+
    for service in "${services_to_disable[@]}"; do
       disable_single_data_service "$service" &
       pids+=($!)
    done
 
    wait_for_pids "${pids[@]}"
+   hol_stop_service_log_tailers
 
    hol_subsection "Disable playbook logs" "📋"
    for service in "${services_to_disable[@]}"; do

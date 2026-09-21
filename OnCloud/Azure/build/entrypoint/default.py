@@ -25,6 +25,7 @@ from ansible.playbook.task_include import TaskInclude
 from ansible.plugins.callback import CallbackBase
 from ansible.utils.color import colorize, hostcolor
 from ansible.utils.fqcn import add_internal_fqcns
+import json
 import os
 
 # These values use ansible.constants for historical reasons, mostly to allow
@@ -103,6 +104,75 @@ class CallbackModule(CallbackBase):
                 return label
         return super(CallbackModule, self)._get_item_label(result)
 
+    def _hol_pretty_json(self):
+        return os.environ.get('HOL_PRETTY_JSON', '').strip().lower() in ('1', 'true', 'yes')
+
+    def _hol_import_log_format(self):
+        try:
+            import hol_ansible_log_format as hol_fmt
+            return hol_fmt
+        except ImportError:
+            import importlib.util
+            import os
+            candidates = [
+                os.path.join(os.path.dirname(__file__), 'hol_ansible_log_format.py'),
+                '/usr/local/bin/hol-ansible-log-format.py',
+            ]
+            for path in candidates:
+                if not os.path.isfile(path):
+                    continue
+                spec = importlib.util.spec_from_file_location('hol_ansible_log_format', path)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    return mod
+        return None
+
+    def _hol_dump_ok_changed_results(self, result, sort_keys=True):
+        hol_fmt = self._hol_import_log_format()
+        if hol_fmt and self._hol_pretty_json():
+            try:
+                return hol_fmt.dump_summarized_results(result, sort_keys=sort_keys)
+            except Exception:
+                pass
+        return self._dump_results(result, sort_keys=sort_keys)
+
+    def _dump_results(self, result, indent=None, sort_keys=True):
+        # HoL failures/unreachable: multi-line JSON (tailers prefix each line with [CDE]/etc.).
+        if indent is None and self._hol_pretty_json():
+            indent = 4
+        return super(CallbackModule, self)._dump_results(
+            result, indent=indent, sort_keys=sort_keys,
+        )
+
+    def _hol_skip_reason(self, data):
+        if not isinstance(data, dict):
+            return None
+        fc = data.get('false_condition')
+        if fc is not None and fc is not False:
+            return u"false_condition: %s" % fc
+        sr = data.get('skip_reason')
+        if sr:
+            return u"skip_reason: %s" % sr
+        msg = data.get('msg')
+        if msg and isinstance(msg, str):
+            if len(msg) > 160:
+                msg = msg[:157] + u'...'
+            return msg
+        return None
+
+    def _hol_append_verbose_skip_detail(self, msg, result_dict):
+        reason = self._hol_skip_reason(result_dict)
+        if reason:
+            return u"%s — %s" % (msg, reason)
+        compact = {}
+        for key in ('false_condition', 'skip_reason', 'msg', 'changed', 'ansible_loop_var'):
+            if key in result_dict:
+                compact[key] = result_dict[key]
+        if compact:
+            return u"%s => %s" % (msg, json.dumps(compact, sort_keys=True))
+        return msg
+
     def set_options(self, task_keys=None, var_options=None, direct=None):
 
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
@@ -172,7 +242,7 @@ class CallbackModule(CallbackBase):
             self._clean_results(result._result, result._task.action)
 
             if self._run_is_verbose(result):
-                msg += " => %s" % (self._dump_results(result._result),)
+                msg += " => %s" % (self._hol_dump_ok_changed_results(result._result),)
             self._display.display(msg, color=color)
 
     def v2_runner_on_skipped(self, result):
@@ -189,7 +259,7 @@ class CallbackModule(CallbackBase):
             else:
                 msg = "skipping: [%s]" % result._host.get_name()
                 if self._run_is_verbose(result):
-                    msg += " => %s" % self._dump_results(result._result)
+                    msg = self._hol_append_verbose_skip_detail(msg, result._result)
                 self._display.display(msg, color=C.COLOR_SKIP)
 
     def v2_runner_on_unreachable(self, result):
@@ -326,7 +396,7 @@ class CallbackModule(CallbackBase):
         msg = "%s: [%s] => (item=%s)" % (msg, host_label, self._get_item_label(result._result))
         self._clean_results(result._result, result._task.action)
         if self._run_is_verbose(result):
-            msg += " => %s" % self._dump_results(result._result)
+            msg += " => %s" % self._hol_dump_ok_changed_results(result._result)
         self._display.display(msg, color=color)
 
     def v2_runner_item_on_failed(self, result):
@@ -351,9 +421,11 @@ class CallbackModule(CallbackBase):
                 self._print_task_banner(result._task)
 
             self._clean_results(result._result, result._task.action)
-            msg = "skipping: [%s] => (item=%s) " % (result._host.get_name(), self._get_item_label(result._result))
+            msg = "skipping: [%s] => (item=%s)" % (
+                result._host.get_name(), self._get_item_label(result._result),
+            )
             if self._run_is_verbose(result):
-                msg += " => %s" % self._dump_results(result._result)
+                msg = self._hol_append_verbose_skip_detail(msg, result._result)
             self._display.display(msg, color=C.COLOR_SKIP)
 
     def v2_playbook_on_include(self, included_file):

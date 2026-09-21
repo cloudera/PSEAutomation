@@ -10,9 +10,9 @@
       - "Standard_D8as_v5"
       - "Standard_D8ds_v5"
       - "Standard_D16s_v5"
-    initial_instances: 10
-    minimum_instances: 10
-    maximum_instances: 40
+    initial_instances: 1
+    minimum_instances: 0
+    maximum_instances: 25
     spark_version: "SPARK3"
     vc_tier: "CORE"  # Default value for vc-tier, can be "ALLP" or "CORE"
     cde_async_timeout: 7200
@@ -102,15 +102,35 @@
       ansible.builtin.shell: |
         set -o pipefail
         last_err=""
+        vc_tier_upper="{{ vc_tier | default('CORE') | upper }}"
+        if [[ "$vc_tier_upper" == "ALLP" ]]; then
+          core_min=1
+          core_max=1
+          core_initial=1
+        else
+          core_min="{{ minimum_instances | int }}"
+          core_max="{{ maximum_instances | int }}"
+          core_initial="{{ initial_instances | int }}"
+        fi
+        allp_extra=()
         for t in {{ cde_instance_type_try_list | default([instance_type], true) | join(' ') }}; do
           err_file="$(mktemp)"
+          if [[ "$vc_tier_upper" == "ALLP" ]]; then
+            allp_extra=(
+              --all-purpose-instance-type "$t"
+              --all-purpose-minimum-instances "{{ minimum_instances | int }}"
+              --all-purpose-maximum-instances "{{ maximum_instances | int }}"
+              --all-purpose-initial-instances "{{ initial_instances | int }}"
+            )
+          fi
           if cdp de enable-service \
             --name "{{ workshop_name }}-cde" \
             --env "{{ cdp_env_name }}" \
             --instance-type "$t" \
-            --minimum-instances "{{ minimum_instances | int }}" \
-            --maximum-instances "{{ maximum_instances | int }}" \
-            --initial-instances "{{ initial_instances | int }}" \
+            --minimum-instances "$core_min" \
+            --maximum-instances "$core_max" \
+            --initial-instances "$core_initial" \
+            "${allp_extra[@]}" \
             --enable-public-endpoint \
             --azure-service-managed-identity "{{ cde_cluster_managed_identity_id }}" \
             --azure-virtual-cluster-managed-identities "{{ cde_vc_managed_identity_id }}" \
@@ -150,6 +170,16 @@
       retries: 40
       delay: 120
       failed_when: false
+
+    - name: Fail when CDE service is not ready for virtual clusters
+      ansible.builtin.fail:
+        msg: >-
+          CDE service {{ workshop_name }}-cde did not reach ClusterCreationCompleted
+          within the wait window (status:
+          {{ deservicestatus.services[0].status | default('missing') }}).
+      when: >
+        (deservicestatus.services | default([], true) | length) == 0 or
+        deservicestatus.services[0].status != "ClusterCreationCompleted"
 
     - name: Print the status
       debug:

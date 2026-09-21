@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- CDF (and other selected data services) were skipped during parallel provision because the config value and entrypoint function shared the name `enable_data_services`; selection is now stored in `HOL_ENABLE_DATA_SERVICES` and invoked via `hol_enable_data_services()`. Legacy `CML` tokens map to `CAI`. PollSCM passes `ENABLE_DATA_SERVICES` as a string parameter so downstream deploy jobs receive `CDF` reliably.
+- CDE enable with `CDE_VC_TIER=ALLP` now sets All Purpose instance group min/max/initial via `cloudera.cloud.de` all-purpose parameters (previously only Core tier was sized, leaving All Purpose at 0 and blocking ALLP virtual clusters).
+- CDE Core autoscaling defaults and PollSCM params aligned to min 0 / max 25 (was 1/1 on automated runs), so CORE-tier VCs can scale out; playbook fails if the service never reaches `ClusterCreationCompleted` instead of continuing silently.
+
 ## [3.3.2] - 2026-09-11
 
 ### Added

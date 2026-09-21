@@ -5,9 +5,9 @@
   gather_facts: yes
   vars:
     instance_type: "m5.2xlarge"
-    initial_instances: 10
-    minimum_instances: 10
-    maximum_instances: 40
+    initial_instances: 1
+    minimum_instances: 0
+    maximum_instances: 25
     spark_version: "SPARK3"
     vc_tier: "CORE"  # Default value for vc-tier, can be "ALLP" or "CORE"
     cde_async_timeout: 7200
@@ -86,7 +86,7 @@
           skipping enable; waiting for completion if needed.
       when: cde_service_present
 
-    - name: Activate CDE service if it does not exist
+    - name: Activate CDE service if it does not exist (CORE tier sizing)
       cloudera.cloud.de:
         name: "{{ workshop_name }}-cde"
         env: "{{ cdp_env_name }}"
@@ -97,7 +97,29 @@
         enable_public_endpoint: true
         state: present
         wait: no
-      when: not cde_service_present
+      when:
+        - not cde_service_present
+        - (vc_tier | default('CORE') | upper) == 'CORE'
+      register: deservice
+
+    - name: Activate CDE service if it does not exist (ALLP tier sizing)
+      cloudera.cloud.de:
+        name: "{{ workshop_name }}-cde"
+        env: "{{ cdp_env_name }}"
+        instance_type: "{{ instance_type }}"
+        minimum_instances: 1
+        maximum_instances: 1
+        initial_instances: 1
+        all_purpose_instance_type: "{{ instance_type }}"
+        all_purpose_minimum_instances: "{{ minimum_instances | int }}"
+        all_purpose_maximum_instances: "{{ maximum_instances | int }}"
+        all_purpose_initial_instances: "{{ initial_instances | int }}"
+        enable_public_endpoint: true
+        state: present
+        wait: no
+      when:
+        - not cde_service_present
+        - (vc_tier | default('CORE') | upper) == 'ALLP'
       register: deservice
 
     - name: Check the CDE service status
@@ -110,6 +132,16 @@
       retries: 40
       delay: 120
       failed_when: false
+
+    - name: Fail when CDE service is not ready for virtual clusters
+      ansible.builtin.fail:
+        msg: >-
+          CDE service {{ workshop_name }}-cde did not reach ClusterCreationCompleted
+          within the wait window (status:
+          {{ deservicestatus.services[0].status | default('missing') }}).
+      when: >
+        (deservicestatus.services | default([], true) | length) == 0 or
+        deservicestatus.services[0].status != "ClusterCreationCompleted"
 
     - name: Print the status
       debug:

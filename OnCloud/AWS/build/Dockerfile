@@ -35,6 +35,9 @@ RUN python3 -m pip config set global.break-system-packages true && \
     #ansible-galaxy collection install git+https://github.com/cloudera-labs/cloudera.cloud.git,devel
     ansible-galaxy collection install git+https://github.com/cloudera-labs/cloudera.cloud.git,main
 
+COPY entrypoint/hol-patch-python-deps.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/hol-patch-python-deps.sh && /usr/local/bin/hol-patch-python-deps.sh
+
 # Install Terraform
 RUN curl "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}_linux_amd64.zip" -o "/tmp/terraform_${TF_VER}_linux_amd64.zip" && \
     unzip /tmp/terraform_${TF_VER}_linux_amd64.zip -d /usr/local/bin/ && \
@@ -43,8 +46,11 @@ RUN curl "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}
 COPY cdp-wrkshps-quickstarts /opt/cdp-public-cloud-automation/cdp-wrkshps-quickstarts
 COPY entrypoint/docker-entrypoint.sh /usr/local/bin/
 COPY entrypoint/hol-output.sh /usr/local/bin/
+COPY entrypoint/hol-ansible-log-format.py /usr/local/bin/
 COPY entrypoint/hol-functions.sh /usr/local/bin/
 COPY entrypoint/default.py /usr/local/lib/python3.12/dist-packages/ansible/plugins/callback/
+COPY entrypoint/hol-ansible-log-format.py /usr/local/lib/python3.12/dist-packages/ansible/plugins/callback/hol_ansible_log_format.py
+COPY patches/cloudera-cloud/cdp_service.py /root/.ansible/collections/ansible_collections/cloudera/cloud/plugins/module_utils/cdp_service.py
 
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
     git config --global --add safe.directory '*'

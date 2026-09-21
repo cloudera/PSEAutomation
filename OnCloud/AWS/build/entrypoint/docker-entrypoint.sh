@@ -1,6 +1,7 @@
 #!/bin/bash
 # ***************************************************************************************************#
 source /usr/local/bin/hol-functions.sh
+hol_fixup_cloudera_cloud_python
 configure_git_for_userconfig
 # Setting required path and variables.
 USER_CONFIG_FILE="/userconfig/configfile"
@@ -67,7 +68,7 @@ provision)
         parallel_pids+=($!)
     fi
 
-    enable_data_services &
+    hol_enable_data_services &
     parallel_pids+=($!)
 
     parallel_failed=0

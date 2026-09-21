@@ -5,6 +5,13 @@ All notable changes to the Azure provisioner under `OnCloud/Azure/build`.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- CDF was not triggered during parallel data-service provision when selected in Jenkins: config selection is stored in `HOL_ENABLE_DATA_SERVICES` (avoiding a name clash with `hol_enable_data_services()`), legacy `CML` maps to `CAI`, and PollSCM passes `ENABLE_DATA_SERVICES` as a string to downstream deploy jobs.
+- CDE enable with `CDE_VC_TIER=ALLP` passes `--all-purpose-*` sizing to `cdp de enable-service` (Core-only flags left All Purpose at 0 min/max and ALLP virtual clusters could not progress).
+- CDE Core autoscaling defaults and PollSCM params aligned to min 0 / max 25; enable playbook fails when the service does not reach `ClusterCreationCompleted`.
+
 ## [1.0.0] - 2026-09-11
 
 ### Added

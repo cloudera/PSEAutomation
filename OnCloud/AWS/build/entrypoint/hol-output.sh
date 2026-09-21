@@ -184,6 +184,99 @@ hol_ansible_log_file() {
    hol_service_log_file_by_tag "${HOL_SERVICE_TAG:-ansible}"
 }
 
+hol_ansible_log_format_script() {
+   local d script
+   for d in /usr/local/bin "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; do
+      script="${d}/hol-ansible-log-format.py"
+      if [[ -f "$script" ]]; then
+         echo "$script"
+         return 0
+      fi
+   done
+   return 1
+}
+
+# Compact ok/changed Ansible JSON for Jenkins console; pretty-print failures; compact skips.
+hol_summarize_ansible_result_json() {
+   local script
+   script="$(hol_ansible_log_format_script)" || return 1
+   python3 "$script" summarize-json "$@"
+}
+
+hol_print_tagged_ansible_log_line() {
+   local tag="$1"
+   local line="$2"
+   local script
+   script="$(hol_ansible_log_format_script)" || {
+      echo "[${tag}] ${line}"
+      return 0
+   }
+   python3 "$script" format-tagged-line "$tag" "$line"
+}
+
+hol_patch_cdpcli_shorthand_python() {
+   python3 <<'PY'
+import pathlib
+import re
+
+try:
+    import cdpcli.shorthand as mod
+except ImportError:
+    raise SystemExit(0)
+
+path = pathlib.Path(mod.__file__)
+text = path.read_text(encoding="utf-8")
+orig = text
+
+def sub_line(name, replacement):
+    global text
+    text, n = re.subn(
+        rf"^(\s*){name} = u'.+'$",
+        lambda m: m.group(1) + replacement,
+        text,
+        count=1,
+        flags=re.M,
+    )
+    return n
+
+sub_line(
+    "_START_WORD",
+    "_START_WORD = r'\\!\\#-&\\(-\\+\\--\\<\\>-Z\\\\-z' + '\\u007c-\\uffff'",
+)
+sub_line(
+    "_FIRST_FOLLOW_CHARS",
+    "_FIRST_FOLLOW_CHARS = r'\\s\\!\\#-&\\(-\\+\\--\\\\\\^-\\|~-' + '\\uffff'",
+)
+sub_line(
+    "_SECOND_FOLLOW_CHARS",
+    "_SECOND_FOLLOW_CHARS = r'\\s\\!\\#-&\\(-\\+\\--\\<\\>-' + '\\uffff'",
+)
+
+if text != orig:
+    path.write_text(text, encoding="utf-8")
+    print(f"hol-patch: fixed cdpcli shorthand escapes in {path}")
+PY
+}
+
+hol_fixup_cloudera_cloud_python() {
+   if [[ -x /usr/local/bin/hol-patch-python-deps.sh ]]; then
+      /usr/local/bin/hol-patch-python-deps.sh
+      return
+   fi
+   local collection_root f
+   for collection_root in \
+      /root/.ansible/collections/ansible_collections/cloudera/cloud \
+      "${HOME}/.ansible/collections/ansible_collections/cloudera/cloud"; do
+      f="${collection_root}/plugins/module_utils/cdp_service.py"
+      [[ -f "$f" ]] || continue
+      if grep -q 'SEMVER = re.compile("(\\d+' "$f" 2>/dev/null; then
+         sed -i 's/SEMVER = re.compile("(\\d+/SEMVER = re.compile(r"(\\d+/' "$f"
+         hol_info "Patched cloudera.cloud SEMVER regex in ${f}"
+      fi
+   done
+   hol_patch_cdpcli_shorthand_python
+}
+
 hol_start_service_log_tailer() {
    local tag="$1"
    local log_file
@@ -192,7 +285,7 @@ hol_start_service_log_tailer() {
 
    (
       tail -n 0 -F "$log_file" 2>/dev/null | while IFS= read -r line || [[ -n "$line" ]]; do
-         printf '[%s] %s\n' "$tag" "$line"
+         hol_print_tagged_ansible_log_line "$tag" "$line"
       done
    ) &
    HOL_LOG_TAILER_PIDS+=($!)
@@ -223,6 +316,7 @@ hol_run_ansible_playbook() {
 
    "${stream_cmd[@]}" env \
       HOL_SERVICE_TAG= \
+      HOL_PRETTY_JSON=1 \
       ANSIBLE_STDOUT_CALLBACK=default \
       ANSIBLE_FORCE_COLOR=0 \
       PYTHONUNBUFFERED=1 \
