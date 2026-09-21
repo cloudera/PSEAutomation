@@ -1934,7 +1934,7 @@ disable_cdf() {
 
 #---------------------------Start of functions for required roles to access data services-----------------------#
 hol_assign_pipeline_cdp_env_admin_roles() {
-   hol_subsection "Assigning CDP env admin roles for pipeline caller" "🔐"
+   hol_subsection "Assigning CDP env admin roles (API caller + optional BUILD_USER_ID)" "🔐"
    local env_name="${workshop_name}-cdp-env"
    local script="" candidate
    local candidates=(
@@ -1957,14 +1957,18 @@ hol_assign_pipeline_cdp_env_admin_roles() {
    chmod +x "$script"
    if ! CDP_ENV_NAME="$env_name" \
       WORKSHOP_NAME="$workshop_name" \
-      CDP_MACHINE_USERNAME="${CDP_MACHINE_USERNAME:-psejenkins}" \
-      ASSIGN_BUILD_USER=false \
-      ASSIGN_MACHINE_USER=true \
+      BUILD_USER_ID="${BUILD_USER_ID:-}" \
+      CDP_MACHINE_USERNAME="${CDP_MACHINE_USERNAME:-}" \
+      ASSIGN_BUILD_USER=true \
       ASSIGN_CALLER=true \
       "$script"; then
       hol_fail "CDP env admin role assignment failed for '${env_name}' (DFAdmin required for CDF enable)"
    fi
-   hol_ok "Pipeline caller env admin roles assigned on ${env_name}"
+   if [[ -n "${BUILD_USER_ID:-}" ]]; then
+      hol_ok "Env admin roles assigned on ${env_name} (CDP ~/.cdp caller + BUILD_USER_ID when distinct)"
+   else
+      hol_ok "Env admin roles assigned on ${env_name} (CDP ~/.cdp API caller)"
+   fi
 }
 
 assign_environment_base_roles() {

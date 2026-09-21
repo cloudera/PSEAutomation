@@ -3,12 +3,11 @@
   ansible.builtin.debug:
     msg: >-
       CDF enable API attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }}
-      for {{ cdp_env_name }} (HTTP timeout {{ cdf_enable_http_timeout }}s per attempt;
-      env-scoped DFAdmin on caller={{ cdf_caller_has_df_admin | default('unknown') }})
+      for {{ cdp_env_name }} (HTTP timeout {{ cdf_enable_http_timeout }}s per attempt)
 
 - name: Submit CDF enable request (async)
   cloudera.cloud.df_service:
-    env_crn: "{{ cdf_env_crn }}"
+    name: "{{ cdp_env_name }}"
     nodes_min: "{{ minimum_nodes | int }}"
     nodes_max: "{{ maximum_nodes | int }}"
     instance_type: "{{ instance_type if (instance_type | default('') | length > 0) else omit }}"

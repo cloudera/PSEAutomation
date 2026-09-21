@@ -152,10 +152,10 @@ Typical stage order:
 2. **Create Config File** — writes `configfile` under the agent `userconfig` directory
 3. **Build Local Docker Image** — only when `BUILD_LOCAL_IMAGE=true`
 4. **Pull Docker Image** — only when `BUILD_LOCAL_IMAGE=false`
-5. **Assign CDP env admin roles for pipeline** — runs `jenkins/assignCdpEnvAdminRoles.sh` on the agent before the container starts (when the environment already exists). On first provision the environment is not created yet, so the provisioner runs the same script inside the container after Terraform creates the env and again before parallel data-service deploy. Grants `psejenkins` (and CDP caller) environment admin roles including `DFAdmin` for CDF enable and `DFFlowAdmin` for flow stop during destroy
-6. **Run Docker Container** — `docker run` with mounted `userconfig`, `~/.cdp`, and cloud credentials
+5. **Assign CDP env admin roles for pipeline** — runs `jenkins/assignCdpEnvAdminRoles.sh` on the agent before the container starts (when the environment already exists). On first provision the environment is not created yet, so the provisioner runs the same script inside the container after Terraform creates the env and again before parallel data-service deploy. Grants `psejenkins`, the Jenkins `BUILD_USER_ID` when set, and the CDP API caller from `~/.cdp` the full environment admin role set (including `DFAdmin` for CDF enable and `DFFlowAdmin` for flow stop during destroy)
+6. **Run Docker Container** — `docker run` with mounted `userconfig`, `~/.cdp`, cloud credentials, and `-e BUILD_USER_ID` so in-container role assignment can grant the human executor on new environments
 7. **Check Logs for Failures** — parses provisioner log via `provisionFailureParser.groovy`
-8. **Assign admin roles to builduser** — provision only; grants `EnvironmentAdmin` / `Owner` (and related roles) to the human who triggered the job
+8. **Assign admin roles to builduser** — provision only; idempotent re-run of the same script for the human who triggered the job when the container stage did not already cover them
 
 === CDP role assignment script
 
@@ -166,9 +166,9 @@ Typical stage order:
 
 Targets (controlled by env vars):
 
-* `psejenkins` machine user (`ASSIGN_MACHINE_USER`)
-* CDP credential caller (`ASSIGN_CALLER`)
-* Build user (`ASSIGN_BUILD_USER`, provision post-stage only)
+* CDP API caller from active `~/.cdp` credentials (`ASSIGN_CALLER`) — human via `cdp iam get-user`, machine user via access-key match (or `CDP_MACHINE_USERNAME` when Jenkins passes it)
+* Jenkins build user / executor (`BUILD_USER_ID`, `ASSIGN_BUILD_USER`) when distinct from the caller — pre-container when env exists, in-container after Terraform, and provision post-stage
+* Standalone `docker run`: caller-only unless `-e BUILD_USER_ID=…` (not a configfile key)
 
 == Poll / integration jobs (`Jenkinsfile.PollSCM`)
 

@@ -48,11 +48,16 @@ DATALAKE_VERSION:7.3.2
 #CAI_MIN_INSTANCES:1
 #CAI_MAX_INSTANCES:5
 #CAI_ENABLE_GPU:no
-# CDF (cdp df enable-service): --min-k8s-node-count / --max-k8s-node-count, --use-public-load-balancer, --instance-type; cluster/LB subnets come from CDP Terraform outputs (not configfile). Requires DFAdmin on the CDP caller (Jenkins assignCdpEnvAdminRoles.sh).
+# CDF (cdp df enable-service): --min-k8s-node-count / --max-k8s-node-count, --use-public-load-balancer, --instance-type; cluster/LB subnets come from CDP Terraform outputs (not configfile). Requires env-scoped DFAdmin on the CDP caller (assignCdpEnvAdminRoles.sh after Terraform).
 #CDF_INSTANCE_TYPE:Standard_D8s_v5
 #CDF_MIN_NODES:3
 #CDF_MAX_NODES:3
 #CDF_USE_PUBLIC_LB:yes
+
+# --- CDP env admin roles (provisioner only; not workshop users) ---
+# After Terraform, assignCdpEnvAdminRoles.sh grants env admin roles to the active ~/.cdp API
+# caller (human via cdp iam get-user, or machine user via access-key match). Jenkins also sets
+# BUILD_USER_ID; optional standalone: docker run -e BUILD_USER_ID=you@cloudera.com ...
 
 # --- Optional: resource tags (pse-owner is required for cost tracking) ---
 ENV_TAGS:{pse-owner=you@cloudera.com,apn-id=12345}

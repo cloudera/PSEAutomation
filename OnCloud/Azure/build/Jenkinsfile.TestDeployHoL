@@ -391,7 +391,7 @@ sh """
                         WORKSHOP_NAME='${params.WORKSHOP_NAME}' \
                         BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' \
                         CDP_MACHINE_USERNAME='psejenkins' \
-                        ASSIGN_BUILD_USER=false \
+                        ASSIGN_BUILD_USER=true \
                         ASSIGN_MACHINE_USER=true \
                         ASSIGN_CALLER=true \
                         '${assignScript}'
@@ -408,7 +408,7 @@ sh """
                         echo "Using locally built image: ${env.DOCKER_IMAGE}"
                     }
                     // Non-zero container exit (including ansible-playbook propagated via hol_enable_data_services) fails this stage.
-                    sh "docker run --name hol-provisioner-azure-${BUILD_NUMBER} -i -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp -v ${env.AZURE_CONFIG_DIR}:/root/.azure -v ${env.AWS_CONFIG_DIR}:/root/.aws ${env.DOCKER_IMAGE} ${params.ACTION}"
+                    sh "docker run --name hol-provisioner-azure-${BUILD_NUMBER} -i -e BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp -v ${env.AZURE_CONFIG_DIR}:/root/.azure -v ${env.AWS_CONFIG_DIR}:/root/.aws ${env.DOCKER_IMAGE} ${params.ACTION}"
                 }
             }
         }

@@ -283,64 +283,6 @@
       register: cdf_recover_result
       failed_when: false
 
-    - name: Resolve CDP API caller identity (same credentials as cloudera.cloud modules)
-      ansible.builtin.command: cdp iam get-user
-      register: cdf_cdp_caller_raw
-      changed_when: false
-
-    - name: Set CDP caller facts
-      ansible.builtin.set_fact:
-        cdf_cdp_caller_json: "{{ cdf_cdp_caller_raw.stdout | from_json }}"
-        cdf_cdp_caller_id: "{{ (cdf_cdp_caller_raw.stdout | from_json).user.userId | default('') }}"
-        cdf_cdp_caller_name: >-
-          {{
-            (cdf_cdp_caller_raw.stdout | from_json).user.machineUserName
-            | default((cdf_cdp_caller_raw.stdout | from_json).user.workloadUsername | default('unknown'))
-          }}
-        cdf_cdp_caller_is_machine: "{{ (cdf_cdp_caller_raw.stdout | from_json).user.machineUser | default(false) | bool }}"
-
-    - name: Resolve environment CRN for IAM checks
-      ansible.builtin.command: cdp environments describe-environment --environment-name {{ cdp_env_name }}
-      register: cdf_env_describe_raw
-      changed_when: false
-
-    - name: Set environment CRN fact
-      ansible.builtin.set_fact:
-        cdf_env_crn: "{{ (cdf_env_describe_raw.stdout | from_json).environment.crn | default('') }}"
-
-    - name: List CDP caller resource roles
-      ansible.builtin.command: >-
-        cdp iam list-{{ 'machine-user' if cdf_cdp_caller_is_machine else 'user' }}-assigned-resource-roles
-        --{{ 'machine-user' if cdf_cdp_caller_is_machine else 'user' }} {{ cdf_cdp_caller_id }}
-      register: cdf_caller_roles_raw
-      changed_when: false
-      failed_when: false
-      when: cdf_cdp_caller_id | length > 0
-
-    - name: Verify caller has environment-scoped DFAdmin
-      ansible.builtin.set_fact:
-        cdf_caller_has_df_admin: >-
-          {{
-            (
-              (cdf_caller_roles_raw.stdout | default('{}') | from_json).resourceRoles | default([])
-              | selectattr('resourceCrn', 'equalto', cdf_env_crn)
-              | map(attribute='crn')
-              | select('search', ':DFAdmin$')
-              | list
-              | length
-            ) > 0
-          }}
-      when: cdf_caller_roles_raw is defined and (cdf_caller_roles_raw.skipped | default(false) | bool == false)
-
-    - name: Print CDP caller and DFAdmin verification
-      ansible.builtin.debug:
-        msg:
-          - "CDF enable uses CDP credentials from ~/.cdp (Cdpy/cloudera.cloud) — same as cdp CLI on this host."
-          - "CDP caller: {{ cdf_cdp_caller_name }} (machine_user={{ cdf_cdp_caller_is_machine }})"
-          - "Environment: {{ cdp_env_name }} CRN={{ cdf_env_crn | default('n/a') }}"
-          - "Caller has environment-scoped DFAdmin: {{ cdf_caller_has_df_admin | default('unknown') }}"
-          - "Workshop group resourceAssignments (DEUser/DWUser/etc.) are separate from pipeline machine-user roles."
-
     - name: Initialize CDF enable retry loop
       ansible.builtin.set_fact:
         cdf_enable_retry_done: false
@@ -386,26 +328,11 @@
           CDF enable API failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
           (retried only when API msg contained "try again later"):
           {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}.
-          CDP caller={{ cdf_cdp_caller_name | default('unknown') }}
-          (machine_user={{ cdf_cdp_caller_is_machine | default('unknown') }}),
-          env-scoped DFAdmin on caller={{ cdf_caller_has_df_admin | default('unknown') }}.
-          Workshop group resourceAssignments (DEUser/DWUser/etc.) do not grant enable-service rights
-          and are unrelated to this check.
-          {% if cdf_caller_has_df_admin | default(false) | bool %}
-          DFAdmin is present on the CDP API caller — persistent INTERNAL/authorizing [500] after retries
-          indicates a CDP DataFlow control-plane or authorization-service issue, not missing pipeline IAM.
-          Check DataFlow console → Environments → {{ cdp_env_name }} → Alerts/Event History;
-          retry manually from the Jenkins agent:
-          cdp df enable-service --environment-name {{ cdp_env_name }} --min-k8s-node-count {{ minimum_nodes }} --max-k8s-node-count {{ maximum_nodes }}.
-          If it still fails, open a Cloudera support case with environment CRN {{ cdf_env_crn | default('n/a') }}.
-          {% elif cdf_caller_has_df_admin is defined and (cdf_caller_roles_raw is defined) and not (cdf_caller_has_df_admin | bool) %}
-          Grant environment-scoped DFAdmin to the CDP caller (Jenkins assignCdpEnvAdminRoles.sh assigns
-          psejenkins + ASSIGN_CALLER; DFFlowAdmin alone is insufficient for enable-service).
-          Re-run assignCdpEnvAdminRoles.sh, then cdp environments sync-all-users --environment-names {{ cdp_env_name }}.
-          {% else %}
-          Could not verify env-scoped DFAdmin on the caller — confirm assignCdpEnvAdminRoles.sh succeeded
-          for psejenkins and sync-all-users completed, then retry enable.
-          {% endif %}
+          Verify the CDP caller has environment-scoped DFAdmin (required for cdp df enable-service;
+          provisioner assignCdpEnvAdminRoles.sh / hol_assign_pipeline_cdp_env_admin_roles also assigns
+          DFFlowAdmin for flow stop during destroy), that post-Terraform role assignment succeeded,
+          and user sync completed. Persistent "authorizing" / [500] after retries usually indicates
+          missing DFAdmin; "try again later" responses are retried automatically.
       when:
         - cdf_enable_result is defined
         - cdf_enable_api_failed | default(false)
