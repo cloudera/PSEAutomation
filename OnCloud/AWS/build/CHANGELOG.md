@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Parallel data-service Ansible logs use default console verbosity (no `-v` / JSON summarization); tailers only prefix service tags and compact skip lines.
-- Ansible callback scan warning: stop installing `hol-ansible-log-format.py` as a callback plugin (CLI only; `default.py` loads it from `/usr/local/bin/`).
+- Drop `summarize-json` / `hol_summarize_ansible_result_json` and all ok/changed result rewriting in `hol-ansible-log-format.py` (debug `msg` lists no longer collapse to `N item(s)`).
+- Ansible callback scan warning: `hol-ansible-log-format.py` is CLI-only (parallel tailers use `format-tagged-line` for skip compaction; no result JSON summarization).
 - CDF (and other selected data services) were skipped during parallel provision because the config value and entrypoint function shared the name `enable_data_services`; selection is now stored in `HOL_ENABLE_DATA_SERVICES` and invoked via `hol_enable_data_services()`. Legacy `CML` tokens map to `CAI`. PollSCM passes `ENABLE_DATA_SERVICES` as a string parameter so downstream deploy jobs receive `CDF` reliably.
 - CDE enable with `CDE_VC_TIER=ALLP` sizes All Purpose min/max from config with initial 1 and Core at 0/0/0; `CDE_VC_TIER=CORE` sizes Core min/max with initial 1 and leaves All Purpose at 0/0/0. HoL always uses initial 1 for the active tier (ignores `CDE_INITIAL_INSTANCES`).
 - CDE Core autoscaling defaults and PollSCM params aligned to min 0 / max 25 (was 1/1 on automated runs), so CORE-tier VCs can scale out; playbook fails if the service never reaches `ClusterCreationCompleted` instead of continuing silently.

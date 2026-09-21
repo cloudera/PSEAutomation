@@ -196,13 +196,6 @@ hol_ansible_log_format_script() {
    return 1
 }
 
-# Compact ok/changed Ansible JSON for Jenkins console; pretty-print failures; compact skips.
-hol_summarize_ansible_result_json() {
-   local script
-   script="$(hol_ansible_log_format_script)" || return 1
-   python3 "$script" summarize-json "$@"
-}
-
 hol_print_tagged_ansible_log_line() {
    local tag="$1"
    local line="$2"

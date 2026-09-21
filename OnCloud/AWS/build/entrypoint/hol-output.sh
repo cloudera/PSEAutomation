@@ -196,13 +196,6 @@ hol_ansible_log_format_script() {
    return 1
 }
 
-# Compact ok/changed Ansible JSON for Jenkins console; pretty-print failures; compact skips.
-hol_summarize_ansible_result_json() {
-   local script
-   script="$(hol_ansible_log_format_script)" || return 1
-   python3 "$script" summarize-json "$@"
-}
-
 hol_print_tagged_ansible_log_line() {
    local tag="$1"
    local line="$2"
@@ -219,53 +212,9 @@ hol_print_tagged_ansible_log_line() {
    echo "[${tag}] ${line}"
 }
 
-hol_patch_cdpcli_shorthand_python() {
-   python3 <<'PY'
-import pathlib
-import re
-
-try:
-    import cdpcli.shorthand as mod
-except ImportError:
-    raise SystemExit(0)
-
-path = pathlib.Path(mod.__file__)
-text = path.read_text(encoding="utf-8")
-orig = text
-
-def sub_line(name, replacement):
-    global text
-    text, n = re.subn(
-        rf"^(\s*){name} = u'.+'$",
-        lambda m: m.group(1) + replacement,
-        text,
-        count=1,
-        flags=re.M,
-    )
-    return n
-
-sub_line(
-    "_START_WORD",
-    "_START_WORD = r'\\!\\#-&\\(-\\+\\--\\<\\>-Z\\\\-z' + '\\u007c-\\uffff'",
-)
-sub_line(
-    "_FIRST_FOLLOW_CHARS",
-    "_FIRST_FOLLOW_CHARS = r'\\s\\!\\#-&\\(-\\+\\--\\\\\\^-\\|~-' + '\\uffff'",
-)
-sub_line(
-    "_SECOND_FOLLOW_CHARS",
-    "_SECOND_FOLLOW_CHARS = r'\\s\\!\\#-&\\(-\\+\\--\\<\\>-' + '\\uffff'",
-)
-
-if text != orig:
-    path.write_text(text, encoding="utf-8")
-    print(f"hol-patch: fixed cdpcli shorthand escapes in {path}")
-PY
-}
-
 hol_fixup_cloudera_cloud_python() {
    if [[ -x /usr/local/bin/hol-patch-python-deps.sh ]]; then
-      /usr/local/bin/hol-patch-python-deps.sh
+      /usr/local/bin/hol-patch-python-deps.sh || true
       return
    fi
    local collection_root f
@@ -279,7 +228,7 @@ hol_fixup_cloudera_cloud_python() {
          hol_info "Patched cloudera.cloud SEMVER regex in ${f}"
       fi
    done
-   hol_patch_cdpcli_shorthand_python
+   hol_warn "hol-patch-python-deps.sh missing — cdpcli/cloudera.cloud may emit SyntaxWarning on Python 3.12+"
 }
 
 hol_start_service_log_tailer() {
@@ -311,6 +260,8 @@ hol_run_ansible_playbook() {
    log_file="$(hol_ansible_log_file)"
    : >"$log_file"
 
+   hol_fixup_cloudera_cloud_python
+
    hol_info "${tag} playbook log: ${log_file}"
 
    if command -v stdbuf >/dev/null 2>&1; then
@@ -324,7 +275,7 @@ hol_run_ansible_playbook() {
       ANSIBLE_STDOUT_CALLBACK=default \
       ANSIBLE_FORCE_COLOR=0 \
       PYTHONUNBUFFERED=1 \
-      ansible-playbook "$@" >>"$log_file" 2>&1
+      ansible-playbook -v "$@" >>"$log_file" 2>&1
    rc=$?
 
    if (( rc != 0 )); then
