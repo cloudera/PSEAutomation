@@ -263,43 +263,12 @@ def print_pretty_json(prefix: str, head: str, obj: Any) -> None:
 
 
 def print_tagged_ansible_log_line(tag: str, line: str) -> None:
+    """Prefix parallel service log lines; compact skip tasks only."""
     prefix = f"[{tag}] "
-    marker = " => "
-
     if is_task_skip_line(line):
         print(prefix + format_skip_line(line))
         return
-
-    if marker not in line:
-        print(prefix + line)
-        return
-
-    idx = line.rfind(marker)
-    head = line[: idx + len(marker)]
-    payload = line[idx + len(marker):].strip()
-    if not payload or payload[0] not in "{[":
-        print(prefix + line)
-        return
-
-    try:
-        obj = json.loads(payload)
-    except json.JSONDecodeError:
-        print(prefix + line)
-        return
-
-    if is_task_failure_line(line):
-        print_pretty_json(prefix, head, obj)
-        return
-
-    if is_task_ok_changed_line(line):
-        try:
-            summary = summarize_ansible_result_obj(obj)
-            print(prefix + head + json.dumps(summary, sort_keys=True))
-            return
-        except Exception:
-            pass
-
-    print_pretty_json(prefix, head, obj)
+    print(prefix + line)
 
 
 def main(argv: Optional[List[str]] = None) -> int:

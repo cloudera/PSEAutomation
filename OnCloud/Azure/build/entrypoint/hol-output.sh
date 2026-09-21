@@ -207,11 +207,16 @@ hol_print_tagged_ansible_log_line() {
    local tag="$1"
    local line="$2"
    local script
-   script="$(hol_ansible_log_format_script)" || {
-      echo "[${tag}] ${line}"
+   # Prefix only; compact skip lines when the formatter is available.
+   if [[ "$line" =~ ^skipping: ]]; then
+      script="$(hol_ansible_log_format_script)" || {
+         echo "[${tag}] ${line}"
+         return 0
+      }
+      python3 "$script" format-tagged-line "$tag" "$line"
       return 0
-   }
-   python3 "$script" format-tagged-line "$tag" "$line"
+   fi
+   echo "[${tag}] ${line}"
 }
 
 hol_patch_cdpcli_shorthand_python() {
@@ -316,11 +321,10 @@ hol_run_ansible_playbook() {
 
    "${stream_cmd[@]}" env \
       HOL_SERVICE_TAG= \
-      HOL_PRETTY_JSON=1 \
       ANSIBLE_STDOUT_CALLBACK=default \
       ANSIBLE_FORCE_COLOR=0 \
       PYTHONUNBUFFERED=1 \
-      ansible-playbook -v "$@" >>"$log_file" 2>&1
+      ansible-playbook "$@" >>"$log_file" 2>&1
    rc=$?
 
    if (( rc != 0 )); then
