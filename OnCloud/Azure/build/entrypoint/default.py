@@ -115,7 +115,6 @@ class CallbackModule(CallbackBase):
             import importlib.util
             import os
             candidates = [
-                os.path.join(os.path.dirname(__file__), 'hol_ansible_log_format.py'),
                 '/usr/local/bin/hol-ansible-log-format.py',
             ]
             for path in candidates:

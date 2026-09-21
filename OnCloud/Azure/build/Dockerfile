@@ -50,7 +50,6 @@ COPY entrypoint/hol-output.sh /usr/local/bin/
 COPY entrypoint/hol-ansible-log-format.py /usr/local/bin/
 COPY entrypoint/hol-functions.sh /usr/local/bin/
 COPY entrypoint/default.py /usr/local/lib/python3.12/dist-packages/ansible/plugins/callback/
-COPY entrypoint/hol-ansible-log-format.py /usr/local/lib/python3.12/dist-packages/ansible/plugins/callback/hol_ansible_log_format.py
 COPY patches/cloudera-cloud/cdp_service.py /root/.ansible/collections/ansible_collections/cloudera/cloud/plugins/module_utils/cdp_service.py
 
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \

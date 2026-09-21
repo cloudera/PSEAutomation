@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Ansible callback scan warning: stop installing `hol-ansible-log-format.py` as a callback plugin (CLI only; `default.py` loads it from `/usr/local/bin/`).
 - CDF (and other selected data services) were skipped during parallel provision because the config value and entrypoint function shared the name `enable_data_services`; selection is now stored in `HOL_ENABLE_DATA_SERVICES` and invoked via `hol_enable_data_services()`. Legacy `CML` tokens map to `CAI`. PollSCM passes `ENABLE_DATA_SERVICES` as a string parameter so downstream deploy jobs receive `CDF` reliably.
 - CDE enable with `CDE_VC_TIER=ALLP` sizes All Purpose min/max from config with initial 1 and Core at 0/0/0; `CDE_VC_TIER=CORE` sizes Core min/max with initial 1 and leaves All Purpose at 0/0/0. HoL always uses initial 1 for the active tier (ignores `CDE_INITIAL_INSTANCES`).
 - CDE Core autoscaling defaults and PollSCM params aligned to min 0 / max 25 (was 1/1 on automated runs), so CORE-tier VCs can scale out; playbook fails if the service never reaches `ClusterCreationCompleted` instead of continuing silently.
