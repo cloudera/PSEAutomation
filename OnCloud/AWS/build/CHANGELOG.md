@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Jenkins `BUILD_LOCAL_IMAGE`: resolve `DOCKER_IMAGE` in a **Resolve Docker Image** stage from `BUILD_IMAGE_TAG` (default `testmain`) instead of the declarative `environment` block binding `IMAGE_TAG` (often `testmain` from PollSCM while the local build used another tag). Build, pull, and `docker run` now share the same image reference; logs `Building … -> $IMAGE` and `Using locally built image: $IMAGE`.
 - Ansible playbook failures fail Jenkins: `hol_run_ansible_playbook` returns the playbook exit code and echoes `fatal:` / `PLAY RECAP` lines; enable CDW/CDE/CAI/CDF propagate that status; `hol_enable_data_services` returns it so the provision container exits non-zero and the Docker stage fails.
 - Jenkins **Check Logs for Failures** calls `error()` only for Ansible signals (`fatal: … FAILED!`/`UNREACHABLE!`, `failed=[1-9]`, `unreachable=[1-9]`, playbook-failed banners). Other log lines do not fail the build.
 - Failure `post` still sends `emailext` on `FAILURE`, and backfills `docker logs` when the Docker stage stops before the log file is written.

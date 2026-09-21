@@ -51,7 +51,7 @@ pipeline {
         booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag to pull from registry when BUILD_LOCAL_IMAGE is false')
         booleanParam(name: 'BUILD_LOCAL_IMAGE', defaultValue: false, description: 'Build image in this job from IMAGE_BUILD_BRANCH, tag with BUILD_IMAGE_TAG, and use it for provision/destroy (skips docker pull)')
-        string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testbuildimage', description: 'Docker image tag for locally built image when BUILD_LOCAL_IMAGE is true')
+        string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testmain', description: 'Docker image tag for locally built image when BUILD_LOCAL_IMAGE is true (ignored when BUILD_LOCAL_IMAGE is false)')
         string(name: 'IMAGE_BUILD_BRANCH', defaultValue: 'azure-automation', description: 'Git branch to checkout and build when BUILD_LOCAL_IMAGE is true')
         string(name: 'IMAGE_BUILD_TF_QS_VER', defaultValue: 'main', description: 'TF_QUICKSTART_VERSION docker build-arg when BUILD_LOCAL_IMAGE is true')
     }
@@ -65,7 +65,6 @@ pipeline {
 
     environment {
         LANG = "C.UTF-8"
-        DOCKER_IMAGE = "clouderapartners/cdp-public-cloud-hol-provisioner-azure:${params.IMAGE_TAG}"
         HOL_AUTO_EXEC_DIR = "/home/holautosa/HOL_AUTO_EXEC_DIR"
         CONFIG_DIR = "${HOL_AUTO_EXEC_DIR}/userconfig"
         CONFIG_FILE = "${CONFIG_DIR}/configfile"
@@ -198,6 +197,21 @@ pipeline {
             }
         }
 
+        stage('Resolve Docker Image') {
+            steps {
+                script {
+                    def imageRepo = 'clouderapartners/cdp-public-cloud-hol-provisioner-azure'
+                    if (params.BUILD_LOCAL_IMAGE) {
+                        def tag = params.BUILD_IMAGE_TAG?.trim() ?: 'testmain'
+                        env.DOCKER_IMAGE = "${imageRepo}:${tag}"
+                    } else {
+                        def tag = params.IMAGE_TAG?.trim() ?: 'latest'
+                        env.DOCKER_IMAGE = "${imageRepo}:${tag}"
+                    }
+                }
+            }
+        }
+
         stage('Prepare Environment') {
             steps {
                 sh 'echo "Stage :: Prepare Environment"'
@@ -315,8 +329,7 @@ sh """
                     }
                     def dockerfileDir = 'OnCloud/Azure/build'
                     def tfQsVer = params.IMAGE_BUILD_TF_QS_VER?.trim() ?: 'main'
-                    def buildImageTag = params.BUILD_IMAGE_TAG?.trim() ?: 'testbuildimage'
-                    env.DOCKER_IMAGE = "clouderapartners/cdp-public-cloud-hol-provisioner-azure:${buildImageTag}"
+                    def buildImageTag = env.DOCKER_IMAGE.tokenize(':')[-1]
 
                     echo "Building image from branch ${branch} -> ${env.DOCKER_IMAGE}"
                     checkout([
@@ -342,7 +355,7 @@ sh """
                           -t ${env.DOCKER_IMAGE} ${dockerfileDir}
                         docker images | grep '${buildImageTag}' || true
                     """
-                    echo "Using locally built image for ${params.ACTION}: ${env.DOCKER_IMAGE}"
+                    echo "Using locally built image: ${env.DOCKER_IMAGE}"
                 }
             }
         }
@@ -391,6 +404,9 @@ sh """
             steps {
                 sh 'echo "Stage :: Run Docker Container"'
                 script {
+                    if (params.BUILD_LOCAL_IMAGE) {
+                        echo "Using locally built image: ${env.DOCKER_IMAGE}"
+                    }
                     // Non-zero container exit (including ansible-playbook propagated via hol_enable_data_services) fails this stage.
                     sh "docker run --name hol-provisioner-azure-${BUILD_NUMBER} -i -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp -v ${env.AZURE_CONFIG_DIR}:/root/.azure -v ${env.AWS_CONFIG_DIR}:/root/.aws ${env.DOCKER_IMAGE} ${params.ACTION}"
                 }
