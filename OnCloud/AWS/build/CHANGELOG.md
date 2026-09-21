@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Jenkins `CDE_VC_TIER` default is `ALLP` (choice order and PollSCM downstream param); `CORE` remains available for HoL 1-1 Core pool sizing.
+- CDE `create-vc` no longer receives Jenkins alias `AUTO`: `deploy_cde` resolves via `hol_resolve_cde_spark_version` before Ansible (`spark_version_requested` vs CLI `spark_version`); playbook re-validates, logs the exact `--spark-version` value, and fails fast on `AUTO`/`SPARK3` ( `cdp de enable-service` is unchanged — it does not take a Spark version).
 - CDE `create-vc` runtime catalog failures on Datalake 7.3.x: resolve `AUTO`/`SPARK3`/`SPARK3_5` to `SPARK3_5_4` in `enable-cde.yml` (passes `datalake_version` from config); Jenkins/PollSCM default `CDE_SPARK_VERSION` is `AUTO` instead of `SPARK3` (alias maps to Spark 3.2.x, incompatible with CDE 1.26 + DL 7.3.2).
 - Parallel data-service Ansible logs use default console verbosity (no `-v` / JSON summarization); tailers only prefix service tags and compact skip lines.
 - CDE on Python 3.12: patch `cdpcli.shorthand` via `hol-patch-python-deps.sh` (locate file without importing shorthand, drop stale `.pyc`) at entrypoint, `hol_enable_data_services`, and each `hol_run_ansible_playbook`.

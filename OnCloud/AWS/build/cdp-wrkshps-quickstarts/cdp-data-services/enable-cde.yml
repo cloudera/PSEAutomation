@@ -8,7 +8,8 @@
     initial_instances: 1
     minimum_instances: 0
     maximum_instances: 25
-    spark_version: "AUTO"
+    spark_version: "SPARK3_5_4"
+    spark_version_requested: "AUTO"
     datalake_version: ""
     vc_tier: "CORE"  # Default value for vc-tier, can be "ALLP" or "CORE"
     cde_async_timeout: 7200
@@ -23,7 +24,8 @@
           - "initial_instances: {{ initial_instances }}"
           - "minimum_instances: {{ minimum_instances }}"
           - "maximum_instances: {{ maximum_instances }}"
-          - "spark_version: {{ spark_version }}"
+          - "spark_version_requested: {{ spark_version_requested | default('AUTO') }}"
+          - "spark_version (CLI): {{ spark_version }}"
           - "datalake_version: {{ datalake_version | default('') }}"
           - "vc_tier: {{ vc_tier }}"
           - "workshop_name: {{ workshop_name }}"
@@ -33,11 +35,12 @@
     - name: Resolve CDE Spark version for create-vc CLI
       ansible.builtin.shell: |
         set -euo pipefail
-        req="{{ spark_version | default('AUTO') | upper }}"
+        req="{{ spark_version_requested | default(spark_version) | default('AUTO') | trim | upper }}"
         dl="{{ datalake_version | default('') }}"
         datalake_needs_354() {
           local d="$1"
           [[ -z "$d" || "$d" == "latest" ]] && return 0
+          [[ ! "$d" =~ ^[0-9]+\.[0-9]+ ]] && return 0
           [[ "$d" =~ ^7\.3\. ]] && return 0
           local major minor _rest
           IFS=. read -r major minor _rest <<< "$d"
@@ -64,9 +67,16 @@
     - name: Print resolved Spark version for create-vc
       ansible.builtin.debug:
         msg: >-
-          Using Spark version {{ cde_spark_version_cli }}
-          (requested: {{ spark_version | default('AUTO') }},
+          cdp de create-vc --spark-version {{ cde_spark_version_cli }}
+          (requested: {{ spark_version_requested | default('AUTO') }},
           datalake: {{ datalake_version | default('unknown') }}).
+
+    - name: Refuse Spark aliases invalid for CDP CLI
+      ansible.builtin.fail:
+        msg: >-
+          Spark version {{ cde_spark_version_cli }} cannot be passed to cdp de create-vc
+          (requested {{ spark_version_requested | default('AUTO') }}).
+      when: cde_spark_version_cli | upper in ['AUTO', 'SPARK3', '']
 
     - name: Check if CDE service exists and is running
       cloudera.cloud.de_info:
@@ -201,7 +211,7 @@
         cdp de create-vc
         --name "{{ item.name }}"
         --cluster-id "{{ deservicestatus.services[0].clusterId }}"
-        --spark-version "{{ cde_spark_version_cli | default(spark_version) }}"
+        --spark-version "{{ cde_spark_version_cli }}"
         --cpu-requests "20"
         --memory-requests "80Gi"
         --vc-tier "{{ vc_tier }}"

@@ -1659,6 +1659,10 @@ deploy_cde() {
    cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
    cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
 
+   local cde_spark_requested="${cde_spark_version:-AUTO}"
+   local cde_spark_resolved
+   cde_spark_resolved="$(hol_resolve_cde_spark_version "$cde_spark_requested" "${datalake_version:-}")"
+
    hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
@@ -1666,7 +1670,8 @@ deploy_cde() {
       initial_instances=$cde_initial_instances \
       minimum_instances=$cde_min_instances \
       maximum_instances=$cde_max_instances \
-      spark_version=${cde_spark_version:-AUTO} \
+      spark_version_requested=$cde_spark_requested \
+      spark_version=$cde_spark_resolved \
       datalake_version=${datalake_version:-} \
       vc_tier=$cde_vc_tier \
       number_vc_to_create=$number_vc_to_create"
