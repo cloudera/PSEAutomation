@@ -3043,6 +3043,8 @@ disable_single_data_service() {
 }
 
 hol_enable_data_services() {
+   hol_fixup_cloudera_cloud_python
+
    local selected_services csv
    selected_services=$(hol_enabled_data_services_csv)
 

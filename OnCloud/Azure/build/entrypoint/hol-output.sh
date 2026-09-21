@@ -304,8 +304,6 @@ hol_run_ansible_playbook() {
    log_file="$(hol_ansible_log_file)"
    : >"$log_file"
 
-   hol_fixup_cloudera_cloud_python
-
    hol_info "${tag} playbook log: ${log_file}"
 
    if command -v stdbuf >/dev/null 2>&1; then
