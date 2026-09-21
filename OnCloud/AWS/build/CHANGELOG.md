@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- CDF `disable-cdf.yml` (AWS/Azure): call `cdp df disable-service` / `df_service` state=absent when the service is ENABLING or GOOD_HEALTH (or any non-absent state)—do not skip disable merely because `cdf_disable_already_absent` or a missing service CRN; idempotent skip only for DISABLING in progress or absent with no CRN. Module fallback uses `name` when CRN is missing (`terminate`, `persist=false`, `force`).
 - CDF `disable-cdf.yml` (AWS/Azure): set `cdf_disable_in_progress` and related flags in separate `set_fact` tasks so Ansible does not reference undefined sibling facts during derived-flag evaluation.
 - CDF enable/disable playbooks (AWS/Azure): list service state first and skip `enable-service` when the service is healthy or in progress (e.g. ENABLING, GOOD_HEALTH) and skip `disable-service` when absent/disabled or already DISABLING—no second API call on re-run.
 - CDF `cdp df enable-service` omits `instance_type` unless `CDF_INSTANCE_TYPE` is set, so CDP chooses the default Kubernetes node type. A custom type requires permission to set custom DataFlow instance types; the previous `m5.2xlarge` / `Standard_D8s_v5` defaults returned `INVALID_ARGUMENT` (and could surface as an authorizing 500) for actors without that entitlement.

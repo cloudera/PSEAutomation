@@ -144,6 +144,17 @@
               else ''
             )
           }}
+        cdf_disable_already_absent: >-
+          {{
+            (
+              (cdf_list_state | default('NOT_FOUND') in cdf_absent_states) or
+              (cdf_info_state | default('NOT_FOUND') in cdf_absent_states) or
+              (cdf_current_state | default('NOT_FOUND') in cdf_absent_states)
+            ) | bool
+          }}
+
+    - name: Set CDF disable in-progress flag
+      ansible.builtin.set_fact:
         cdf_disable_in_progress: >-
           {{
             (
@@ -158,14 +169,6 @@
               (cdf_current_detailed_state | default('') in cdf_disable_in_progress_states)
             ) | bool
           }}
-        cdf_disable_already_absent: >-
-          {{
-            (
-              (cdf_list_state | default('NOT_FOUND') in cdf_absent_states) or
-              (cdf_info_state | default('NOT_FOUND') in cdf_absent_states) or
-              (cdf_current_state | default('NOT_FOUND') in cdf_absent_states)
-            ) | bool
-          }}
 
     - name: Set CDF disable derived flags
       ansible.builtin.set_fact:
@@ -177,12 +180,17 @@
               (cdf_service_crn | default('') | length) == 0
             ) | bool
           }}
+        # Skip disable-service only when teardown is in flight or the service is
+        # absent with no resolvable CRN. Do not skip when state is ENABLING,
+        # GOOD_HEALTH, etc. merely because list-services omitted the CRN.
         cdf_skip_disable_service: >-
           {{
             (
               cdf_disable_in_progress or
-              cdf_disable_already_absent or
-              ((cdf_service_crn | default('') | length) == 0)
+              (
+                (cdf_current_state | default('NOT_FOUND') in cdf_absent_states) and
+                (cdf_service_crn | default('') | length) == 0
+              )
             ) | bool
           }}
 
@@ -330,18 +338,19 @@
 
     - name: Disable CDF service via Ansible module when CLI is unavailable
       cloudera.cloud.df_service:
-        df_crn: "{{ cdf_service_crn }}"
+        df_crn: "{{ cdf_service_crn if (cdf_service_crn | default('') | length) > 0 else omit }}"
+        name: "{{ cdp_env_name if (cdf_service_crn | default('') | length) == 0 else omit }}"
         state: absent
         terminate: true
         persist: false
+        force: true
         wait: true
         timeout: "{{ cdf_async_timeout }}"
       register: cdf_disable_module
       failed_when: false
       when:
-        - (cdf_service_crn | default('') | length) > 0
         - not cdf_skip_disable_service | default(false)
-        - cdf_disable_cmd is skipped or (cdf_disable_cmd.rc | default(1) != 0)
+        - (cdf_service_crn | default('') | length) == 0 or cdf_disable_cmd is skipped or (cdf_disable_cmd.rc | default(1) != 0)
 
     - name: Warn when CDF service disable returned an error
       ansible.builtin.debug:
