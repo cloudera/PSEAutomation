@@ -16,6 +16,11 @@
     cdf_disable_in_progress_detailed_states:
       - TERMINATING
       - DEPROVISIONING
+    cdf_disable_in_progress: false
+    cdf_disable_already_absent: false
+    cdf_fully_absent: false
+    cdf_skip_disable_service: false
+    cdf_needs_teardown: false
 
   tasks:
     - name: Check and print variable status
@@ -139,9 +144,6 @@
               else ''
             )
           }}
-
-    - name: Set CDF disable derived flags
-      ansible.builtin.set_fact:
         cdf_disable_in_progress: >-
           {{
             (
@@ -156,28 +158,36 @@
               (cdf_current_detailed_state | default('') in cdf_disable_in_progress_states)
             ) | bool
           }}
-        cdf_skip_disable_service: >-
+        cdf_disable_already_absent: >-
           {{
             (
-              cdf_disable_in_progress or
               (cdf_list_state | default('NOT_FOUND') in cdf_absent_states) or
               (cdf_info_state | default('NOT_FOUND') in cdf_absent_states) or
-              (cdf_current_state | default('NOT_FOUND') in cdf_absent_states) or
-              ((cdf_service_crn | default('') | length) == 0)
+              (cdf_current_state | default('NOT_FOUND') in cdf_absent_states)
             ) | bool
           }}
+
+    - name: Set CDF disable derived flags
+      ansible.builtin.set_fact:
         cdf_fully_absent: >-
           {{
             (
               (cdf_deployments | default([], true) | length) == 0 and
-              (
-                (cdf_list_state | default('NOT_FOUND') in cdf_absent_states) or
-                (cdf_info_state | default('NOT_FOUND') in cdf_absent_states) or
-                (cdf_current_state | default('NOT_FOUND') in cdf_absent_states)
-              ) and
+              cdf_disable_already_absent and
               (cdf_service_crn | default('') | length) == 0
             ) | bool
           }}
+        cdf_skip_disable_service: >-
+          {{
+            (
+              cdf_disable_in_progress or
+              cdf_disable_already_absent or
+              ((cdf_service_crn | default('') | length) == 0)
+            ) | bool
+          }}
+
+    - name: Set CDF disable teardown flag
+      ansible.builtin.set_fact:
         cdf_needs_teardown: >-
           {{
             (
