@@ -1527,7 +1527,8 @@ hol_cdp_user_sync_operation_liveness() {
 }
 
 # Poll the usersync id named by the 409. Quiet: the caller already printed one waiting line.
-# Returns 0 when the operation is no longer active, 1 on timeout, 2 when status is unknown.
+# Unknown status keeps waiting — the 409 said this op is running, even if latest sync-status
+# is a different COMPLETED operation. Returns 0 when the operation is terminal, 1 on timeout.
 hol_cdp_wait_for_user_sync_operation() {
    local op_id="$1"
    local max_wait_sec="${2:-${HOL_CDP_USER_SYNC_WAIT_SEC:-600}}"
@@ -1539,9 +1540,6 @@ hol_cdp_wait_for_user_sync_operation() {
       hol_cdp_user_sync_operation_liveness "$op_id" || live=$?
       if [[ $live -eq 1 ]]; then
          return 0
-      fi
-      if [[ $live -eq 2 ]]; then
-         return 2
       fi
       sleep "$poll_sec"
       elapsed=$((elapsed + poll_sec))
