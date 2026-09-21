@@ -1361,7 +1361,28 @@ update_cdp_user_group() {
 # (e.g. assignCdpEnvAdminRoles.sh). Tunables: HOL_CDP_USER_SYNC_MAX_ATTEMPTS (12),
 # HOL_CDP_USER_SYNC_RETRY_SLEEP_SEC (30), HOL_CDP_USER_SYNC_WAIT_SEC (600), HOL_CDP_USER_SYNC_POLL_SEC (15).
 hol_cdp_user_sync_conflict() {
-   grep -qiE 'Status Code: 409|Error Code: CONFLICT|USER_SYNC.*conflict|syncAllUsers' <<<"$1"
+   local msg="$1"
+   grep -q '409' <<<"$msg" || return 1
+   grep -qi 'CONFLICT' <<<"$msg" || return 1
+   grep -qE 'syncAllUsers|USER_SYNC' <<<"$msg"
+}
+
+hol_cdp_user_sync_conflict_request_id() {
+   local msg="$1" id=""
+   id=$(grep -oEi '(request[_ ]?id|Request Id)[:= ]+[A-Za-z0-9-]+' <<<"$msg" | head -1 | sed -E 's/.*[:= ]+//') || true
+   [[ -n "$id" ]] && echo "$id"
+}
+
+hol_cdp_user_sync_conflict_notice() {
+   local output="$1" attempt="$2" max_attempts="$3"
+   local req_id msg="Another user sync is already running for this environment — waiting/retrying"
+   req_id=$(hol_cdp_user_sync_conflict_request_id "$output" || true)
+   if [[ -n "$req_id" ]]; then
+      hol_warn "${msg} (${req_id})"
+   else
+      hol_warn "$msg"
+   fi
+   hol_step "CDP user sync retry ${attempt}/${max_attempts} after conflict"
 }
 
 hol_cdp_environment_user_sync_in_progress() {
@@ -1433,7 +1454,7 @@ hol_cdp_sync_all_users_resilient() {
          return 0
       fi
       if hol_cdp_user_sync_conflict "$output"; then
-         hol_warn "CDP user sync already in progress for '${env_name}' (attempt ${attempt}/${max_attempts}) — waiting before retry"
+         hol_cdp_user_sync_conflict_notice "$output" "$attempt" "$max_attempts"
          hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" \
             || hol_warn "User sync wait incomplete for '${env_name}' — retrying sync-all-users"
          sleep "$retry_sleep"
