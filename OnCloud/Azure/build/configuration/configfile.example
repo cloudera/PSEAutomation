@@ -35,7 +35,7 @@ DATALAKE_VERSION:7.3.2
 #CDE_INITIAL_INSTANCES:1
 #CDE_MIN_INSTANCES:0
 #CDE_MAX_INSTANCES:25
-#CDE_SPARK_VERSION:3.3.1
+#CDE_SPARK_VERSION:AUTO
 #CDE_VC_TIER:CORE
 # When CAI or PROVISION_CAII is enabled, CDP Terraform also provisions a premium
 # Azure Files NFS share (secure transfer disabled) with private endpoints in the CDP VNet.

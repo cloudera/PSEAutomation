@@ -145,7 +145,7 @@ If omitted, a key pair is generated automatically.
 
 | `CDE_SPARK_VERSION`
 | CDE
-| Spark version (or `AUTO`)
+| Spark version for `cdp de create-vc` (`AUTO`, `SPARK3_5_4`, `SPARK3_5`, etc.). `AUTO` maps to `SPARK3_5_4` on Datalake 7.3+; avoid `SPARK3` on 7.3.x (resolves to Spark 3.2.x and fails runtime catalog lookup).
 
 | `CDE_VC_TIER`
 | CDE

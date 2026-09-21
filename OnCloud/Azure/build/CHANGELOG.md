@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- CDE `create-vc` runtime catalog failures on Datalake 7.3.x: resolve `AUTO`/`SPARK3`/`SPARK3_5` to `SPARK3_5_4` in `enable-cde.yml` (passes `datalake_version` from config); Jenkins/PollSCM default `CDE_SPARK_VERSION` is `AUTO` instead of `SPARK3` (alias maps to Spark 3.2.x, incompatible with CDE 1.26 + DL 7.3.2).
 - Parallel data-service Ansible logs use default console verbosity (no `-v` / JSON summarization); tailers only prefix `[CDE]`/`[CAI]` and compact skip lines.
 - CDE on Python 3.12: patch `cdpcli.shorthand` via `hol-patch-python-deps.sh` (locate file without importing shorthand, drop stale `.pyc`) at entrypoint, `hol_enable_data_services`, and each `hol_run_ansible_playbook`.
 - Drop `summarize-json` / `hol_summarize_ansible_result_json` and all ok/changed result rewriting in `hol-ansible-log-format.py` (debug `msg` lists no longer collapse to `N item(s)`).

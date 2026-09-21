@@ -2662,6 +2662,37 @@ disable_cdw() {
 }
 #--------------------------------------------------------------------------------------------------#
 #--------------------------------------------------------------------------------------------------#
+hol_datalake_requires_spark354() {
+   local dl="${1:-}"
+   if [[ -z "$dl" || "$dl" == "latest" ]]; then
+      return 0
+   fi
+   if [[ ! "$dl" =~ ^[0-9]+\.[0-9]+ ]]; then
+      return 0
+   fi
+   local major minor _rest
+   IFS=. read -r major minor _rest <<< "$dl"
+   if (( major > 7 )) || (( major == 7 && minor >= 3 )); then
+      return 0
+   fi
+   return 1
+}
+
+hol_resolve_cde_spark_version() {
+   local req="${1:-AUTO}"
+   local dl="${2:-}"
+   req="${req^^}"
+   case "$req" in
+   AUTO | '' | SPARK3)
+      req="SPARK3_5"
+      ;;
+   esac
+   if [[ "$req" == "SPARK3_5" ]] && hol_datalake_requires_spark354 "$dl"; then
+      req="SPARK3_5_4"
+   fi
+   echo "$req"
+}
+
 deploy_cde() {
    number_vc_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
    DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
@@ -2696,7 +2727,8 @@ deploy_cde() {
       initial_instances=$cde_initial_instances \
       minimum_instances=$cde_min_instances \
       maximum_instances=$cde_max_instances \
-      spark_version=$cde_spark_version \
+      spark_version=${cde_spark_version:-AUTO} \
+      datalake_version=${datalake_version:-} \
       vc_tier=$cde_vc_tier \
       number_vc_to_create=$number_vc_to_create \
       cde_cluster_managed_identity_id=$CDE_CLUSTER_MANAGED_IDENTITY_ID \
@@ -2927,7 +2959,7 @@ deploy_single_data_service() {
       DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
       DEFAULT_CDE_MIN_INSTANCES=0
       DEFAULT_CDE_MAX_INSTANCES=25
-      DEFAULT_CDE_SPARK_VERSION="SPARK3"
+      DEFAULT_CDE_SPARK_VERSION="AUTO"
       DEFAULT_CDE_VC_TIER="CORE"
       cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
       cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
@@ -2937,16 +2969,14 @@ deploy_single_data_service() {
       cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
       cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
       cde_spark_version="${cde_spark_version:-$DEFAULT_CDE_SPARK_VERSION}"
-      if [[ "${cde_spark_version^^}" == "AUTO" || -z "$cde_spark_version" ]]; then
-         cde_spark_version="SPARK3"
-      fi
+      cde_spark_version_resolved="$(hol_resolve_cde_spark_version "$cde_spark_version" "${datalake_version:-}")"
       cde_vc_tier="${cde_vc_tier:-$DEFAULT_CDE_VC_TIER}"
       hol_service_vars \
          "Instance Type" "$cde_instance_type" \
          "Initial Instances" "$cde_initial_instances" \
          "Min Instances" "$cde_min_instances" \
          "Max Instances" "$cde_max_instances" \
-         "Spark Version" "$cde_spark_version" \
+         "Spark Version" "$cde_spark_version_resolved" \
          "Virtual Cluster Tier" "$cde_vc_tier"
       hol_deploy_service "cde"
       deploy_cde || status=1
