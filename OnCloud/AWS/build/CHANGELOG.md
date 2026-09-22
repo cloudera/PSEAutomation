@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CDE/CDW/CDF disable playbooks (AWS/Azure): user-visible success `debug` messages on teardown completion (and when CDF is already absent), aligned with CAI `Successfully deleted/disabled … in environment …` wording.
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed

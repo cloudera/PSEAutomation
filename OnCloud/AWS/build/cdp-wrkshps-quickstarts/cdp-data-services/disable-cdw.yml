@@ -20,9 +20,9 @@
         cdw_cluster_exists: "{{ dwcluster is succeeded and ((dwcluster.clusters | default([], true)) | length > 0) }}"
         cdw_cluster_id: "{{ (dwcluster.clusters | default([], true))[0].id if ((dwcluster.clusters | default([], true)) | length > 0) else '' }}"
 
-    - name: Skip CDW teardown when cluster does not exist
+    - name: Handle non-existing or deleted CDW cluster
       ansible.builtin.debug:
-        msg: "CDW cluster not found for environment {{ cdp_env_name }}. Skipping CDW disable."
+        msg: "CDW cluster does not exist or is already deleted in environment {{ cdp_env_name }}."
       when: not cdw_cluster_exists
 
     - name: End play when CDW cluster does not exist
@@ -264,11 +264,6 @@
         msg: "Cluster is in {{ dw_cluster_status.clusters[0].status }} state"
       when: (dw_cluster_status.clusters | default([], true) | length) > 0
 
-    - name: Print cluster already removed
-      ansible.builtin.debug:
-        msg: "CDW cluster already removed for environment {{ cdp_env_name }}."
-      when: (dw_cluster_status.clusters | default([], true) | length) == 0
-
     - name: Warn when CDW cluster is still present after delete attempt
       ansible.builtin.debug:
         msg: >-
@@ -294,3 +289,8 @@
       delay: 30
       ignore_errors: true
       failed_when: false
+
+    - name: Print success message on CDW cluster deletion
+      ansible.builtin.debug:
+        msg: "Successfully deleted CDW cluster in environment {{ cdp_env_name }}."
+      when: (deactivatedw.clusters | default([], true) | length) == 0

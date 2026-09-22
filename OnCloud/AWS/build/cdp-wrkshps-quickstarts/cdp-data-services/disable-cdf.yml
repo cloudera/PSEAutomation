@@ -229,11 +229,14 @@
           fully_absent={{ cdf_fully_absent }},
           needs_teardown={{ cdf_needs_teardown }}
 
-    - name: Skip CDF disable when service is already absent
+    - name: Handle non-existing or disabled CDF service
       ansible.builtin.debug:
-        msg: >-
-          CDF is already absent or disabled for environment {{ cdp_env_name }}
-          (state: {{ cdf_current_state | default(cdf_list_state) }}) — nothing to disable.
+        msg: "CDF for environment {{ cdp_env_name }} does not exist or is already disabled."
+      when: cdf_fully_absent | default(false)
+
+    - name: Print success message when CDF is already absent
+      ansible.builtin.debug:
+        msg: "Successfully disabled CDF for environment {{ cdp_env_name }}."
       when: cdf_fully_absent | default(false)
 
     - name: End play when CDF is already absent
@@ -416,7 +419,7 @@
         cdf_needs_teardown | default(false) or
         not cdf_fully_absent | default(true)
 
-    - name: Print CDF disable success message
+    - name: Print success message on CDF service disable
       ansible.builtin.debug:
         msg: "Successfully disabled CDF for environment {{ cdp_env_name }}."
       when: >

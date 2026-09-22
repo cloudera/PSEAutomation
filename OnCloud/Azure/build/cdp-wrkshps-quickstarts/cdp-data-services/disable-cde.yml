@@ -14,9 +14,9 @@
       register: cde_service_info
       failed_when: false
 
-    - name: Skip CDE teardown when service does not exist
+    - name: Handle non-existing or deleted CDE service
       ansible.builtin.debug:
-        msg: "CDE service not found for {{ workshop_name }}-cde — nothing to disable."
+        msg: "CDE service {{ workshop_name }}-cde does not exist or is already deleted in environment {{ cdp_env_name }}."
       when: (cde_service_info.services | default([], true) | length) == 0
 
     - name: End play when CDE service does not exist
@@ -91,9 +91,9 @@
       delay: 30
       failed_when: false
 
-    - name: Confirm CDE service deleted successfully
+    - name: Print success message on CDE service deletion
       ansible.builtin.debug:
-        msg: "CDE service {{ workshop_name }}-cde deleted successfully."
+        msg: "Successfully deleted CDE service {{ workshop_name }}-cde in environment {{ cdp_env_name }}."
       when:
         - cde_teardown_started | default(false)
         - (serstatus.services | default([], true) | length) == 0
