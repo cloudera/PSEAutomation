@@ -53,7 +53,7 @@ pipeline {
         booleanParam(name: 'BUILD_LOCAL_IMAGE', defaultValue: false, description: 'Build image in this job from IMAGE_BUILD_BRANCH, tag with BUILD_IMAGE_TAG, and use it for provision/destroy (skips docker pull)')
         string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testmain', description: 'Docker image tag for locally built image when BUILD_LOCAL_IMAGE is true (ignored when BUILD_LOCAL_IMAGE is false)')
         string(name: 'IMAGE_BUILD_BRANCH', defaultValue: 'main', description: 'Git branch to checkout and build when BUILD_LOCAL_IMAGE is true')
-        string(name: 'IMAGE_BUILD_TF_QS_VER', defaultValue: 'v0.15.0', description: 'TF_QUICKSTART_VERSION docker build-arg when BUILD_LOCAL_IMAGE is true')
+        string(name: 'IMAGE_BUILD_TF_QS_VER', defaultValue: 'main', description: 'TF_QUICKSTART_VERSION docker build-arg when BUILD_LOCAL_IMAGE is true')
     }
 
     options {
@@ -325,7 +325,7 @@ sh """
                         error('IMAGE_BUILD_BRANCH is required when BUILD_LOCAL_IMAGE is enabled.')
                     }
                     def dockerfileDir = 'OnCloud/AWS/build'
-                    def tfQsVer = params.IMAGE_BUILD_TF_QS_VER?.trim() ?: 'v0.15.0'
+                    def tfQsVer = params.IMAGE_BUILD_TF_QS_VER?.trim() ?: 'main'
                     def buildImageTag = env.DOCKER_IMAGE.tokenize(':')[-1]
 
                     echo "Building image from branch ${branch} -> ${env.DOCKER_IMAGE}"

@@ -103,7 +103,7 @@ pipeline {
                         booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
                         string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.BUILD_BRANCH}"),
-                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'v0.15.0')
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
 
                     // Define common parameters for Azure deploy
@@ -242,7 +242,7 @@ pipeline {
                         booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
                         string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.BUILD_BRANCH}"),
-                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'v0.15.0')
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
 
                     // Define common parameters for Azure destroy
