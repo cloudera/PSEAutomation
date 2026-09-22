@@ -404,29 +404,20 @@ hol_wait_parallel_data_services() {
 }
 
 # Ansible writes to per-service log files; tailers stream to the console.
-# Enable default-callback ANSI when the console is a TTY or HOL_ANSIBLE_COLOR is set.
+# Default-callback ANSI is on unless explicitly disabled (see opt-outs below).
 hol_ansible_force_color() {
    if [[ -n "${NO_COLOR:-}" ]]; then
       echo 0
       return 0
    fi
+   case "${ANSIBLE_NOCOLOR:-}" in
+      1|true|TRUE|yes|YES) echo 0; return 0 ;;
+   esac
    case "${HOL_ANSIBLE_COLOR:-}" in
       0|false|FALSE|no|NO|off|OFF) echo 0; return 0 ;;
       1|true|TRUE|yes|YES|on|ON) echo 1; return 0 ;;
    esac
-   # Jenkins docker run uses -i without -t; BUILD_URL/JENKINS_URL are passed from DeployHoL jobs.
-   if [[ -n "${BUILD_URL:-}" || -n "${JENKINS_URL:-}" ]]; then
-      echo 1
-      return 0
-   fi
-   case "${CI:-}" in
-      1|true|TRUE|yes|YES) echo 1; return 0 ;;
-   esac
-   if [[ -t 1 ]]; then
-      echo 1
-      return 0
-   fi
-   echo 0
+   echo 1
 }
 
 _hol_strip_ansi_from_stream() {
