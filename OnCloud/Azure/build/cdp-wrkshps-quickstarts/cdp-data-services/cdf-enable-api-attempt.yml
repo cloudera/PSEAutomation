@@ -1,118 +1,136 @@
 ---
-- name: Log CDF enable API attempt
+- name: Log CDF enable CLI attempt
   ansible.builtin.debug:
     msg: >-
-      CDF enable API attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }}
-      for {{ cdp_env_name }} (HTTP timeout {{ cdf_enable_http_timeout }}s per attempt)
+      CDF enable CLI attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }}
+      for {{ cdp_env_name }} (cdp df enable-service)
 
-- name: Submit CDF enable request (async)
-  cloudera.cloud.df_service:
-    name: "{{ cdp_env_name }}"
-    nodes_min: "{{ minimum_nodes | int }}"
-    nodes_max: "{{ maximum_nodes | int }}"
-    instance_type: "{{ (instance_type | default('') | trim) if (instance_type | default('') | trim | length > 0) else omit }}"
-    public_loadbalancer: "{{ use_public_load_balancer | bool }}"
-    cluster_subnets: "{{ cdf_cluster_subnets | default(omit) }}"
-    loadbalancer_subnets: "{{ cdf_lb_subnets | default(omit) }}"
-    cluster_subnets_filter: "{{ 'private' if cdf_cluster_subnets is not defined else omit }}"
-    loadbalancer_subnets_filter: "{{ 'public' if cdf_lb_subnets is not defined else omit }}"
-    state: present
-    wait: false
-  async: "{{ cdf_enable_http_timeout | int }}"
-  poll: 0
-  register: cdf_enable_async_submit
-  failed_when: false
-
-- name: Wait for CDF enable HTTP call to finish
-  ansible.builtin.async_status:
-    jid: "{{ cdf_enable_async_submit.ansible_job_id }}"
-  register: cdf_enable_async_poll
-  until: cdf_enable_async_poll.finished
-  retries: "{{ cdf_enable_async_poll_retries }}"
-  delay: "{{ cdf_enable_async_poll_delay }}"
-  when: cdf_enable_async_submit.ansible_job_id is defined
+- name: Submit CDF enable request via CDP CLI
+  ansible.builtin.shell: |
+    set -uo pipefail
+    err_file="$(mktemp)"
+    cmd=(
+      cdp df enable-service
+      --environment-crn "{{ cdp_env_crn }}"
+      --min-k8s-node-count {{ minimum_nodes | int }}
+      --max-k8s-node-count {{ maximum_nodes | int }}
+    )
+    if {{ use_public_load_balancer | bool | lower }}; then
+      cmd+=(--use-public-load-balancer)
+    else
+      cmd+=(--no-use-public-load-balancer)
+    fi
+    {% if instance_type is defined and (instance_type | default('') | trim | length) > 0 %}
+    cmd+=(--instance-type "{{ instance_type | trim }}")
+    {% endif %}
+    {% if cdf_cluster_subnets is defined %}
+    cluster_subnets=(
+    {% for subnet in cdf_cluster_subnets %}
+      "{{ subnet }}"
+    {% endfor %}
+    )
+    if [ "${#cluster_subnets[@]}" -gt 0 ]; then
+      cmd+=(--cluster-subnets "${cluster_subnets[@]}")
+    fi
+    {% endif %}
+    {% if cdf_lb_subnets is defined %}
+    lb_subnets=(
+    {% for subnet in cdf_lb_subnets %}
+      "{{ subnet }}"
+    {% endfor %}
+    )
+    if [ "${#lb_subnets[@]}" -gt 0 ]; then
+      cmd+=(--load-balancer-subnets "${lb_subnets[@]}")
+    fi
+    {% endif %}
+    if "${cmd[@]}" 2>"$err_file"; then
+      rm -f "$err_file"
+      exit 0
+    fi
+    err="$(cat "$err_file")"
+    rm -f "$err_file"
+    if grep -qiE 'already exists|CONFLICT|already enabled|enable.*in progress|ENABLING' <<<"$err"; then
+      echo "CDF enable-service: service already present or enabling — continuing with health poll"
+      exit 0
+    fi
+    echo "$err" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  register: cdf_enable_cmd
+  changed_when: cdf_enable_cmd.rc == 0
   failed_when: false
 
 - name: Build CDF enable attempt result facts
   ansible.builtin.set_fact:
-    cdf_enable_attempt_result: >-
+    cdf_enable_combined_msg: >-
       {{
-        cdf_enable_async_poll
-        if (
-          cdf_enable_async_submit.ansible_job_id is defined and
-          (cdf_enable_async_poll.finished | default(false))
-        )
-        else {
-          'failed': true,
-          'changed': false,
-          'msg': (
-            'CDF enable API call timed out after '
-            ~ (cdf_enable_http_timeout | string)
-            ~ 's (attempt '
-            ~ (cdf_enable_attempt | string)
-            ~ '/'
-            ~ (cdf_enable_api_retries | string)
-            ~ ')'
-          )
-        }
+        (
+          (cdf_enable_cmd.stderr | default('') | string)
+          ~ ' '
+          ~ (cdf_enable_cmd.stdout | default('') | string)
+        ) | trim
       }}
+    cdf_enable_attempt_result:
+      failed: "{{ (cdf_enable_cmd.rc | default(1)) != 0 }}"
+      changed: "{{ (cdf_enable_cmd.rc | default(1)) == 0 }}"
+      rc: "{{ cdf_enable_cmd.rc | default(1) }}"
+      msg: >-
+        {{
+          (
+            (cdf_enable_cmd.stderr | default('') | string)
+            ~ ' '
+            ~ (cdf_enable_cmd.stdout | default('') | string)
+          ) | trim
+        }}
+      stderr: "{{ cdf_enable_cmd.stderr | default('') }}"
+      stdout: "{{ cdf_enable_cmd.stdout | default('') }}"
     cdf_enable_msg: >-
       {{
         (
-          cdf_enable_async_poll.msg
-          if (
-            cdf_enable_async_submit.ansible_job_id is defined and
-            (cdf_enable_async_poll.finished | default(false))
-          )
-          else (
-            'CDF enable API call timed out after '
-            ~ (cdf_enable_http_timeout | string)
-            ~ 's (attempt '
-            ~ (cdf_enable_attempt | string)
-            ~ ')'
-          )
-        ) | default('') | string
+          (cdf_enable_cmd.stderr | default('') | string)
+          ~ ' '
+          ~ (cdf_enable_cmd.stdout | default('') | string)
+        ) | trim
       }}
     cdf_enable_has_api_error: >-
       {{
         (
           (
-            cdf_enable_async_poll.msg | default('')
-            if (
-              cdf_enable_async_submit.ansible_job_id is defined and
-              (cdf_enable_async_poll.finished | default(false))
-            )
-            else (
-              'CDF enable API call timed out after '
-              ~ (cdf_enable_http_timeout | string)
-              ~ 's'
-            )
-          ) | string
-        ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out)')
+            (cdf_enable_cmd.stderr | default('') | string)
+            ~ ' '
+            ~ (cdf_enable_cmd.stdout | default('') | string)
+          ) | trim
+        ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out|access denied|not authorized|permission)')
+      }}
+    cdf_enable_is_authorizing_500: >-
+      {{
+        (
+          (
+            (cdf_enable_cmd.stderr | default('') | string)
+            ~ ' '
+            ~ (cdf_enable_cmd.stdout | default('') | string)
+          ) | trim
+        ) is search('(?i)(authorizing|\\[500\\]|error occurred while authorizing)')
       }}
     cdf_enable_should_retry: >-
       {{
         (
-          (
-            (
-              cdf_enable_async_poll.msg | default('')
-              if (
-                cdf_enable_async_submit.ansible_job_id is defined and
-                (cdf_enable_async_poll.finished | default(false))
-              )
-              else ''
-            ) | string
-          ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while)')
+          (cdf_enable_cmd.rc | default(1)) != 0
         ) and (
           (
-            cdf_enable_async_poll.msg | default('') | string
-          ) is search('(?i)try again later')
+            (
+              (cdf_enable_cmd.stderr | default('') | string)
+              ~ ' '
+              ~ (cdf_enable_cmd.stdout | default('') | string)
+            ) | trim
+          ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|try again later|timed out|throttl)')
         ) and (
           (cdf_enable_attempt | int) < (cdf_enable_api_retries | int)
         )
       }}
 
-- name: Record CDF enable API result for playbook
+- name: Record CDF enable CLI result for playbook
   ansible.builtin.set_fact:
     cdf_enable_result: "{{ cdf_enable_attempt_result }}"
     cdf_enable_retry_done: "{{ not (cdf_enable_should_retry | default(false) | bool) }}"
@@ -121,6 +139,7 @@
   ansible.builtin.debug:
     msg: >-
       CDF enable attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }} outcome:
+      rc={{ cdf_enable_cmd.rc | default('n/a') }},
       api_error={{ cdf_enable_has_api_error | default(false) }},
       will_retry={{ cdf_enable_should_retry | default(false) }},
       msg={{ cdf_enable_msg | truncate(400, True, '...') }}

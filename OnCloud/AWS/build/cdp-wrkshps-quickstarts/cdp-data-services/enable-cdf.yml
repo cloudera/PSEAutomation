@@ -35,11 +35,9 @@
       - PROVISIONING_INFRASTRUCTURE
     cdf_poll_retries: 80
     cdf_poll_delay: 60
-    cdf_enable_api_retries: 5
-    cdf_enable_retry_delay: 45
-    cdf_enable_http_timeout: 600
-    cdf_enable_async_poll_delay: 15
-    cdf_enable_async_poll_retries: "{{ ((cdf_enable_http_timeout | int) // (cdf_enable_async_poll_delay | int)) + 2 }}"
+    cdf_enable_api_retries: 8
+    cdf_enable_retry_delay: 90
+    cdf_enable_initial_delay: 90
 
   tasks:
     - name: Check and print variable status
@@ -273,13 +271,32 @@
       register: cdf_recover_result
       failed_when: false
 
+    - name: Get CDP environment CRN for enable-service
+      ansible.builtin.command: cdp environments describe-environment --environment-name "{{ cdp_env_name }}"
+      register: cdp_env_desc_enable
+      changed_when: false
+      failed_when: cdp_env_desc_enable.rc != 0
+      when: not cdf_skip_enable | default(false)
+
+    - name: Set CDP environment CRN for CDF enable
+      ansible.builtin.set_fact:
+        cdp_env_crn: "{{ (cdp_env_desc_enable.stdout | from_json).environment.crn }}"
+      when:
+        - not cdf_skip_enable | default(false)
+        - cdp_env_desc_enable.rc == 0
+
+    - name: Pause for IAM sync after env admin role assignment
+      ansible.builtin.pause:
+        seconds: "{{ cdf_enable_initial_delay | int }}"
+      when: not cdf_skip_enable | default(false)
+
     - name: Initialize CDF enable retry loop
       ansible.builtin.set_fact:
         cdf_enable_retry_done: false
       when:
         - not cdf_skip_enable | default(false)
 
-    - name: Run CDF enable API attempts
+    - name: Run CDF enable CLI attempts
       ansible.builtin.include_tasks: cdf-enable-api-attempt.yml
       loop: "{{ range(1, cdf_enable_api_retries | int + 1) | list }}"
       loop_control:
@@ -289,38 +306,45 @@
         - not cdf_skip_enable | default(false)
         - not cdf_enable_retry_done | default(false)
 
-    - name: Set CDF enable API outcome flags
+    - name: Set CDF enable CLI outcome flags
       ansible.builtin.set_fact:
         cdf_enable_api_failed: >-
           {{
+            (cdf_enable_result.rc | default(0) | int) != 0 or
             cdf_enable_result.failed | default(false) or
             (
-              (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out)')
+              (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out|access denied|not authorized)')
             )
+          }}
+        cdf_enable_authorizing_error: >-
+          {{
+            (cdf_enable_result.msg | default('') | string) is search('(?i)(authorizing|\\[500\\]|error occurred while authorizing)')
           }}
       when: cdf_enable_result is defined
 
-    - name: Print CDF enable API result
+    - name: Print CDF enable CLI result
       ansible.builtin.debug:
         msg: >-
-          CDF enable API result:
+          CDF enable CLI result:
+          rc={{ cdf_enable_result.rc | default('n/a') }},
           changed={{ cdf_enable_result.changed | default(false) }},
           failed={{ cdf_enable_result.failed | default(false) }},
           api_error={{ cdf_enable_api_failed | default(false) }},
           msg={{ cdf_enable_result.msg | default('n/a') }}
       when: cdf_enable_result is defined
 
-    - name: Fail fast when CDF enable API returned an error
+    - name: Fail fast when CDF enable CLI returned an error
       ansible.builtin.fail:
         msg: >-
-          CDF enable API failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
-          (retried only when API msg contained "try again later"):
+          cdp df enable-service failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
+          (transient INTERNAL/authorizing/[500] responses are retried with {{ cdf_enable_retry_delay }}s delay):
           {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}.
-          Verify the CDP caller has environment-scoped DFAdmin (required for cdp df enable-service;
-          provisioner assignCdpEnvAdminRoles.sh / hol_assign_pipeline_cdp_env_admin_roles also assigns
-          DFFlowAdmin for flow stop during destroy), that post-Terraform role assignment succeeded,
-          and user sync completed. Persistent "authorizing" / [500] after retries usually indicates
-          missing DFAdmin; "try again later" responses are retried automatically.
+          Verify the CDP caller (~/.cdp credentials used in the container) has environment-scoped DFAdmin
+          (assignCdpEnvAdminRoles.sh / hol_assign_pipeline_cdp_env_admin_roles assigns DFAdmin and syncs users).
+          Manual `cdp df enable-service` succeeding while Ansible failed often means IAM propagation lag right
+          after role assignment, or the cloudera.cloud.df_service module path differed from the CLI — this playbook
+          now uses the CLI like enable-cai.yml. Persistent authorizing/[500] after retries usually means missing
+          DFAdmin on the active caller, not a subnet sizing issue.
       when:
         - cdf_enable_result is defined
         - cdf_enable_api_failed | default(false)
