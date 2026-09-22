@@ -2304,7 +2304,7 @@ destroy_hol_infra() {
    fi
 
    if [[ "$enhancements_destroy_status" -eq 0 && "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]]; then
-      if [[ -f /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag && "$(cat /userconfig/.$USER_NAMESPACE/keypair_generated.flag)" == "true" ]]; then
+      if [[ -f /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag && "$(cat /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag)" == "true" ]]; then
          destroy_keypair
       fi
       rm -rf "/userconfig/.$USER_NAMESPACE"
