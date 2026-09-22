@@ -277,29 +277,129 @@ hol_wait_parallel_data_services() {
    local -n _hol_pids=$1
    local -n _hol_tokens=$2
    local failed_short=() joined workshop
-   local i pid
+   local i pid short token elapsed_str
+   local -a reaped=()
+   local heartbeat_sec wait_start last_heartbeat
+   local pending=() ok_done=() parts
 
    HOL_FAILED_DATA_SERVICES=""
    workshop="${workshop_name:-hol}"
 
-   for i in "${!_hol_pids[@]}"; do
-      pid=${_hol_pids[$i]}
-      if ! wait "$pid"; then
-         if [[ -n "${_hol_tokens[$i]:-}" ]]; then
-            failed_short+=("$(hol_service_short "${_hol_tokens[$i]}")")
-         else
-            failed_short+=("unknown")
-         fi
+   heartbeat_sec="${HOL_DS_WAIT_HEARTBEAT_SEC:-45}"
+   if ! [[ "$heartbeat_sec" =~ ^[0-9]+$ ]] || (( heartbeat_sec < 1 )); then
+      heartbeat_sec=45
+   fi
+
+   _hol_format_elapsed() {
+      local sec=$1 m h
+      m=$(( sec / 60 ))
+      h=$(( m / 60 ))
+      m=$(( m % 60 ))
+      sec=$(( sec % 60 ))
+      if (( h > 0 )); then
+         printf '%dh %dm %ds' "$h" "$m" "$sec"
+      elif (( m > 0 )); then
+         printf '%dm %ds' "$m" "$sec"
+      else
+         printf '%ds' "$sec"
       fi
+   }
+
+   _hol_ds_is_reaped() {
+      local idx="$1" r
+      for r in "${reaped[@]}"; do
+         [[ "$r" == "$idx" ]] && return 0
+      done
+      return 1
+   }
+
+   _hol_ds_reap_finished() {
+      local idx="$1" rc
+      _hol_ds_is_reaped "$idx" && return 0
+      token="${_hol_tokens[$idx]:-}"
+      short="$(hol_service_short "${token:-unknown}")"
+      wait "${_hol_pids[$idx]}"
+      rc=$?
+      reaped+=("$idx")
+      elapsed_str="$(_hol_format_elapsed $(( SECONDS - wait_start )) )"
+      if (( rc == 0 )); then
+         hol_ok "Data service ${short} finished successfully (${elapsed_str})"
+      else
+         hol_warn "Data service ${short} failed (exit ${rc}, ${elapsed_str}) — see /userconfig/.${workshop}/logs/${short}.log"
+         failed_short+=("$short")
+      fi
+   }
+
+   _hol_ds_emit_heartbeat() {
+      pending=()
+      ok_done=()
+      for i in "${!_hol_pids[@]}"; do
+         short="$(hol_service_short "${_hol_tokens[$i]:-unknown}")"
+         if _hol_ds_is_reaped "$i"; then
+            local failed=0 f
+            for f in "${failed_short[@]}"; do
+               [[ "$f" == "$short" ]] && failed=1 && break
+            done
+            if (( failed == 0 )); then
+               ok_done+=("$short")
+            fi
+         elif kill -0 "${_hol_pids[$i]}" 2>/dev/null; then
+            pending+=("$short")
+         else
+            _hol_ds_reap_finished "$i"
+         fi
+      done
+
+      if ((${#pending[@]} == 0)); then
+         return 0
+      fi
+
+      parts=()
+      parts+=("still running: $(IFS=', '; echo "${pending[*]}")")
+      if ((${#ok_done[@]} > 0)); then
+         parts+=("completed OK: $(IFS=', '; echo "${ok_done[*]}")")
+      fi
+      if ((${#failed_short[@]} > 0)); then
+         parts+=("failed: $(IFS=', '; echo "${failed_short[*]}")")
+      fi
+      elapsed_str="$(_hol_format_elapsed $(( SECONDS - wait_start )) )"
+      hol_info "Data services wait — $(IFS='; '; echo "${parts[*]}") (${elapsed_str} elapsed)"
+   }
+
+   wait_start=$SECONDS
+   last_heartbeat=$SECONDS
+   hol_info "Waiting for ${#_hol_pids[@]} parallel data service job(s); status heartbeat every ${heartbeat_sec}s (override: HOL_DS_WAIT_HEARTBEAT_SEC)"
+
+   while ((${#reaped[@]} < ${#_hol_pids[@]})); do
+      for i in "${!_hol_pids[@]}"; do
+         _hol_ds_is_reaped "$i" && continue
+         pid=${_hol_pids[$i]}
+         if ! kill -0 "$pid" 2>/dev/null; then
+            _hol_ds_reap_finished "$i"
+         fi
+      done
+
+      if ((${#reaped[@]} >= ${#_hol_pids[@]})); then
+         break
+      fi
+
+      if (( SECONDS - last_heartbeat >= heartbeat_sec )); then
+         _hol_ds_emit_heartbeat
+         last_heartbeat=$SECONDS
+      fi
+
+      sleep 2
    done
 
+   elapsed_str="$(_hol_format_elapsed $(( SECONDS - wait_start )) )"
    if ((${#failed_short[@]} == 0)); then
+      hol_ok "All data service jobs completed (${elapsed_str})"
       return 0
    fi
 
    joined=$(IFS=', '; echo "${failed_short[*]}")
    HOL_FAILED_DATA_SERVICES="$joined"
-   hol_warn "Data service playbook(s) failed: ${joined} — see /userconfig/.${workshop}/logs/*.log"
+   hol_warn "Data service playbook(s) failed: ${joined} (${elapsed_str}) — see /userconfig/.${workshop}/logs/*.log"
    return 1
 }
 
