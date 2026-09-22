@@ -401,7 +401,7 @@ sh """
                         echo "Using locally built image: ${env.DOCKER_IMAGE}"
                     }
                     // Non-zero container exit (including ansible-playbook propagated via hol_enable_data_services) fails this stage.
-                    sh "docker run --name hol-provisioner-${BUILD_NUMBER} -i -e BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp ${env.DOCKER_IMAGE} ${params.ACTION}"
+                    sh "docker run --name hol-provisioner-${BUILD_NUMBER} -i -e BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' -e BUILD_URL='${env.BUILD_URL ?: ''}' -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp ${env.DOCKER_IMAGE} ${params.ACTION}"
                 }
             }
         }

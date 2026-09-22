@@ -406,10 +406,23 @@ hol_wait_parallel_data_services() {
 # Ansible writes to per-service log files; tailers stream to the console.
 # Enable default-callback ANSI when the console is a TTY or HOL_ANSIBLE_COLOR is set.
 hol_ansible_force_color() {
+   if [[ -n "${NO_COLOR:-}" ]]; then
+      echo 0
+      return 0
+   fi
    case "${HOL_ANSIBLE_COLOR:-}" in
+      0|false|FALSE|no|NO|off|OFF) echo 0; return 0 ;;
       1|true|TRUE|yes|YES|on|ON) echo 1; return 0 ;;
    esac
-   if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+   # Jenkins docker run uses -i without -t; BUILD_URL/JENKINS_URL are passed from DeployHoL jobs.
+   if [[ -n "${BUILD_URL:-}" || -n "${JENKINS_URL:-}" ]]; then
+      echo 1
+      return 0
+   fi
+   case "${CI:-}" in
+      1|true|TRUE|yes|YES) echo 1; return 0 ;;
+   esac
+   if [[ -t 1 ]]; then
       echo 1
       return 0
    fi
@@ -442,6 +455,8 @@ hol_run_ansible_playbook() {
       HOL_SERVICE_TAG= \
       ANSIBLE_STDOUT_CALLBACK=default \
       ANSIBLE_FORCE_COLOR="${force_color}" \
+      ANSIBLE_NOCOLOR="$(( 1 - force_color ))" \
+      PY_COLORS="${force_color}" \
       PYTHONUNBUFFERED=1 \
       PYTHONWARNINGS="${HOL_ANSIBLE_PYTHONWARNINGS:-ignore::SyntaxWarning}" \
       ansible-playbook "$@" >>"$log_file" 2>&1

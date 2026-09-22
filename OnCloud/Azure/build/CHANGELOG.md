@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Parallel data-service wait (AWS/Azure): `hol_wait_parallel_data_services` logs each service as it finishes and periodic heartbeats while others run (`HOL_DS_WAIT_HEARTBEAT_SEC`, default 45s) so Jenkins console does not look hung after one playbook’s PLAY RECAP.
-- Parallel Ansible playbook logs (AWS/Azure): `hol_run_ansible_playbook` sets `ANSIBLE_FORCE_COLOR=1` when Jenkins/console stdout is a TTY or `HOL_ANSIBLE_COLOR=true` (default callback: green ok, yellow changed, red failed); tailers pass ANSI through unchanged; playbook failure excerpts strip escape codes before `fatal:` / `PLAY RECAP` grep.
+- Parallel Ansible playbook logs (AWS/Azure): `hol_run_ansible_playbook` sets `ANSIBLE_FORCE_COLOR=1` when stdout is a TTY, `HOL_ANSIBLE_COLOR=true`, or Jenkins/CI env (`BUILD_URL`, `JENKINS_URL`, `CI=true`); DeployHoL `docker run` passes `-e BUILD_URL`; tailers pass ANSI through unchanged; playbook failure excerpts strip escape codes before `fatal:` / `PLAY RECAP` grep.
 - CDE/CDW/CDF disable playbooks (AWS/Azure): user-visible success `debug` messages on teardown completion (and when CDF is already absent), aligned with CAI `Successfully deleted/disabled … in environment …` wording.
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
