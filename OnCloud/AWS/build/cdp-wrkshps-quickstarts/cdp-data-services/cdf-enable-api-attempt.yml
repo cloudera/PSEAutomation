@@ -5,58 +5,50 @@
       CDF enable CLI attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }}
       for {{ cdp_env_name }} (cdp df enable-service)
 
+- name: Build CDF enable CLI argument list
+  ansible.builtin.set_fact:
+    cdf_enable_cli_argv: >-
+      {{
+        [
+          'cdp', 'df', 'enable-service',
+          '--environment-crn', cdp_env_crn,
+          '--min-k8s-node-count', (minimum_nodes | int | string),
+          '--max-k8s-node-count', (maximum_nodes | int | string)
+        ]
+        + (
+          ['--use-public-load-balancer']
+          if (use_public_load_balancer | bool)
+          else ['--no-use-public-load-balancer']
+        )
+        + (
+          ['--instance-type', (instance_type | trim)]
+          if (
+            instance_type is defined
+            and (instance_type | default('') | trim | length) > 0
+          )
+          else []
+        )
+        + (
+          ['--cluster-subnets'] + (cdf_cluster_subnets | list)
+          if (
+            cdf_cluster_subnets is defined
+            and (cdf_cluster_subnets | length) > 0
+          )
+          else []
+        )
+        + (
+          ['--load-balancer-subnets'] + (cdf_lb_subnets | list)
+          if (
+            cdf_lb_subnets is defined
+            and (cdf_lb_subnets | length) > 0
+          )
+          else []
+        )
+      }}
+
 - name: Submit CDF enable request via CDP CLI
-  ansible.builtin.shell: |
-    set -uo pipefail
-    err_file="$(mktemp)"
-    cmd=(
-      cdp df enable-service
-      --environment-crn "{{ cdp_env_crn }}"
-      --min-k8s-node-count {{ minimum_nodes | int }}
-      --max-k8s-node-count {{ maximum_nodes | int }}
-    )
-    if {{ use_public_load_balancer | bool | lower }}; then
-      cmd+=(--use-public-load-balancer)
-    else
-      cmd+=(--no-use-public-load-balancer)
-    fi
-    {% if instance_type is defined and (instance_type | default('') | trim | length) > 0 %}
-    cmd+=(--instance-type "{{ instance_type | trim }}")
-    {% endif %}
-    {% if cdf_cluster_subnets is defined %}
-    cluster_subnets=(
-    {% for subnet in cdf_cluster_subnets %}
-      "{{ subnet }}"
-    {% endfor %}
-    )
-    if [ "${#cluster_subnets[@]}" -gt 0 ]; then
-      cmd+=(--cluster-subnets "${cluster_subnets[@]}")
-    fi
-    {% endif %}
-    {% if cdf_lb_subnets is defined %}
-    lb_subnets=(
-    {% for subnet in cdf_lb_subnets %}
-      "{{ subnet }}"
-    {% endfor %}
-    )
-    if [ "${#lb_subnets[@]}" -gt 0 ]; then
-      cmd+=(--load-balancer-subnets "${lb_subnets[@]}")
-    fi
-    {% endif %}
-    if "${cmd[@]}" 2>"$err_file"; then
-      rm -f "$err_file"
-      exit 0
-    fi
-    err="$(cat "$err_file")"
-    rm -f "$err_file"
-    if grep -qiE 'already exists|CONFLICT|already enabled|enable.*in progress|ENABLING' <<<"$err"; then
-      echo "CDF enable-service: service already present or enabling — continuing with health poll"
-      exit 0
-    fi
-    echo "$err" >&2
-    exit 1
-  args:
-    executable: /bin/bash
+  ansible.builtin.command:
+    argv: "{{ cdf_enable_cli_argv }}"
   register: cdf_enable_cmd
   changed_when: cdf_enable_cmd.rc == 0
   failed_when: false
@@ -71,52 +63,102 @@
           ~ (cdf_enable_cmd.stdout | default('') | string)
         ) | trim
       }}
-    cdf_enable_attempt_result:
-      failed: "{{ (cdf_enable_cmd.rc | default(1)) != 0 }}"
-      changed: "{{ (cdf_enable_cmd.rc | default(1)) == 0 }}"
-      rc: "{{ cdf_enable_cmd.rc | default(1) }}"
-      msg: >-
-        {{
+    cdf_enable_conflict_ok: >-
+      {{
+        (
           (
             (cdf_enable_cmd.stderr | default('') | string)
             ~ ' '
             ~ (cdf_enable_cmd.stdout | default('') | string)
           ) | trim
+        ) is search('(?i)(already exists|CONFLICT|already enabled|enable.*in progress|ENABLING)')
+      }}
+    cdf_enable_effective_rc: >-
+      {{
+        0
+        if (
+          (cdf_enable_cmd.rc | default(1) | int) == 0
+          or (
+            (
+              (
+                (cdf_enable_cmd.stderr | default('') | string)
+                ~ ' '
+                ~ (cdf_enable_cmd.stdout | default('') | string)
+              ) | trim
+            ) is search('(?i)(already exists|CONFLICT|already enabled|enable.*in progress|ENABLING)')
+          )
+        )
+        else (cdf_enable_cmd.rc | default(1) | int)
+      }}
+
+- name: Set CDF enable attempt result payload
+  ansible.builtin.set_fact:
+    cdf_enable_attempt_result:
+      failed: "{{ (cdf_enable_effective_rc | int) != 0 }}"
+      changed: "{{ (cdf_enable_effective_rc | int) == 0 }}"
+      rc: "{{ cdf_enable_effective_rc | int }}"
+      msg: >-
+        {{
+          (
+            'CDF enable-service: service already present or enabling — continuing with health poll'
+            if (cdf_enable_conflict_ok | default(false) | bool)
+            else (
+              (
+                (cdf_enable_cmd.stderr | default('') | string)
+                ~ ' '
+                ~ (cdf_enable_cmd.stdout | default('') | string)
+              ) | trim
+            )
+          )
         }}
       stderr: "{{ cdf_enable_cmd.stderr | default('') }}"
       stdout: "{{ cdf_enable_cmd.stdout | default('') }}"
     cdf_enable_msg: >-
       {{
         (
-          (cdf_enable_cmd.stderr | default('') | string)
-          ~ ' '
-          ~ (cdf_enable_cmd.stdout | default('') | string)
-        ) | trim
+          'CDF enable-service: service already present or enabling — continuing with health poll'
+          if (cdf_enable_conflict_ok | default(false) | bool)
+          else (
+            (
+              (cdf_enable_cmd.stderr | default('') | string)
+              ~ ' '
+              ~ (cdf_enable_cmd.stdout | default('') | string)
+            ) | trim
+          )
+        )
       }}
     cdf_enable_has_api_error: >-
       {{
         (
+          not (cdf_enable_conflict_ok | default(false) | bool)
+        ) and (
           (
-            (cdf_enable_cmd.stderr | default('') | string)
-            ~ ' '
-            ~ (cdf_enable_cmd.stdout | default('') | string)
-          ) | trim
-        ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out|access denied|not authorized|permission)')
+            (
+              (cdf_enable_cmd.stderr | default('') | string)
+              ~ ' '
+              ~ (cdf_enable_cmd.stdout | default('') | string)
+            ) | trim
+          ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out|access denied|not authorized|permission)')
+        )
       }}
     cdf_enable_is_authorizing_500: >-
       {{
         (
+          not (cdf_enable_conflict_ok | default(false) | bool)
+        ) and (
           (
-            (cdf_enable_cmd.stderr | default('') | string)
-            ~ ' '
-            ~ (cdf_enable_cmd.stdout | default('') | string)
-          ) | trim
-        ) is search('(?i)(authorizing|\\[500\\]|error occurred while authorizing)')
+            (
+              (cdf_enable_cmd.stderr | default('') | string)
+              ~ ' '
+              ~ (cdf_enable_cmd.stdout | default('') | string)
+            ) | trim
+          ) is search('(?i)(authorizing|\\[500\\]|error occurred while authorizing)')
+        )
       }}
     cdf_enable_should_retry: >-
       {{
         (
-          (cdf_enable_cmd.rc | default(1)) != 0
+          (cdf_enable_effective_rc | int) != 0
         ) and (
           (
             (
@@ -139,7 +181,7 @@
   ansible.builtin.debug:
     msg: >-
       CDF enable attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }} outcome:
-      rc={{ cdf_enable_cmd.rc | default('n/a') }},
+      rc={{ cdf_enable_effective_rc | default('n/a') }},
       api_error={{ cdf_enable_has_api_error | default(false) }},
       will_retry={{ cdf_enable_should_retry | default(false) }},
       msg={{ cdf_enable_msg | truncate(400, True, '...') }}

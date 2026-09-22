@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Data service enable/disable (AWS/Azure): parallel batches wait for every service playbook even when one fails; aggregate failures list failed services (CDW, CDE, …) and return non-zero so Jenkins fails after all playbooks finish. Destroy propagates disable failures via `hol_destroy_failed`.
+- CDF enable (AWS/Azure): build `cdp df enable-service` argv in Ansible (`cdf-enable-api-attempt.yml`) and run via `command` — avoids `{% if %}` Jinja inside multiline `shell` that broke Ansible task parsing on the enable retry loop.
 - CDF enable (AWS/Azure): call `cdp df enable-service` via shell (CAI-style CLI) instead of async `cloudera.cloud.df_service`; resolve environment CRN from `describe-environment`; 90s pause after role assignment before enable; retry transient authorizing/[500] every 90s (8 attempts); treat CONFLICT/already-enabling as success. Fail message documents DFAdmin vs IAM propagation. Docker image uses stable `cdpcli` (not beta).
 - CDF `disable-cdf.yml` (AWS/Azure): resolve service CRN from list-services; skip `disable-service` only when all list/info/current states are absent/disabled or DISABLING is already in progress.
 - CDF `disable-cdf.yml` (AWS/Azure): set `cdf_disable_in_progress` and related flags in separate `set_fact` tasks so Ansible does not reference undefined sibling facts during derived-flag evaluation.

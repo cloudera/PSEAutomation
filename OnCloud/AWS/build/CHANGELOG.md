@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Data service enable/disable (AWS/Azure): parallel batches wait for every service playbook even when one fails; aggregate failures list failed services (CDW, CDE, …) and return non-zero so Jenkins fails after all playbooks finish. Destroy propagates disable failures via `hol_destroy_failed`.
+- CDF enable (AWS/Azure): build `cdp df enable-service` argv in Ansible (`cdf-enable-api-attempt.yml`) and run via `command` — avoids `{% if %}` Jinja inside multiline `shell` that broke Ansible task parsing on the enable retry loop.
 - CDF enable (AWS/Azure): call `cdp df enable-service` via shell (CAI-style CLI) instead of async `cloudera.cloud.df_service`; resolve environment CRN from `describe-environment`; 90s pause after role assignment before enable; retry transient authorizing/[500] every 90s (8 attempts); treat CONFLICT/already-enabling as success. Fail message documents DFAdmin vs IAM propagation. Docker image uses stable `cdpcli` (not beta).
 - AWS destroy: run `destroy_aws_enhancements` (detach `${env_prefix}-logs-policy` from `${env_prefix}-dladmin-role`) before CDP quickstart Terraform destroy so `aws_iam_policy` delete is not blocked by HoL’s `aws_iam_role_policy_attachment`.
 - AWS destroy: propagate Terraform teardown failures — `destroy_hol_infra` non-zero exit fails the container via `hol_destroy_failed` (aligned with Azure), so Jenkins no longer reports success when CDP Terraform errors.
