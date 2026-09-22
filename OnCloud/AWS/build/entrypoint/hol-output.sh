@@ -533,7 +533,7 @@ hol_provision_failed() {
 
 hol_destroy_failed() {
    local workshop="${1:-workshop}"
-   hol_fail "Infrastructure destroy for '${workshop}' did not complete. Review Terraform errors above, then retry destroy or clean up remaining AWS resources manually."
+   hol_fail "Infrastructure destroy for '${workshop}' did not complete. If disable playbooks failed or CDP data services are still listed, fix teardown and retry destroy before running Terraform (deleting the CDP environment first can orphan cloud resources). Review logs under /userconfig/.${workshop}/logs/ and Terraform output above."
 }
 
 _hol_startup_hbar() {

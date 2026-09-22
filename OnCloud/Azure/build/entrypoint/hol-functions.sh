@@ -2142,8 +2142,13 @@ destroy_cai_inference() {
    chmod +x ./destroy_caii_resources.sh
    ./destroy_caii_resources.sh $workshop_name
    
-   # Wait for disable_data_services to complete before exiting
    wait $pid_disable
+   local status_disable=$?
+   if [[ $status_disable -ne 0 ]]; then
+      hol_warn "CAI disable playbook failed during CAII teardown"
+      return 1
+   fi
+   return 0
 }
 #--------------------------------------------------------------------------------------------------#
 
@@ -2581,6 +2586,89 @@ run_cdp_terraform_destroy() {
    return 1
 }
 
+hol_cdp_data_services_still_listed() {
+   local env_name="${workshop_name}-cdp-env"
+   local ml_count df_count compute_count cdw_count cde_count total
+
+   ml_count=$(cdp ml list-workspaces 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.workspaces[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   df_count=$(cdp df list-services --no-paginate 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.services[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   compute_count=$(cdp compute list-clusters 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.clusters[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   cdw_count=$(cdp dw list-clusters 2>/dev/null \
+      | jq -r --arg prefix "$workshop_name" '[.clusters[]? | select((.clusterName // "") | startswith($prefix))] | length' 2>/dev/null || echo 0)
+   cde_count=$(cdp de list-services 2>/dev/null \
+      | jq -r --arg name "${workshop_name}-cde" '[.services[]? | select((.name // .serviceName // "") == $name)] | length' 2>/dev/null || echo 0)
+
+   ml_count=${ml_count:-0}
+   df_count=${df_count:-0}
+   compute_count=${compute_count:-0}
+   cdw_count=${cdw_count:-0}
+   cde_count=${cde_count:-0}
+   total=$((ml_count + df_count + compute_count + cdw_count + cde_count))
+   [[ "$total" -gt 0 ]]
+}
+
+hol_cdp_environment_registered() {
+   cdp environments describe-environment --environment-name "${workshop_name}-cdp-env" >/dev/null 2>&1
+}
+
+hol_cdp_wait_for_data_services_absent() {
+   local max_wait_sec="${1:-${HOL_CDP_DS_DESTROY_WAIT_SEC:-0}}"
+   local poll_sec="${HOL_CDP_DS_DESTROY_POLL_SEC:-30}"
+   local elapsed=0
+
+   [[ "${max_wait_sec:-0}" -le 0 ]] && return 0
+
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      if ! hol_cdp_data_services_still_listed; then
+         hol_ok "CDP data services no longer appear in list APIs for '${workshop_name}-cdp-env'"
+         return 0
+      fi
+      hol_step "Waiting for CDP data services to finish teardown (${elapsed}s / ${max_wait_sec}s)..."
+      sleep "$poll_sec"
+      elapsed=$((elapsed + poll_sec))
+   done
+   hol_warn "Timed out after ${max_wait_sec}s — CDP data services still appear in list APIs (ML/CDF/CDW/CDE/compute)"
+   return 1
+}
+
+hol_cdp_assert_data_services_absent_before_destroy() {
+   local csv max_wait env_name="${workshop_name}-cdp-env"
+
+   csv=$(hol_enabled_data_services_csv)
+   if [[ -z "$csv" ]]; then
+      hol_skip "No data services in workshop config — skipping CDP list-API check before Terraform"
+      return 0
+   fi
+
+   if ! hol_cdp_environment_registered; then
+      hol_skip "CDP environment '${env_name}' not registered — skipping list-API wait before Terraform state cleanup"
+      return 0
+   fi
+
+   if ! hol_cdp_data_services_still_listed; then
+      hol_ok "CDP data services not listed for '${env_name}'"
+      return 0
+   fi
+
+   max_wait="${HOL_CDP_DS_DESTROY_WAIT_SEC:-0}"
+   if [[ "$max_wait" -gt 0 ]]; then
+      hol_info "Optional post-disable poll (HOL_CDP_DS_DESTROY_WAIT_SEC=${max_wait}); disable playbooks already wait for teardown"
+      hol_cdp_wait_for_data_services_absent "$max_wait" || true
+   fi
+
+   if hol_cdp_data_services_still_listed; then
+      hol_fail "CDP data services still appear in list APIs after disable playbooks. Aborting Terraform destroy. Review disable logs under /userconfig/.${workshop_name}/logs/, then retry destroy."
+   fi
+   return 0
+}
+
+hol_cdp_require_data_services_absent_before_destroy() {
+   hol_cdp_assert_data_services_absent_before_destroy
+}
+
 #--------------------------------------------------------------------------------------------------#
 # Function to destroy CDP Environment.
 destroy_cdp() {
@@ -2596,6 +2684,9 @@ destroy_cdp() {
 
    if [[ -z "${ssh_public_key:-}" && -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem" ]]; then
       export ssh_public_key=$(ssh-keygen -y -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem")
+   fi
+   if [[ "${HOL_CDP_DESTROY_STRICT:-0}" == "1" ]]; then
+      hol_cdp_assert_data_services_absent_before_destroy || return 1
    fi
    hol_terraform init
    if should_provision_cai_nfs || cdp_nfs_enabled_in_state; then
@@ -2625,6 +2716,7 @@ destroy_cdp() {
 # Function to destroy Complete HOL Infrastructure.
 destroy_hol_infra() {
    USER_NAMESPACE=$workshop_name
+   export HOL_CDP_DESTROY_STRICT=1
    keycloak_destroy_status=0
    cdp_destroy_status=0
    if [[ "$provision_keycloak" == "yes" ]]; then

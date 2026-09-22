@@ -90,7 +90,7 @@ destroy)
     setup_azure_cli_auth
     if [ "$provision_caii" == "yes" ]; then
         hol_subsection "CAII teardown" "🧠"
-        destroy_cai_inference
+        destroy_cai_inference || hol_destroy_failed "$workshop_name"
     fi
     disable_data_services || hol_destroy_failed "$workshop_name"
     if [ "$provision_keycloak" == "yes" ]; then

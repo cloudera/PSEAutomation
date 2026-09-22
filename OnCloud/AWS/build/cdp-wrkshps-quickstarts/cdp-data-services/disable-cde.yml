@@ -7,6 +7,8 @@
     cde_async_timeout: 3600
     cde_async_retries: 60
     cde_async_delay: 30
+    ds_disable_wait_retries: 120
+    ds_disable_wait_delay: 30
   tasks:
     - name: Check if CDE service exists
       cloudera.cloud.de_info:
@@ -77,19 +79,43 @@
       register: deactivation
       failed_when: false
 
+    - name: Poll until CDE virtual clusters absent
+      cloudera.cloud.de_virtual_cluster_info:
+        cluster_name: "{{ workshop_name }}-cde"
+        environment: "{{ workshop_name }}-cdp-env"
+      register: cde_vc_absent_check
+      until: (cde_vc_absent_check.vcs | default([], true) | length) == 0
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
+      failed_when: (cde_vc_absent_check.vcs | default([], true) | length) > 0
+      when: (vc_ids | default([], true) | length) > 0
+
     - name: Check status of CDE service until completely deleted
       cloudera.cloud.de_info:
         name: "{{ workshop_name }}-cde"
       register: serstatus
-      until: >
-        (serstatus.services | default([], true) | length) == 0
-        or (
-          (serstatus.services | default([], true) | length) > 0
-          and serstatus.services[0].status in ["Deleting", "Error", "Failed"]
-        )
-      retries: 60
-      delay: 30
-      failed_when: false
+      until: (serstatus.services | default([], true) | length) == 0
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
+      failed_when: (serstatus.services | default([], true) | length) > 0
+
+    - name: Verify CDE service absent via list-services
+      ansible.builtin.shell: |
+        cdp de list-services 2>/dev/null | jq -r --arg name "{{ workshop_name }}-cde" '
+          [.services[]? | select((.name // .serviceName // "") == $name)] | length'
+      register: cde_list_count
+      changed_when: false
+      until: (cde_list_count.stdout | default('1') | trim | int) == 0
+      retries: 30
+      delay: "{{ ds_disable_wait_delay }}"
+      when: cde_teardown_started | default(false)
+
+    - name: Fail when CDE service still listed after teardown wait
+      ansible.builtin.fail:
+        msg: >-
+          CDE service {{ workshop_name }}-cde still listed
+          (status: {{ serstatus.services[0].status | default('unknown') }}) after delete wait.
+      when: (serstatus.services | default([], true) | length) > 0
 
     - name: Print success message on CDE service deletion
       ansible.builtin.debug:

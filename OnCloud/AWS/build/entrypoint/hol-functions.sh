@@ -1371,8 +1371,13 @@ destroy_cai_inference() {
    chmod +x ./destroy_caii_resources.sh
    ./destroy_caii_resources.sh $workshop_name
    
-   # Wait for disable_data_services to complete before exiting
    wait $pid_disable
+   local status_disable=$?
+   if [[ $status_disable -ne 0 ]]; then
+      hol_warn "CAI disable playbook failed during CAII teardown"
+      return 1
+   fi
+   return 0
 }
 #--------------------------------------------------------------------------------------------------#
 
@@ -1700,10 +1705,16 @@ hol_cdp_data_services_still_listed() {
    [[ "$total" -gt 0 ]]
 }
 
+hol_cdp_environment_registered() {
+   cdp environments describe-environment --environment-name "${workshop_name}-cdp-env" >/dev/null 2>&1
+}
+
 hol_cdp_wait_for_data_services_absent() {
-   local max_wait_sec="${1:-${HOL_CDP_DS_DESTROY_WAIT_SEC:-1800}}"
+   local max_wait_sec="${1:-${HOL_CDP_DS_DESTROY_WAIT_SEC:-0}}"
    local poll_sec="${HOL_CDP_DS_DESTROY_POLL_SEC:-30}"
    local elapsed=0
+
+   [[ "${max_wait_sec:-0}" -le 0 ]] && return 0
 
    while [[ $elapsed -lt $max_wait_sec ]]; do
       if ! hol_cdp_data_services_still_listed; then
@@ -1714,8 +1725,49 @@ hol_cdp_wait_for_data_services_absent() {
       sleep "$poll_sec"
       elapsed=$((elapsed + poll_sec))
    done
-   hol_warn "Timed out after ${max_wait_sec}s waiting for CDP data services to leave list APIs — continuing CDP Terraform destroy"
+   hol_warn "Timed out after ${max_wait_sec}s — CDP data services still appear in list APIs (ML/CDF/CDW/CDE/compute)"
    return 1
+}
+
+# One-shot gate before delete-environment / Terraform (disable playbooks already poll). Optional extra poll: HOL_CDP_DS_DESTROY_WAIT_SEC>0.
+hol_cdp_assert_data_services_absent_before_destroy() {
+   local csv max_wait env_name="${workshop_name}-cdp-env"
+
+   csv=$(hol_enabled_data_services_csv)
+   if [[ -z "$csv" ]]; then
+      hol_skip "No data services in workshop config — skipping CDP list-API check before Terraform"
+      return 0
+   fi
+
+   if ! hol_cdp_environment_registered; then
+      local vpc_id=""
+      vpc_id=$(hol_aws_resolve_workshop_vpc_id 2>/dev/null || true)
+      if [[ -z "$vpc_id" || "$vpc_id" == "None" ]]; then
+         hol_skip "CDP environment and workshop VPC already absent — skipping list-API wait (Terraform state cleanup only)"
+         return 0
+      fi
+   fi
+
+   if ! hol_cdp_data_services_still_listed; then
+      hol_ok "CDP data services not listed for '${env_name}'"
+      return 0
+   fi
+
+   max_wait="${HOL_CDP_DS_DESTROY_WAIT_SEC:-0}"
+   if [[ "$max_wait" -gt 0 ]]; then
+      hol_info "Optional post-disable poll (HOL_CDP_DS_DESTROY_WAIT_SEC=${max_wait}); disable playbooks already wait for teardown"
+      hol_cdp_wait_for_data_services_absent "$max_wait" || true
+   fi
+
+   if hol_cdp_data_services_still_listed; then
+      hol_fail "CDP data services still appear in list APIs after disable playbooks. Aborting delete-environment and Terraform destroy to avoid orphaned AWS resources. Review disable logs under /userconfig/.${workshop_name}/logs/, finish CDP teardown, then retry destroy."
+   fi
+   return 0
+}
+
+# Back-compat alias for strict destroy pipeline.
+hol_cdp_require_data_services_absent_before_destroy() {
+   hol_cdp_assert_data_services_absent_before_destroy
 }
 
 # If the environment is already deleting, wait until describe fails or status is terminal.
@@ -1829,6 +1881,99 @@ hol_aws_trace_vpc_destroy_blockers() {
       done
 
    hol_info "Remediation order: (1) delete NAT gateways and wait until deleted, (2) delete/release other ENIs/EIPs in this VPC only, (3) retry HoL destroy — Terraform 'Still destroying' on IGW/subnets often means AWS never started detach because of the rows above."
+   hol_aws_trace_vpc_destroy_dependencies "$vpc_id"
+}
+
+# Upstream CDP/AWS dependencies (ALB, CFN, EKS, remaining ENIs) — not solvable by disassociating a single EIP.
+hol_aws_trace_vpc_destroy_dependencies() {
+   local vpc_id="$1"
+   local env_name="${workshop_name}-cdp-env" cdp_status stack_name stack_status
+   local eni_json
+
+   hol_subsection "VPC dependency graph (workshop ${workshop_name})" "🧭"
+   [[ -z "$vpc_id" || "$vpc_id" == "None" ]] && return 1
+
+   if cdp environments describe-environment --environment-name "$env_name" >/dev/null 2>&1; then
+      cdp_status=$(cdp environments describe-environment --environment-name "$env_name" 2>/dev/null \
+         | jq -r '.environment.status // "UNKNOWN"' 2>/dev/null || echo UNKNOWN)
+      hol_warn "CDP environment still registered: ${env_name} status=${cdp_status}"
+      hol_warn "  → cdp environments delete-environment --environment-name ${env_name}  (tears down CDP CloudFormation/EKS/ELB in this VPC before quickstart Terraform)"
+   else
+      hol_ok "CDP environment '${env_name}' not registered (CDP-side teardown done or never provisioned)"
+   fi
+
+   hol_info "ELBv2 load balancers in VPC:"
+   aws elbv2 describe-load-balancers --region "$aws_region" --output json 2>/dev/null \
+      | jq -r --arg vpc "$vpc_id" '
+         .LoadBalancers[]? | select(.VpcId == $vpc)
+         | "  \(.LoadBalancerName // "unnamed") type=\(.Type) scheme=\(.Scheme) state=\(.State.Code) arn=\(.LoadBalancerArn)"
+      ' || hol_info "  (none or unable to list)"
+
+   hol_info "CloudFormation stacks matching workshop name (non-deleted):"
+   while IFS=$'\t' read -r stack_name stack_status; do
+      [[ -z "$stack_name" ]] && continue
+      hol_warn "  stack=${stack_name} status=${stack_status} — delete stack or parent CDP env first"
+   done < <(aws cloudformation list-stacks --region "$aws_region" --output json 2>/dev/null \
+      | jq -r --arg p "$workshop_name" '
+         .StackSummaries[]?
+         | select(.StackStatus != "DELETE_COMPLETE")
+         | select(.StackName | test($p; "i"))
+         | [.StackName,.StackStatus] | @tsv
+      ' 2>/dev/null || true)
+
+   hol_info "EC2 instances in VPC:"
+   aws ec2 describe-instances --region "$aws_region" \
+      --filters "Name=vpc-id,Values=${vpc_id}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+      --query 'Reservations[].Instances[].[InstanceId,State.Name,PublicIpAddress,Tags[?Key==`Name`].Value|[0]]' \
+      --output text 2>/dev/null \
+      | while read -r iid istate pub name; do
+         [[ -z "$iid" || "$iid" == "None" ]] && continue
+         hol_warn "  instance=${iid} state=${istate} publicIp=${pub:-none} name=${name:-n/a}"
+      done
+
+   hol_info "In-use ENIs in VPC (trace parent from Description / RequesterManaged / InterfaceType):"
+   eni_json=$(aws ec2 describe-network-interfaces --region "$aws_region" \
+      --filters "Name=vpc-id,Values=${vpc_id}" --output json 2>/dev/null || echo '{}')
+   jq -r '.NetworkInterfaces[]? |
+      [.NetworkInterfaceId,.Status,.InterfaceType,(.Description // ""),(.RequesterId // ""),(.RequesterManaged // ""),(.Association.PublicIp // ""),(.SubnetId // "")] | @tsv' <<<"$eni_json" \
+      | while IFS=$'\t' read -r eni st itype desc req reqmgr pub subnet; do
+         [[ -z "$eni" ]] && continue
+         hol_info "  eni=${eni} status=${st} type=${itype} subnet=${subnet} publicIp=${pub:-none}"
+         hol_info "      desc=${desc} requester=${req} awsManaged=${reqmgr}"
+      done
+
+   hol_info "Typical chain: CDP data service → ELB/EKS/CFN stack → ENI/EIP in subnet → blocks subnet/IGW. Fix upstream (CDP delete-environment + data service disable), not only the leaf ENI."
+}
+
+hol_cdp_delete_workshop_environment_if_present() {
+   local env_name="${workshop_name}-cdp-env"
+   local status=""
+
+   if ! cdp environments describe-environment --environment-name "$env_name" >/dev/null 2>&1; then
+      hol_info "CDP environment '${env_name}' not registered — skipping delete-environment"
+      return 0
+   fi
+
+   status=$(cdp environments describe-environment --environment-name "$env_name" 2>/dev/null \
+      | jq -r '.environment.status // empty' 2>/dev/null || true)
+   case "$status" in
+      DELETING|TERMINATING|DELETE_IN_PROGRESS|STOPPING)
+         hol_info "CDP environment '${env_name}' already tearing down (status=${status})"
+         hol_cdp_wait_for_environment_teardown_idle || true
+         return 0
+         ;;
+   esac
+
+   hol_subsection "Deleting CDP environment (upstream AWS dependencies)" "☁️"
+   hol_step "Requesting CDP delete for ${env_name} before quickstart Terraform (releases CDP stacks/ELB/EKS ENIs)"
+   if cdp environments delete-environment --environment-name "$env_name" 2>&1; then
+      hol_ok "CDP delete-environment accepted for ${env_name}"
+   else
+      hol_warn "cdp environments delete-environment failed for ${env_name} — run hol AWS dependency trace; manual CDP console delete may be required"
+      hol_aws_trace_vpc_destroy_dependencies "$(hol_aws_resolve_workshop_vpc_id 2>/dev/null || true)"
+      return 1
+   fi
+   hol_cdp_wait_for_environment_teardown_idle || true
 }
 
 hol_aws_workshop_eip_tagged() {
@@ -1983,7 +2128,8 @@ hol_aws_fail_if_vpc_igw_blockers_after_prep() {
    [[ -z "$vpc_id" || "$vpc_id" == "None" ]] && return 0
    if hol_aws_vpc_igw_detach_blockers_remain "$vpc_id"; then
       hol_aws_trace_vpc_destroy_blockers "$vpc_id"
-      hol_fail "CDP Terraform destroy not started: Internet Gateway cannot detach while NAT gateways or ENIs still map public IPs in ${vpc_id}. Delete NAT gateways (aws ec2 delete-nat-gateway) and wait until deleted, then retry destroy. Do not disassociate Elastic IPs on NAT ENIs."
+      hol_aws_trace_vpc_destroy_dependencies "$vpc_id"
+      hol_fail "CDP Terraform destroy not started: Internet Gateway cannot detach while NAT gateways or ENIs still map public IPs in ${vpc_id}. Delete NAT gateways (aws ec2 delete-nat-gateway) and wait until deleted, then retry destroy. Do not disassociate Elastic IPs on NAT ENIs. If NAT/ENI tables are empty but destroy still fails, run the dependency graph trace — delete CDP environment and ELB/CFN parents first."
    fi
 }
 
@@ -2036,6 +2182,7 @@ run_cdp_terraform_destroy() {
    done
    hol_warn "CDP Terraform destroy did not complete after ${max_attempts} attempts"
    hol_aws_trace_vpc_destroy_blockers "${vpc_id:-}"
+   hol_aws_trace_vpc_destroy_dependencies "${vpc_id:-}"
    return 1
 }
 
@@ -2053,8 +2200,22 @@ destroy_cdp() {
    cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
    cdp_cidr="\"${cdp_cidr}\""
 
-   hol_cdp_wait_for_data_services_absent || true
-   hol_cdp_wait_for_environment_teardown_idle || true
+   if [[ "${HOL_CDP_DESTROY_STRICT:-0}" == "1" ]]; then
+      hol_cdp_assert_data_services_absent_before_destroy || return 1
+   fi
+
+   if [[ "${HOL_CDP_DELETE_ENV_BEFORE_TF:-1}" == "1" ]]; then
+      if [[ "${HOL_CDP_DESTROY_STRICT:-0}" == "1" ]]; then
+         hol_cdp_delete_workshop_environment_if_present || return 1
+      else
+         hol_cdp_delete_workshop_environment_if_present || hol_warn "Continuing CDP Terraform destroy after delete-environment failure — expect VPC dependency errors"
+      fi
+   fi
+   if [[ "${HOL_CDP_DESTROY_STRICT:-0}" == "1" ]]; then
+      hol_cdp_wait_for_environment_teardown_idle || return 1
+   else
+      hol_cdp_wait_for_environment_teardown_idle || true
+   fi
 
    hol_terraform init
    if [[ "${HOL_AWS_VPC_DESTROY_PREP:-1}" == "1" ]]; then
@@ -2083,6 +2244,7 @@ destroy_cdp() {
 # Function to destroy Complete HOL Infrastructure.
 destroy_hol_infra() {
    USER_NAMESPACE=$workshop_name
+   export HOL_CDP_DESTROY_STRICT=1
    keycloak_destroy_status=0
    enhancements_destroy_status=0
    cdp_destroy_status=0
