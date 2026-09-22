@@ -63,6 +63,16 @@
           ~ (cdf_enable_cmd.stdout | default('') | string)
         ) | trim
       }}
+    cdf_enable_stuck_precondition: >-
+      {{
+        (
+          (
+            (cdf_enable_cmd.stderr | default('') | string)
+            ~ ' '
+            ~ (cdf_enable_cmd.stdout | default('') | string)
+          ) | trim
+        ) is search('(?i)(FAILED_PRECONDITION|\\[412\\]|Status Code: 412|CANCEL_ENABLE|cannot be enabled at the moment|valid actions.*CANCEL_ENABLE)')
+      }}
     cdf_enable_conflict_ok: >-
       {{
         (
@@ -85,10 +95,20 @@
                 ~ ' '
                 ~ (cdf_enable_cmd.stdout | default('') | string)
               ) | trim
-            ) is search('(?i)(already exists|CONFLICT|already enabled|enable.*in progress|ENABLING)')
+            ) is search('(?i)(already exists|CONFLICT|already enabled|enable.*in progress|ENABLING|FAILED_PRECONDITION|\\[412\\]|Status Code: 412|CANCEL_ENABLE|cannot be enabled at the moment|valid actions.*CANCEL_ENABLE)')
           )
         )
         else (cdf_enable_cmd.rc | default(1) | int)
+      }}
+
+- name: Set CDF enable poll-only flag for stuck or in-flight enable
+  ansible.builtin.set_fact:
+    cdf_enable_poll_only: >-
+      {{
+        (
+          (cdf_enable_stuck_precondition | default(false) | bool) or
+          (cdf_enable_conflict_ok | default(false) | bool)
+        ) | bool
       }}
 
 - name: Set CDF enable attempt result payload
@@ -100,6 +120,29 @@
       msg: >-
         {{
           (
+            'CDF enable-service: stuck or in-flight enable (412/CANCEL_ENABLE or ENABLING) — continuing with health poll'
+            if (cdf_enable_stuck_precondition | default(false) | bool)
+            else (
+              'CDF enable-service: service already present or enabling — continuing with health poll'
+              if (cdf_enable_conflict_ok | default(false) | bool)
+              else (
+                (
+                  (cdf_enable_cmd.stderr | default('') | string)
+                  ~ ' '
+                  ~ (cdf_enable_cmd.stdout | default('') | string)
+                ) | trim
+              )
+            )
+          )
+        }}
+      stderr: "{{ cdf_enable_cmd.stderr | default('') }}"
+      stdout: "{{ cdf_enable_cmd.stdout | default('') }}"
+    cdf_enable_msg: >-
+      {{
+        (
+          'CDF enable-service: stuck or in-flight enable (412/CANCEL_ENABLE or ENABLING) — continuing with health poll'
+          if (cdf_enable_stuck_precondition | default(false) | bool)
+          else (
             'CDF enable-service: service already present or enabling — continuing with health poll'
             if (cdf_enable_conflict_ok | default(false) | bool)
             else (
@@ -110,27 +153,12 @@
               ) | trim
             )
           )
-        }}
-      stderr: "{{ cdf_enable_cmd.stderr | default('') }}"
-      stdout: "{{ cdf_enable_cmd.stdout | default('') }}"
-    cdf_enable_msg: >-
-      {{
-        (
-          'CDF enable-service: service already present or enabling — continuing with health poll'
-          if (cdf_enable_conflict_ok | default(false) | bool)
-          else (
-            (
-              (cdf_enable_cmd.stderr | default('') | string)
-              ~ ' '
-              ~ (cdf_enable_cmd.stdout | default('') | string)
-            ) | trim
-          )
         )
       }}
     cdf_enable_has_api_error: >-
       {{
         (
-          not (cdf_enable_conflict_ok | default(false) | bool)
+          not (cdf_enable_poll_only | default(false) | bool)
         ) and (
           (
             (
@@ -144,7 +172,7 @@
     cdf_enable_is_authorizing_500: >-
       {{
         (
-          not (cdf_enable_conflict_ok | default(false) | bool)
+          not (cdf_enable_poll_only | default(false) | bool)
         ) and (
           (
             (
@@ -159,6 +187,18 @@
       {{
         (
           (cdf_enable_effective_rc | int) != 0
+        ) and (
+          not (cdf_enable_stuck_precondition | default(false) | bool)
+        ) and (
+          not (
+            (
+              (
+                (cdf_enable_cmd.stderr | default('') | string)
+                ~ ' '
+                ~ (cdf_enable_cmd.stdout | default('') | string)
+              ) | trim
+            ) is search('(?i)(FAILED_PRECONDITION|\\[412\\]|Status Code: 412|CANCEL_ENABLE|cannot be enabled at the moment)')
+          )
         ) and (
           (
             (
@@ -182,6 +222,8 @@
     msg: >-
       CDF enable attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }} outcome:
       rc={{ cdf_enable_effective_rc | default('n/a') }},
+      poll_only={{ cdf_enable_poll_only | default(false) }},
+      stuck_precondition={{ cdf_enable_stuck_precondition | default(false) }},
       api_error={{ cdf_enable_has_api_error | default(false) }},
       will_retry={{ cdf_enable_should_retry | default(false) }},
       msg={{ cdf_enable_msg | truncate(400, True, '...') }}

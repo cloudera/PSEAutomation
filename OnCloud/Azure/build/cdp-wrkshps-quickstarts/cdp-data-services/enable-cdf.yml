@@ -253,9 +253,22 @@
         - cdf_skip_enable | default(false)
         - cdf_service_healthy | default(false)
 
-    - name: End play when CDF enable is not required
+    - name: Skip enable API while CDF provisioning is in progress
+      ansible.builtin.debug:
+        msg: >-
+          CDF enable already in progress for {{ cdp_env_name }}
+          (state: {{ cdf_current_state }}, detailedState: {{ cdf_current_detailed_state | default('n/a') }})
+          — skipping enable-service; waiting for GOOD_HEALTH.
+      when:
+        - cdf_skip_enable | default(false)
+        - cdf_service_in_progress | default(false)
+        - not cdf_service_healthy | default(false)
+
+    - name: End play when CDF is already healthy
       ansible.builtin.meta: end_play
-      when: cdf_skip_enable | default(false)
+      when:
+        - cdf_skip_enable | default(false)
+        - cdf_service_healthy | default(false)
 
     - name: Reset stale NOT_ENABLED CDF service record
       cloudera.cloud.df_service:
@@ -299,6 +312,72 @@
         seconds: "{{ cdf_enable_initial_delay | int }}"
       when: not cdf_skip_enable | default(false)
 
+    - name: Refresh CDF list state immediately before enable-service
+      ansible.builtin.command: cdp df list-services --no-paginate
+      register: cdf_pre_enable_list_raw
+      changed_when: false
+      failed_when: false
+      when: not cdf_skip_enable | default(false)
+
+    - name: Apply pre-enable list-services state
+      ansible.builtin.set_fact:
+        cdf_pre_enable_list_state: >-
+          {{
+            (
+              (cdf_pre_enable_list_raw.stdout | default('{"services": []}') | from_json).services
+              | default([])
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            ).status.state | default('NOT_FOUND')
+          }}
+        cdf_pre_enable_list_detailed_state: >-
+          {{
+            (
+              (cdf_pre_enable_list_raw.stdout | default('{"services": []}') | from_json).services
+              | default([])
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            ).status.detailedState | default('')
+          }}
+      when:
+        - not cdf_skip_enable | default(false)
+        - cdf_pre_enable_list_raw is defined
+
+    - name: Skip enable-service when pre-enable refresh shows in-progress provisioning
+      ansible.builtin.set_fact:
+        cdf_current_state: "{{ cdf_pre_enable_list_state }}"
+        cdf_current_detailed_state: "{{ cdf_pre_enable_list_detailed_state }}"
+        cdf_list_state: "{{ cdf_pre_enable_list_state }}"
+        cdf_list_detailed_state: "{{ cdf_pre_enable_list_detailed_state }}"
+        cdf_service_in_progress: true
+        cdf_skip_enable: true
+      when:
+        - not cdf_skip_enable | default(false)
+        - cdf_pre_enable_list_state is defined
+        - >-
+          (
+            (cdf_pre_enable_list_state in cdf_in_progress_states) or
+            (cdf_pre_enable_list_detailed_state in cdf_in_progress_detailed_states) or
+            (cdf_pre_enable_list_detailed_state in cdf_in_progress_states) or
+            (cdf_pre_enable_list_state in cdf_skip_enable_states and cdf_pre_enable_list_state not in cdf_absent_states)
+          )
+
+    - name: Log pre-enable refresh override
+      ansible.builtin.debug:
+        msg: >-
+          Pre-enable list-services shows CDF {{ cdp_env_name }} in progress
+          (state={{ cdf_pre_enable_list_state }}, detailedState={{ cdf_pre_enable_list_detailed_state | default('n/a') }})
+          — skipping enable-service; waiting for GOOD_HEALTH.
+      when:
+        - cdf_pre_enable_list_state is defined
+        - cdf_service_in_progress | default(false)
+        - cdf_skip_enable | default(false)
+        - not cdf_service_healthy | default(false)
+
     - name: Initialize CDF enable retry loop
       ansible.builtin.set_fact:
         cdf_enable_retry_done: false
@@ -319,15 +398,28 @@
       ansible.builtin.set_fact:
         cdf_enable_api_failed: >-
           {{
-            (cdf_enable_result.rc | default(0) | int) != 0 or
-            cdf_enable_result.failed | default(false) or
             (
-              (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out|access denied|not authorized)')
-            )
+              (
+                (cdf_enable_result.rc | default(0) | int) != 0 or
+                cdf_enable_result.failed | default(false) or
+                (
+                  (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out|access denied|not authorized)')
+                )
+              ) and not (cdf_enable_poll_only | default(false) | bool)
+            ) | bool
           }}
         cdf_enable_authorizing_error: >-
           {{
             (cdf_enable_result.msg | default('') | string) is search('(?i)(authorizing|\\[500\\]|error occurred while authorizing)')
+          }}
+        cdf_enable_stuck_precondition: >-
+          {{
+            (
+              (cdf_enable_poll_only | default(false) | bool) and
+              (
+                (cdf_enable_result.msg | default('') | string) is search('(?i)(412|CANCEL_ENABLE|FAILED_PRECONDITION|stuck or in-flight enable)')
+              )
+            ) | bool
           }}
       when: cdf_enable_result is defined
 
@@ -346,13 +438,13 @@
       ansible.builtin.fail:
         msg: >-
           cdp df enable-service failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
-          (transient INTERNAL/authorizing/[500] responses are retried with {{ cdf_enable_retry_delay }}s delay):
+          (transient INTERNAL/authorizing/[500] responses are retried with {{ cdf_enable_retry_delay }}s delay;
+          412 FAILED_PRECONDITION / CANCEL_ENABLE is not retried — the playbook polls for GOOD_HEALTH instead):
           {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}.
           Verify the CDP caller (~/.cdp credentials used in the container) has environment-scoped DFAdmin
           (assignCdpEnvAdminRoles.sh / hol_assign_pipeline_cdp_env_admin_roles assigns DFAdmin and syncs users).
           Manual `cdp df enable-service` succeeding while Ansible failed often means IAM propagation lag right
-          after role assignment, or the cloudera.cloud.df_service module path differed from the CLI — this playbook
-          now uses the CLI like enable-cai.yml. Persistent authorizing/[500] after retries usually means missing
+          after role assignment. Persistent authorizing/[500] after retries usually means missing
           DFAdmin on the active caller, not a subnet sizing issue.
       when:
         - cdf_enable_result is defined
@@ -372,9 +464,7 @@
       retries: "{{ cdf_poll_retries }}"
       delay: "{{ cdf_poll_delay }}"
       failed_when: false
-      when:
-        - not cdf_skip_enable | default(false)
-        - not cdf_enable_api_failed | default(false)
+      when: not cdf_enable_api_failed | default(false)
 
     - name: Set final CDF health flag
       ansible.builtin.set_fact:
@@ -414,7 +504,17 @@
           CDF did not reach a healthy state for {{ cdp_env_name }}
           (state: {{ cdf_final_state | default('unknown') }},
           detailedState: {{ cdf_final_detailed_state | default('unknown') }}).
-          The enable request may not have started — check CDP DF service events and subnet configuration.
+          {{
+            (
+              'CDP reported enable already in progress (412/CANCEL_ENABLE) but the service never reached GOOD_HEALTH. '
+              ~ 'A prior failed run may have left a stuck enable — run disable-cdf.yml (or cancel enable in the CDP DataFlow UI) '
+              ~ 'then re-run enable, or wait and retry the Jenkins job.'
+            )
+            if (cdf_enable_stuck_precondition | default(false) or cdf_service_in_progress | default(false))
+            else (
+              'The enable request may not have started — check CDP DF service events and subnet configuration.'
+            )
+          }}
       when: not cdf_final_healthy | default(false)
 
     - name: Print success message on successful CDF service enable
