@@ -2231,6 +2231,24 @@ hol_cdp_user_sync_conflict_operation_id() {
    [[ -n "$best" ]] && printf '%s\n' "$best"
 }
 
+# sync-status often needs the CRN from get-environment-user-sync-state; 409 bodies may only include the uuid.
+hol_cdp_normalize_user_sync_operation_id() {
+   local op_id="$1" env_name="$2" sync_state_json state_op=""
+   [[ -n "$op_id" ]] || return 1
+   if [[ "$op_id" == crn:* ]]; then
+      printf '%s\n' "$op_id"
+      return 0
+   fi
+   sync_state_json=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null || true)
+   state_op=$(jq -r '.userSyncOperationId // empty' <<<"$sync_state_json" 2>/dev/null)
+   [[ "$state_op" == "null" ]] && state_op=""
+   if [[ -n "$state_op" ]] && [[ "$state_op" == *"$op_id" ]]; then
+      printf '%s\n' "$state_op"
+      return 0
+   fi
+   printf '%s\n' "$op_id"
+}
+
 hol_cdp_user_sync_debug_conflict() {
    local output="$1" env_name="$2" req_id="" err_summary=""
    [[ "${HOL_CDP_USER_SYNC_DEBUG:-0}" == "1" ]] || return 0
@@ -2326,8 +2344,13 @@ hol_cdp_user_sync_operation_liveness() {
 hol_cdp_wait_for_user_sync_operation() {
    local op_id="$1"
    local max_wait_sec="${2:-${HOL_CDP_USER_SYNC_WAIT_SEC:-600}}"
+   local env_name="${3:-}"
    local poll_sec="${HOL_CDP_USER_SYNC_POLL_SEC:-15}"
    local elapsed=0 live=0
+
+   if [[ -n "$env_name" ]]; then
+      op_id=$(hol_cdp_normalize_user_sync_operation_id "$op_id" "$env_name" || printf '%s' "$op_id")
+   fi
 
    while [[ $elapsed -lt $max_wait_sec ]]; do
       live=0
@@ -2338,7 +2361,7 @@ hol_cdp_wait_for_user_sync_operation() {
       sleep "$poll_sec"
       elapsed=$((elapsed + poll_sec))
    done
-   hol_warn "Timed out after ${max_wait_sec}s waiting for user sync ${op_id}"
+   hol_info "User sync operation poll inconclusive after ${max_wait_sec}s for ${op_id} (sync-status did not reach a terminal state — checking environment user-sync state next)"
    return 1
 }
 
@@ -2366,7 +2389,10 @@ hol_cdp_sync_all_users_resilient() {
             # Do not consult latest sync-status here: it can be a different COMPLETED op.
             hol_warn "User sync already running (${running_op}) — waiting"
             hol_step "CDP user sync retry ${attempt}/${max_attempts}"
-            hol_cdp_wait_for_user_sync_operation "$running_op" "$wait_max_sec" || true
+            if ! hol_cdp_wait_for_user_sync_operation "$running_op" "$wait_max_sec" "$env_name"; then
+               hol_step "Operation poll timed out — waiting on environment user-sync state"
+               hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" quiet || true
+            fi
             sleep "$retry_sleep"
          elif hol_cdp_environment_user_sync_in_progress "$env_name"; then
             hol_warn "User sync already running — waiting"

@@ -154,18 +154,35 @@ resolve_cdp_api_caller() {
    return 1
 }
 
+workload_usernames_match() {
+   local a="$1" b="$2"
+   if [ -z "$a" ] || [ -z "$b" ]; then
+      return 1
+   fi
+   if [ "$a" = "$b" ]; then
+      return 0
+   fi
+   if [ "${a//_/.}" = "${b//_/.}" ]; then
+      return 0
+   fi
+   return 1
+}
+
 caller_matches_build_user() {
    local build_workload="$1"
    if [ -z "$CALLER_NAME" ]; then
       return 1
    fi
    if [ "$CALLER_IS_MACHINE" = "true" ]; then
-      if [ "$build_workload" = "$CALLER_NAME" ] || [ "$BUILD_USER_ID" = "$CALLER_NAME" ]; then
+      if workload_usernames_match "$build_workload" "$CALLER_NAME" \
+         || workload_usernames_match "${BUILD_USER_ID:-}" "$CALLER_NAME"; then
          return 0
       fi
       return 1
    fi
-   if [ "$build_workload" = "${CALLER_WORKLOAD:-$CALLER_NAME}" ]; then
+   if workload_usernames_match "$build_workload" "${CALLER_WORKLOAD:-$CALLER_NAME}" \
+      || workload_usernames_match "${BUILD_USER_ID:-}" "${CALLER_WORKLOAD:-$CALLER_NAME}" \
+      || workload_usernames_match "${BUILD_USER_ID:-}" "$CALLER_NAME"; then
       return 0
    fi
    return 1
@@ -267,7 +284,7 @@ human_user_already_assigned() {
    local workload_username="$1"
    local u
    for u in "${assigned_human_users[@]}"; do
-      if [ "$u" = "$workload_username" ]; then
+      if workload_usernames_match "$u" "$workload_username"; then
          return 0
       fi
    done
@@ -295,27 +312,49 @@ assign_human_user_by_workload() {
 
 build_user_label=""
 build_workload_username=""
-if [ "$ASSIGN_BUILD_USER" = "true" ] && [ -n "$BUILD_USER_ID" ] && [ "$BUILD_USER_ID" != "$CDP_MACHINE_USERNAME" ]; then
+if [ "$ASSIGN_BUILD_USER" = "true" ] && [ -n "$BUILD_USER_ID" ] \
+   && ! workload_usernames_match "$BUILD_USER_ID" "$CDP_MACHINE_USERNAME"; then
    build_workload_username="${BUILD_USER_ID//_/.}"
    build_user_label="$BUILD_USER_ID"
 fi
 
-if [ -n "$build_user_label" ]; then
-   echo "Assigning admin roles to machine user '${CDP_MACHINE_USERNAME}' and build user '${build_user_label}' on ${CDP_ENV_NAME}"
-else
-   echo "Assigning admin roles to machine user '${CDP_MACHINE_USERNAME}' on ${CDP_ENV_NAME}"
-fi
-echo "Roles: ${ENV_ADMIN_ROLES[*]}"
-
-assign_failed=0
-assigned_machine_users=()
+declare -A machine_user_crns=()
+machine_user_order=()
 assigned_human_users=()
+
+add_machine_target() {
+   local name="$1" crn="$2"
+   if [ -z "$name" ] || [ -z "$crn" ]; then
+      return 0
+   fi
+   if [ -n "${machine_user_crns[$name]+x}" ]; then
+      return 0
+   fi
+   machine_user_crns[$name]="$crn"
+   machine_user_order+=("$name")
+}
+
+add_human_target() {
+   local workload="$1"
+   local u
+   if [ -z "$workload" ]; then
+      return 0
+   fi
+   for u in "${human_workload_order[@]}"; do
+      if workload_usernames_match "$u" "$workload"; then
+         return 0
+      fi
+   done
+   human_workload_order+=("$workload")
+}
+
+human_workload_order=()
+assign_failed=0
 
 if [ "$ASSIGN_MACHINE_USER" = "true" ]; then
    machine_user_crn="$(resolve_machine_user_crn "$CDP_MACHINE_USERNAME")"
    if [ -n "$machine_user_crn" ]; then
-      assign_machine_user_roles "$CDP_MACHINE_USERNAME" "$machine_user_crn" || assign_failed=1
-      assigned_machine_users+=("$CDP_MACHINE_USERNAME")
+      add_machine_target "$CDP_MACHINE_USERNAME" "$machine_user_crn"
    else
       echo "WARN: Machine user '${CDP_MACHINE_USERNAME}' not found — skipping pipeline machine user role assignment."
    fi
@@ -324,14 +363,9 @@ fi
 if [ "$ASSIGN_CALLER" = "true" ]; then
    if resolve_cdp_api_caller; then
       if [ "$CALLER_IS_MACHINE" = "true" ]; then
-         if [[ ! " ${assigned_machine_users[*]} " =~ " ${CALLER_NAME} " ]]; then
-            assign_machine_user_roles "$CALLER_NAME" "$CALLER_CRN" || assign_failed=1
-            assigned_machine_users+=("$CALLER_NAME")
-         else
-            echo "INFO: CDP API caller '${CALLER_NAME}' already received env admin roles as pipeline machine user — skipping duplicate"
-         fi
+         add_machine_target "$CALLER_NAME" "$CALLER_CRN"
       else
-         assign_human_user_by_workload "${CALLER_WORKLOAD:-$CALLER_NAME}" || assign_failed=1
+         add_human_target "${CALLER_WORKLOAD:-$CALLER_NAME}"
       fi
    else
       assign_failed=1
@@ -339,8 +373,20 @@ if [ "$ASSIGN_CALLER" = "true" ]; then
 fi
 
 if [ -n "$build_workload_username" ] && ! caller_matches_build_user "$build_workload_username"; then
-   assign_human_user_by_workload "$build_workload_username" || assign_failed=1
+   add_human_target "$build_workload_username"
 fi
+
+unique_principal_labels=("${machine_user_order[@]}" "${human_workload_order[@]}")
+echo "Assigning admin roles on ${CDP_ENV_NAME} (unique principals: ${unique_principal_labels[*]})"
+echo "Roles: ${ENV_ADMIN_ROLES[*]}"
+
+for machine_user_name in "${machine_user_order[@]}"; do
+   assign_machine_user_roles "$machine_user_name" "${machine_user_crns[$machine_user_name]}" || assign_failed=1
+done
+
+for workload_username in "${human_workload_order[@]}"; do
+   assign_human_user_by_workload "$workload_username" || assign_failed=1
+done
 
 cdp environments sync-all-users --environment-names "$CDP_ENV_NAME" >/dev/null 2>&1 || true
 cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME" >/dev/null 2>&1 || true
