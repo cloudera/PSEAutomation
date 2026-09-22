@@ -95,6 +95,9 @@ destroy)
         cdp_idp_user_teardown
     fi
     destroy_hol_infra
+    if [ $? -ne 0 ]; then
+        hol_destroy_failed "$workshop_name"
+    fi
     hol_banner "Infrastructure destroyed" "✅"
     hol_ok "Workshop '${workshop_name}' teardown completed"
     ;;

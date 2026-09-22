@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed
+- AWS destroy: run `destroy_aws_enhancements` (detach `${env_prefix}-logs-policy` from `${env_prefix}-dladmin-role`) before CDP quickstart Terraform destroy so `aws_iam_policy` delete is not blocked by HoL’s `aws_iam_role_policy_attachment`.
+- AWS destroy: propagate Terraform teardown failures — `destroy_hol_infra` non-zero exit fails the container via `hol_destroy_failed` (aligned with Azure), so Jenkins no longer reports success when CDP Terraform errors.
 - CDF `disable-cdf.yml` (AWS/Azure): resolve service CRN from list-services; skip `disable-service` only when all list/info/current states are absent/disabled or DISABLING is already in progress.
 - CDF `disable-cdf.yml` (AWS/Azure): set `cdf_disable_in_progress` and related flags in separate `set_fact` tasks so Ansible does not reference undefined sibling facts during derived-flag evaluation.
 - CDF enable/disable playbooks (AWS/Azure): list service state first and skip `enable-service` when the service is healthy or in progress (e.g. ENABLING, GOOD_HEALTH) and skip `disable-service` when absent/disabled or already DISABLING—no second API call on re-run.

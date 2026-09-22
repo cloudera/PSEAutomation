@@ -1149,6 +1149,29 @@ aws_enhancements() {
       -var="aws_region=$aws_region"
 }
 
+# Tear down HoL-owned IAM attachments before CDP quickstart Terraform destroys shared policies.
+destroy_aws_enhancements() {
+   hol_subsection "Removing AWS enhancements" "✨"
+   USER_NAMESPACE=$workshop_name
+   local dladmin_tf_dir="/userconfig/.$USER_NAMESPACE/aws_enhancements/dladmin_log_policy"
+   if [[ ! -d "$dladmin_tf_dir" || ! -f "$dladmin_tf_dir/main.tf" ]]; then
+      hol_skip "dladmin_log_policy Terraform not found — skipping enhancement destroy"
+      return 0
+   fi
+   cd "$dladmin_tf_dir" || return 1
+   terraform init -input=false
+   terraform destroy -auto-approve \
+      -var="env_prefix=$workshop_name" \
+      -var="aws_region=$aws_region"
+   local status=$?
+   if [[ $status -ne 0 ]]; then
+      hol_warn "dladmin_log_policy destroy failed — CDP Terraform may be unable to delete ${workshop_name}-logs-policy while still attached"
+      return 1
+   fi
+   hol_ok "Detached ${workshop_name}-logs-policy from datalake admin role"
+   return 0
+}
+
 #--------------------------------------------------------------------------------------------------#
 initialize_compute_cluster() {
    hol_subsection "Initializing compute cluster" "🖥️"
@@ -1627,6 +1650,9 @@ destroy_cdp() {
 destroy_hol_infra() {
    USER_NAMESPACE=$workshop_name
    keycloak_destroy_status=0
+   enhancements_destroy_status=0
+   destroy_aws_enhancements
+   enhancements_destroy_status=$?
    destroy_cdp
    cdp_destroy_status=$?
    if [[ "$provision_keycloak" == "yes" && "$cdp_destroy_status" -eq 0 ]]; then
@@ -1634,8 +1660,8 @@ destroy_hol_infra() {
       keycloak_destroy_status=$?
    fi
 
-   if [[ "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]]; then
-      if [[ -f /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag && "$(cat /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag)" == "true" ]]; then
+   if [[ "$enhancements_destroy_status" -eq 0 && "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]]; then
+      if [[ -f /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag && "$(cat /userconfig/.$USER_NAMESPACE/keypair_generated.flag)" == "true" ]]; then
          destroy_keypair
       fi
       rm -rf "/userconfig/.$USER_NAMESPACE"

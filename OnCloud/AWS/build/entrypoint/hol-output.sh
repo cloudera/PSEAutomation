@@ -323,6 +323,11 @@ hol_provision_failed() {
    hol_fail "Infrastructure provisioning for '${workshop}' failed. Review the logs above and try again."
 }
 
+hol_destroy_failed() {
+   local workshop="${1:-workshop}"
+   hol_fail "Infrastructure destroy for '${workshop}' did not complete. Review Terraform errors above, then retry destroy or clean up remaining AWS resources manually."
+}
+
 _hol_startup_hbar() {
    local width="$1"
    local char="${2:--}"
