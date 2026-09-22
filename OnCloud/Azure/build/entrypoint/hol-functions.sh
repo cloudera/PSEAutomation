@@ -57,7 +57,7 @@ hol_keycloak_ip_from_terraform() {
    local ip=""
 
    [[ -n "${workshop_name:-}" && -d "$kc_tf_dir" ]] || return 1
-   ip=$(cd "$kc_tf_dir" && terraform output -raw elastic_ip 2>/dev/null || true)
+   ip=$(cd "$kc_tf_dir" && hol_terraform output -raw elastic_ip 2>/dev/null || true)
    [[ -n "$ip" && "$ip" != "null" ]] || return 1
    printf '%s\n' "$ip"
 }
@@ -794,13 +794,13 @@ generate_keypair() {
    fi
 
    cd /userconfig/.$USER_NAMESPACE/keypair_gen
-   terraform init
-   terraform apply -auto-approve \
+   hol_terraform init
+   hol_terraform apply -auto-approve \
       -var "keypair_name=$workshop_name"
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
-      export ssh_key_name=$(terraform output -raw ssh_key_name_output) #updated the value of ssh_key_name if initially not exists
-      export ssh_public_key=$(terraform output -raw ssh_public_key_output)
+      export ssh_key_name=$(hol_terraform output -raw ssh_key_name_output) #updated the value of ssh_key_name if initially not exists
+      export ssh_public_key=$(hol_terraform output -raw ssh_public_key_output)
       echo "true" >keypair_generated.flag                              # Store a flag to indicate the keypair was generated
       cp -f ${workshop_name}-keypair.pem /userconfig/.$USER_NAMESPACE/
       return 0
@@ -813,8 +813,8 @@ destroy_keypair() {
    hol_subsection "Destroying generated keypair" "🔑"
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/keypair_gen
-   terraform init
-   terraform destroy -auto-approve \
+   hol_terraform init
+   hol_terraform destroy -auto-approve \
       -var "keypair_name=$workshop_name"
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
@@ -842,8 +842,8 @@ load_keycloak_network_env() {
 
 resolve_keycloak_subnet_from_cdp_outputs() {
    local gateway_subnet private_subnet
-   gateway_subnet=$(terraform output -json azure_cdp_gateway_subnet_names 2>/dev/null | jq -r '.[0] // empty')
-   private_subnet=$(terraform output -json azure_cdp_subnet_names 2>/dev/null | jq -r '.[0] // empty')
+   gateway_subnet=$(hol_terraform output -json azure_cdp_gateway_subnet_names 2>/dev/null | jq -r '.[0] // empty')
+   private_subnet=$(hol_terraform output -json azure_cdp_subnet_names 2>/dev/null | jq -r '.[0] // empty')
    if [[ -n "$gateway_subnet" && "$gateway_subnet" != "null" ]]; then
       KC_SUBNET_NAME="$gateway_subnet"
       KC_SUBNET_SOURCE="gateway"
@@ -902,9 +902,9 @@ get_cdp_network_for_keycloak() {
       hol_fail "CDP Terraform directory not found at ${azure_tf_dir}. Provision CDP before Keycloak."
    fi
    cd "${azure_tf_dir}" || hol_fail "Unable to enter CDP Terraform directory: ${azure_tf_dir}"
-   KC_RESOURCE_GROUP=$(terraform output -raw azure_resource_group_name 2>/dev/null || terraform output -raw azure_cdp_resource_group_name 2>/dev/null || true)
-   KC_NETWORK_RG=$(terraform output -raw azure_network_resource_group_name 2>/dev/null || terraform output -raw azure_resource_group_name 2>/dev/null || terraform output -raw azure_cdp_resource_group_name 2>/dev/null || true)
-   KC_VNET_NAME=$(terraform output -raw azure_vnet_name 2>/dev/null || true)
+   KC_RESOURCE_GROUP=$(hol_terraform output -raw azure_resource_group_name 2>/dev/null || hol_terraform output -raw azure_cdp_resource_group_name 2>/dev/null || true)
+   KC_NETWORK_RG=$(hol_terraform output -raw azure_network_resource_group_name 2>/dev/null || hol_terraform output -raw azure_resource_group_name 2>/dev/null || hol_terraform output -raw azure_cdp_resource_group_name 2>/dev/null || true)
+   KC_VNET_NAME=$(hol_terraform output -raw azure_vnet_name 2>/dev/null || true)
    resolve_keycloak_subnet_from_cdp_outputs
    if [[ -z "$KC_RESOURCE_GROUP" || -z "$KC_NETWORK_RG" || -z "$KC_VNET_NAME" || -z "$KC_SUBNET_NAME" ]]; then
       [[ "$mode" == "optional" ]] && return 1
@@ -927,9 +927,9 @@ hol_recover_keycloak_network_from_terraform_state() {
    [[ -d "$kc_tf_dir" ]] || return 1
    cd "$kc_tf_dir" || return 1
 
-   KC_RESOURCE_GROUP=$(terraform state show -no-color azurerm_linux_virtual_machine.keycloak 2>/dev/null \
+   KC_RESOURCE_GROUP=$(hol_terraform state show -no-color azurerm_linux_virtual_machine.keycloak 2>/dev/null \
       | awk -F' = ' '/resource_group_name/ { gsub(/"/, "", $2); print $2; exit }')
-   nic_subnet_id=$(terraform state show -no-color azurerm_network_interface.keycloak 2>/dev/null \
+   nic_subnet_id=$(hol_terraform state show -no-color azurerm_network_interface.keycloak 2>/dev/null \
       | awk -F' = ' '/subnet_id/ { gsub(/"/, "", $2); print $2; exit }')
 
    [[ -n "${prev_dir}" ]] && cd "$prev_dir" || true
@@ -1018,10 +1018,10 @@ setup_keycloak_vm() {
       sg_name="$sg_name-$workshop_name"
    fi
 
-   terraform init
-   if terraform state list 2>/dev/null | grep -q 'azurerm_linux_virtual_machine.keycloak'; then
+   hol_terraform init
+   if hol_terraform state list 2>/dev/null | grep -q 'azurerm_linux_virtual_machine.keycloak'; then
       hol_skip "Keycloak VM already exists in Terraform state — skipping apply"
-      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip 2>/dev/null || true)
+      KEYCLOAK_SERVER_IP=$(hol_terraform output -raw elastic_ip 2>/dev/null || true)
       if [[ -n "$KEYCLOAK_SERVER_IP" ]]; then
          hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
          hol_kv "Keycloak instance IP" "$KEYCLOAK_SERVER_IP"
@@ -1034,7 +1034,7 @@ setup_keycloak_vm() {
       export ssh_public_key=$(ssh-keygen -y -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem")
    fi
 
-   terraform apply -auto-approve \
+   hol_terraform apply -auto-approve \
       -var "workshop_name=$workshop_name" \
       -var "local_ip=$kc_ip" \
       -var "ssh_key_name=$ssh_key_name" \
@@ -1054,7 +1054,7 @@ setup_keycloak_vm() {
    if [ $RETURN -ne 0 ]; then
       return 1
    fi
-   KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip)
+   KEYCLOAK_SERVER_IP=$(hol_terraform output -raw elastic_ip)
    hol_step "Saving Keycloak IP to $(hol_keycloak_ip_path)"
    hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
    hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
@@ -1104,8 +1104,8 @@ destroy_keycloak() {
    fi
 
    cd "$kc_tf_dir"
-   terraform init >/dev/null 2>&1
-   if ! terraform state list 2>/dev/null | grep -q .; then
+   hol_terraform init >/dev/null 2>&1
+   if ! hol_terraform state list 2>/dev/null | grep -q .; then
       hol_skip "Keycloak Terraform state is empty — skipping Keycloak destroy"
       hol_remove_keycloak_ip_on_destroy
       rm -rf "$kc_tf_dir" /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
@@ -1130,7 +1130,7 @@ destroy_keycloak() {
    sleep 30
 
    local keycloak_ip=""
-   keycloak_ip=$(terraform output -raw elastic_ip 2>/dev/null || true)
+   keycloak_ip=$(hol_terraform output -raw elastic_ip 2>/dev/null || true)
    if [[ -n "$keycloak_ip" && -n "${hostedzoneid:-}" ]]; then
       hol_step "Deleting Route53 DNS record"
       if aws route53 change-resource-record-sets --hosted-zone-id "$hostedzoneid" \
@@ -1179,7 +1179,7 @@ destroy_keycloak() {
       )
    fi
 
-   terraform destroy "${destroy_args[@]}"
+   hol_terraform destroy "${destroy_args[@]}"
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
       hol_remove_keycloak_ip_on_destroy
@@ -1290,7 +1290,7 @@ resolve_datalake_storage_account() {
    fi
    local azure_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/azure"
    if [[ -d "$azure_tf_dir" ]]; then
-      DATA_STORAGE_ACCOUNT=$(cd "$azure_tf_dir" && terraform output -raw azure_data_storage_account 2>/dev/null || true)
+      DATA_STORAGE_ACCOUNT=$(cd "$azure_tf_dir" && hol_terraform output -raw azure_data_storage_account 2>/dev/null || true)
       export DATA_STORAGE_ACCOUNT
    fi
    [[ -n "${DATA_STORAGE_ACCOUNT:-}" ]]
@@ -1305,7 +1305,7 @@ should_provision_cai_nfs() {
 }
 
 cdp_nfs_enabled_in_state() {
-   terraform state list 2>/dev/null | grep -q "module.cdp_azure_prereqs.module.azure_cml_nfs"
+   hol_terraform state list 2>/dev/null | grep -q "module.cdp_azure_prereqs.module.azure_cml_nfs"
 }
 
 # Wire create_azure_cml_nfs into cdp-tf-quickstarts (not exposed in root module by default).
@@ -1564,8 +1564,8 @@ load_cdp_subnet_outputs_from_terraform() {
    [[ -d "$azure_tf_dir" ]] || return 1
    cd "$azure_tf_dir" || return 1
 
-   public_subnets=$(terraform output -json azure_cdp_gateway_subnet_names 2>/dev/null | jq -c '.[0:3]' || true)
-   private_subnets=$(terraform output -json azure_cdp_subnet_names 2>/dev/null | jq -c '.[0:3]' || true)
+   public_subnets=$(hol_terraform output -json azure_cdp_gateway_subnet_names 2>/dev/null | jq -c '.[0:3]' || true)
+   private_subnets=$(hol_terraform output -json azure_cdp_subnet_names 2>/dev/null | jq -c '.[0:3]' || true)
    [[ -z "$public_subnets" || "$public_subnets" == "null" ]] && return 1
    [[ -z "$private_subnets" || "$private_subnets" == "null" ]] && return 1
 
@@ -1579,8 +1579,8 @@ load_cai_nfs_from_terraform() {
    [[ -d "$azure_tf_dir" ]] || return 1
    cd "$azure_tf_dir" || return 1
 
-   NFS_FILE_SHARE_URL=$(terraform output -raw nfs_file_share_url 2>/dev/null || true)
-   CAI_NFS_STORAGE_ACCOUNT=$(terraform output -raw nfs_storage_account_name 2>/dev/null || true)
+   NFS_FILE_SHARE_URL=$(hol_terraform output -raw nfs_file_share_url 2>/dev/null || true)
+   CAI_NFS_STORAGE_ACCOUNT=$(hol_terraform output -raw nfs_storage_account_name 2>/dev/null || true)
    CAI_NFS_SHARE_NAME=$(extract_nfs_share_name_from_url "$NFS_FILE_SHARE_URL" 2>/dev/null || true)
    CAI_EXISTING_NFS=$(build_cai_existing_nfs_mount "$CAI_NFS_STORAGE_ACCOUNT" "$NFS_FILE_SHARE_URL" 2>/dev/null || true)
 
@@ -1713,7 +1713,7 @@ EOF
       hol_info "NFS is provisioned with CDP infra (same RG/VNet) — premium FileStorage, one private endpoint in the first CDP subnet, secure transfer disabled"
       patch_cdp_quickstart_for_cai_nfs "${azure_tf_dir}"
    fi
-   terraform init
+   hol_terraform init
    if should_provision_cai_nfs; then
       patch_cdp_prereqs_nfs_single_private_endpoint "${azure_tf_dir}"
    fi
@@ -1771,7 +1771,7 @@ EOF
    export TF_INPUT=0
 
    hol_subsection "Running Terraform for CDP environment & datalake" "☁️"
-   terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
+   hol_terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
 
    if [ $? -ne 0 ]; then
       return 1
@@ -1782,21 +1782,21 @@ EOF
 
    cdp_provision_status=0
    if [ $cdp_provision_status -eq 0 ]; then
-      export ENV_PUBLIC_SUBNETS=$(terraform output -json azure_cdp_gateway_subnet_names)
-      export ENV_PRIVATE_SUBNETS=$(terraform output -json azure_cdp_subnet_names)
+      export ENV_PUBLIC_SUBNETS=$(hol_terraform output -json azure_cdp_gateway_subnet_names)
+      export ENV_PRIVATE_SUBNETS=$(hol_terraform output -json azure_cdp_subnet_names)
 
       hol_kv "Public subnets" "$ENV_PUBLIC_SUBNETS"
       hol_kv "Private subnets" "$ENV_PRIVATE_SUBNETS"
 
-      ENV_PUBLIC_SUBNETS=$(terraform output -json azure_cdp_gateway_subnet_names | jq -c '.[0:3]')
+      ENV_PUBLIC_SUBNETS=$(hol_terraform output -json azure_cdp_gateway_subnet_names | jq -c '.[0:3]')
       hol_info "First 3 public subnets (CDW/CDF): $ENV_PUBLIC_SUBNETS"
-      ENV_PRIVATE_SUBNETS=$(terraform output -json azure_cdp_subnet_names | jq -c '.[0:3]')
+      ENV_PRIVATE_SUBNETS=$(hol_terraform output -json azure_cdp_subnet_names | jq -c '.[0:3]')
       hol_info "First 3 private subnets (CDW/CDF): $ENV_PRIVATE_SUBNETS"
 
-      export LOG_STORAGE_CONTAINER=$(terraform output -raw log_storage_container_name)
-      export LOG_STORAGE_ACCOUNT=$(terraform output -raw log_storage_account_name)
-      export DATA_STORAGE_ACCOUNT=$(terraform output -raw azure_data_storage_account 2>/dev/null || true)
-      export AZURE_RESOURCE_GROUP=$(terraform output -raw azure_resource_group_name)
+      export LOG_STORAGE_CONTAINER=$(hol_terraform output -raw log_storage_container_name)
+      export LOG_STORAGE_ACCOUNT=$(hol_terraform output -raw log_storage_account_name)
+      export DATA_STORAGE_ACCOUNT=$(hol_terraform output -raw azure_data_storage_account 2>/dev/null || true)
+      export AZURE_RESOURCE_GROUP=$(hol_terraform output -raw azure_resource_group_name)
 
       if [[ -n "${DATA_STORAGE_ACCOUNT:-}" ]]; then
          hol_kv "Datalake storage account" "$DATA_STORAGE_ACCOUNT"
@@ -1875,8 +1875,8 @@ azure_enhancements() {
    fi
 
    cd /userconfig/.$USER_NAMESPACE/azure_enhancements/storage_lifecycle
-   terraform init
-   terraform apply -auto-approve \
+   hol_terraform init
+   hol_terraform apply -auto-approve \
       -var="log_storage_account=$LOG_STORAGE_ACCOUNT" \
       -var="log_storage_container=$LOG_STORAGE_CONTAINER" \
       -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
@@ -1884,8 +1884,8 @@ azure_enhancements() {
 
    hol_subsection "Granting datalake admin log container write access" "🔐"
    cd /userconfig/.$USER_NAMESPACE/azure_enhancements/dladmin_log_access
-   terraform init
-   terraform apply -auto-approve \
+   hol_terraform init
+   hol_terraform apply -auto-approve \
       -var="env_prefix=$workshop_name" \
       -var="log_storage_account=$LOG_STORAGE_ACCOUNT" \
       -var="log_storage_container=$LOG_STORAGE_CONTAINER" \
@@ -1899,8 +1899,8 @@ azure_enhancements() {
 
       hol_subsection "Granting datalake storage access for AI Registry" "🤖"
       cd /userconfig/.$USER_NAMESPACE/azure_enhancements/ai_registry_storage_access
-      terraform init
-      terraform apply -auto-approve \
+      hol_terraform init
+      hol_terraform apply -auto-approve \
          -var="env_prefix=$workshop_name" \
          -var="data_storage_account=$DATA_STORAGE_ACCOUNT" \
          -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
@@ -1914,28 +1914,28 @@ azure_enhancements() {
 
       hol_subsection "Provisioning CDW custom identity and role" "🏢"
       cd /userconfig/.$USER_NAMESPACE/azure_enhancements/cdw_custom_identity
-      terraform init
-      terraform apply -auto-approve \
+      hol_terraform init
+      hol_terraform apply -auto-approve \
          -var="env_prefix=$workshop_name" \
          -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
          -var="data_storage_account=$DATA_STORAGE_ACCOUNT" \
          -var="azure_region=$azure_region"
-      export CDW_MANAGED_IDENTITY_ID=$(terraform output -raw cdw_managed_identity_id)
+      export CDW_MANAGED_IDENTITY_ID=$(hol_terraform output -raw cdw_managed_identity_id)
       hol_kv "CDW managed identity" "$CDW_MANAGED_IDENTITY_ID"
    fi
 
    if should_provision_cde; then
       hol_subsection "Provisioning CDE custom identities" "🏢"
       cd /userconfig/.$USER_NAMESPACE/azure_enhancements/cde_custom_identity
-      terraform init
-      terraform apply -auto-approve \
+      hol_terraform init
+      hol_terraform apply -auto-approve \
          -var="env_prefix=$workshop_name" \
          -var="log_storage_account=$LOG_STORAGE_ACCOUNT" \
          -var="log_storage_container=$LOG_STORAGE_CONTAINER" \
          -var="resource_group_name=$AZURE_RESOURCE_GROUP" \
          -var="azure_region=$azure_region"
-      export CDE_CLUSTER_MANAGED_IDENTITY_ID=$(terraform output -raw cde_cluster_managed_identity_id)
-      export CDE_VC_MANAGED_IDENTITY_ID=$(terraform output -raw cde_vc_managed_identity_id)
+      export CDE_CLUSTER_MANAGED_IDENTITY_ID=$(hol_terraform output -raw cde_cluster_managed_identity_id)
+      export CDE_VC_MANAGED_IDENTITY_ID=$(hol_terraform output -raw cde_vc_managed_identity_id)
       hol_kv "CDE cluster managed identity" "$CDE_CLUSTER_MANAGED_IDENTITY_ID"
       hol_kv "CDE VC managed identity" "$CDE_VC_MANAGED_IDENTITY_ID"
    fi
@@ -2464,16 +2464,16 @@ terraform_output_resource_addresses() {
 
 azuread_app_password_gone_in_azure() {
    local addr="$1" app_id key_id
-   app_id=$(terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*application_id / { print $2; exit }' | tr -d '" ')
-   key_id=$(terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*key_id / { print $2; exit }' | tr -d '" ')
+   app_id=$(hol_terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*application_id / { print $2; exit }' | tr -d '" ')
+   key_id=$(hol_terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*key_id / { print $2; exit }' | tr -d '" ')
    [[ -z "$app_id" || -z "$key_id" ]] && return 1
    ! az ad app credential list --id "$app_id" --query "[?keyId=='${key_id}']" -o tsv 2>/dev/null | grep -q .
 }
 
 azuread_service_principal_gone_in_azure() {
    local addr="$1" lookup_id
-   lookup_id=$(terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*object_id / { print $2; exit }' | tr -d '" ')
-   [[ -z "$lookup_id" ]] && lookup_id=$(terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*client_id / { print $2; exit }' | tr -d '" ')
+   lookup_id=$(hol_terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*object_id / { print $2; exit }' | tr -d '" ')
+   [[ -z "$lookup_id" ]] && lookup_id=$(hol_terraform state show -no-color "$addr" 2>/dev/null | awk -F' = ' '/^[[:space:]]*client_id / { print $2; exit }' | tr -d '" ')
    [[ -z "$lookup_id" ]] && return 1
    ! az ad sp show --id "$lookup_id" >/dev/null 2>&1
 }
@@ -2488,7 +2488,7 @@ remove_gone_resource_from_state() {
       azuread_service_principal_gone_in_azure "$addr" || return 1
    fi
    hol_skip "Resource already gone in Azure — updating Terraform state only: ${addr}"
-   terraform state rm "$addr" >/dev/null 2>&1
+   hol_terraform state rm "$addr" >/dev/null 2>&1
 }
 
 remove_stale_resources_from_terraform_output() {
@@ -2503,19 +2503,19 @@ remove_stale_resources_from_terraform_output() {
    while IFS= read -r addr; do
       [[ -z "$addr" ]] && continue
       hol_skip "Resource already gone in Azure — updating Terraform state only: ${addr}"
-      terraform state rm "$addr" >/dev/null 2>&1 && removed=1
+      hol_terraform state rm "$addr" >/dev/null 2>&1 && removed=1
    done < <(terraform_output_resource_addresses "$output")
 
    # Fallback: only remove Entra ID entries verified absent (never bulk-drop live resources).
    if [[ $removed -eq 0 ]] && grep -qi 'Deleting Service Principal' <<<"$output"; then
       while IFS= read -r addr; do
          remove_gone_resource_from_state "$addr" && removed=1
-      done < <(terraform state list 2>/dev/null | grep 'azuread_service_principal' || true)
+      done < <(hol_terraform state list 2>/dev/null | grep 'azuread_service_principal' || true)
    fi
    if [[ $removed -eq 0 ]] && grep -qi 'password credential' <<<"$output"; then
       while IFS= read -r addr; do
          remove_gone_resource_from_state "$addr" && removed=1
-      done < <(terraform state list 2>/dev/null | grep 'azuread_application_password' || true)
+      done < <(hol_terraform state list 2>/dev/null | grep 'azuread_application_password' || true)
    fi
 
    [[ $removed -eq 1 ]] && return 0
@@ -2528,7 +2528,7 @@ repair_cdp_missing_resources_in_state() {
    local max_passes=50
    local pass=0 output status log
 
-   if ! terraform state list 2>/dev/null | grep -q .; then
+   if ! hol_terraform state list 2>/dev/null | grep -q .; then
       return 0
    fi
 
@@ -2536,7 +2536,7 @@ repair_cdp_missing_resources_in_state() {
       pass=$((pass + 1))
       log=$(mktemp)
       hol_step "Reconciling Terraform state with Azure (${pass}/${max_passes})..."
-      terraform refresh "${tf_args[@]}" 2>&1 | tee "$log"
+      hol_terraform refresh "${tf_args[@]}" 2>&1 | tee "$log"
       status=${PIPESTATUS[0]}
       output=$(cat "$log")
       rm -f "$log"
@@ -2566,7 +2566,7 @@ run_cdp_terraform_destroy() {
       attempt=$((attempt + 1))
       log=$(mktemp)
       hol_step "Running terraform destroy (${attempt}/${max_attempts})..."
-      terraform destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log" | terraform_filter_benign_destroy_output
+      hol_terraform destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log" | terraform_filter_benign_destroy_output
       status=${PIPESTATUS[0]}
       output=$(cat "$log")
       rm -f "$log"
@@ -2597,7 +2597,7 @@ destroy_cdp() {
    if [[ -z "${ssh_public_key:-}" && -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem" ]]; then
       export ssh_public_key=$(ssh-keygen -y -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem")
    fi
-   terraform init
+   hol_terraform init
    if should_provision_cai_nfs || cdp_nfs_enabled_in_state; then
       patch_cdp_quickstart_for_cai_nfs "${azure_tf_dir}"
       patch_cdp_prereqs_nfs_single_private_endpoint "${azure_tf_dir}"
@@ -2900,7 +2900,7 @@ deploy_cdw() {
 
    if [[ -z "${CDW_MANAGED_IDENTITY_ID:-}" && -d "/userconfig/.$workshop_name/azure_enhancements/cdw_custom_identity" ]]; then
       cd "/userconfig/.$workshop_name/azure_enhancements/cdw_custom_identity"
-      CDW_MANAGED_IDENTITY_ID=$(terraform output -raw cdw_managed_identity_id 2>/dev/null || true)
+      CDW_MANAGED_IDENTITY_ID=$(hol_terraform output -raw cdw_managed_identity_id 2>/dev/null || true)
       export CDW_MANAGED_IDENTITY_ID
    fi
    if [[ -z "${CDW_MANAGED_IDENTITY_ID:-}" ]]; then
@@ -2974,8 +2974,8 @@ deploy_cde() {
 
    if [[ -z "${CDE_CLUSTER_MANAGED_IDENTITY_ID:-}" && -d "/userconfig/.$workshop_name/azure_enhancements/cde_custom_identity" ]]; then
       cd "/userconfig/.$workshop_name/azure_enhancements/cde_custom_identity"
-      CDE_CLUSTER_MANAGED_IDENTITY_ID=$(terraform output -raw cde_cluster_managed_identity_id 2>/dev/null || true)
-      CDE_VC_MANAGED_IDENTITY_ID=$(terraform output -raw cde_vc_managed_identity_id 2>/dev/null || true)
+      CDE_CLUSTER_MANAGED_IDENTITY_ID=$(hol_terraform output -raw cde_cluster_managed_identity_id 2>/dev/null || true)
+      CDE_VC_MANAGED_IDENTITY_ID=$(hol_terraform output -raw cde_vc_managed_identity_id 2>/dev/null || true)
       export CDE_CLUSTER_MANAGED_IDENTITY_ID CDE_VC_MANAGED_IDENTITY_ID
    fi
    if [[ -z "${CDE_CLUSTER_MANAGED_IDENTITY_ID:-}" || -z "${CDE_VC_MANAGED_IDENTITY_ID:-}" ]]; then

@@ -98,6 +98,85 @@ b) *AWS SSO* — via Okta/SAML profile in `~/.aws`
 
 c) *Instance role* — role assignment to the deployer EC2 instance via `sts:AssumeRole`
 
+== Destroy pipeline and troubleshooting
+
+The container `destroy` action runs, in order:
+
+1. CAII teardown (when `PROVISION_CAII=YES`)
+2. Disable data services (Ansible; CDW, CDE, CAI, CDF as configured)
+3. Keycloak IDP user teardown (when Keycloak is enabled)
+4. `destroy_hol_infra`: Keycloak Terraform (optional) → detach HoL `dladmin_log_policy` → CDP quickstart Terraform
+
+The CDP environment and VPC are removed by **CDP quickstart Terraform destroy**, not by a separate `cdp environments delete` CLI call. Before Terraform runs, the automation:
+
+* Polls CDP list APIs until data services for `{workshop}-cdp-env` no longer appear (`HOL_CDP_DS_DESTROY_WAIT_SEC`, default 1800)
+* If the environment is already in a deleting state, waits until it is gone or idle (`HOL_CDP_ENV_DESTROY_WAIT_SEC`, default 3600)
+* Optionally prepares the **workshop VPC only** (from Terraform state/output or EC2 Name tag `{workshop}-net`): delete NAT gateways, disassociate Elastic IPs on non-NAT ENIs in that VPC, release unassociated workshop-tagged EIPs, delete `available` ENIs, poll until no ENIs have mapped public IPs (`HOL_AWS_VPC_DESTROY_PREP=1`, default on)
+* If mapped public IPs remain after prep, **fail fast** with a *Leaf blockers for Internet Gateway detach* trace (NAT gateways, ENIs with public IPs) instead of running Terraform for long periods with no AWS progress
+* Caps each Terraform destroy attempt at `HOL_CDP_TERRAFORM_DESTROY_ATTEMPT_SEC` (default 900s); on timeout or *Still destroying…* on IGW/subnets, prints the leaf trace and retries after prep
+* Retries CDP Terraform destroy when AWS returns `DependencyViolation`, `DetachInternetGateway`, or *mapped public address* errors (`HOL_CDP_TERRAFORM_DESTROY_MAX_ATTEMPTS`, default 12)
+
+If Terraform logs *Still destroying...* on `aws_internet_gateway` or subnets for many minutes while the AWS console shows no IGW delete in progress, AWS is usually blocking Internet Gateway detach because ENIs or Elastic IPs in the workshop VPC still have public addresses (often left behind after CDP data service teardown).
+
+=== Manual cleanup (workshop VPC only)
+
+Replace `{workshop}` and set the AWS region (for example `us-west-1`). Resolve the VPC id from the `{workshop}-net` Name tag or your Terraform state.
+
+[source,bash]
+----
+export AWS_REGION=us-west-1
+WORKSHOP=cicd148
+VPC=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${WORKSHOP}-net" \
+  --query 'Vpcs[0].VpcId' --output text)
+
+aws ec2 describe-network-interfaces --filters Name=vpc-id,Values=$VPC \
+  --query 'NetworkInterfaces[].[NetworkInterfaceId,Status,Description,Association.PublicIp,Attachment.InstanceId]' \
+  --output table
+
+aws ec2 describe-addresses --filters Name=domain,Values=vpc \
+  --query 'Addresses[?NetworkInterfaceId!=`null`].[AllocationId,PublicIp,NetworkInterfaceId,AssociationId]' \
+  --output table
+
+aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=$VPC \
+  --query 'NatGateways[?State!=`deleted`].[NatGatewayId,State]' --output table
+----
+
+Disassociate Elastic IPs on **non-NAT** ENIs in this VPC (`aws ec2 disassociate-address --association-id …`). **Do not** disassociate Elastic IPs on ENIs whose description is *Interface for NAT Gateway* — delete the NAT gateway (`aws ec2 delete-nat-gateway --nat-gateway-id …`) and wait until it is `deleted`. Then retry HoL **destroy**. Do not release or delete resources outside the workshop VPC.
+
+Opt out of automated VPC cleanup with `HOL_AWS_VPC_DESTROY_PREP=0` on the destroy container.
+
+==== Example: cicd148 VPC blocked on IGW detach
+
+Console error: *Network has some mapped public address(es). Please unmap before detaching gateway* on IGW `igw-0a16ec2302a93401a` / VPC `vpc-096c8991b47a2fbdb` (`cicd148-net`). After CDP data services and the environment are gone, list dependencies:
+
+[source,bash]
+----
+export AWS_REGION=us-west-1
+export VPC_ID=vpc-096c8991b47a2fbdb
+
+aws ec2 describe-network-interfaces \
+  --region "$AWS_REGION" \
+  --filters "Name=vpc-id,Values=${VPC_ID}" \
+  --query 'NetworkInterfaces[].{Eni:NetworkInterfaceId,Status:Status,PublicIp:Association.PublicIp,AssociationId:Association.AssociationId,Description:Description,Subnet:SubnetId}' \
+  --output table
+
+aws ec2 describe-network-interfaces \
+  --region "$AWS_REGION" \
+  --filters "Name=vpc-id,Values=${VPC_ID}" \
+  --output json \
+  | jq -r '.NetworkInterfaces[] | select(.Association.PublicIp != null) | [.NetworkInterfaceId,.Status,.Association.PublicIp,.Association.AssociationId,.Description] | @tsv'
+
+aws ec2 describe-addresses --region "$AWS_REGION" --output json \
+  | jq -r '.Addresses[] | [.PublicIp, .AllocationId, (.AssociationId // "none"), (.NetworkInterfaceId // "none")] | @tsv'
+
+aws ec2 describe-nat-gateways --region "$AWS_REGION" \
+  --filter "Name=vpc-id,Values=${VPC_ID}" \
+  --query 'NatGateways[].{NatGatewayId:NatGatewayId,State:State,SubnetId:SubnetId,PublicIp:NatGatewayAddresses[0].PublicIp}' \
+  --output table
+----
+
+Then disassociate (`aws ec2 disassociate-address --association-id …`), delete **available** ENIs, delete NAT gateways and release their allocation IDs, and retry destroy only when the ENI list shows no `PublicIp`.
+
 == Changelog
 
 See link:../../OnCloud/AWS/build/CHANGELOG.md[`OnCloud/AWS/build/CHANGELOG.md`] for version history.

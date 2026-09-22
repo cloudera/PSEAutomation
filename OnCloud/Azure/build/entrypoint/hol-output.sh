@@ -1,21 +1,42 @@
 #!/bin/bash
 # Shared colorful / emoji logging helpers for HoL automation scripts.
 
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-   HOL_RESET='\033[0m'
-   HOL_BOLD='\033[1m'
-   HOL_DIM='\033[2m'
-   HOL_RED='\033[31m'
-   HOL_GREEN='\033[32m'
-   HOL_YELLOW='\033[33m'
-   HOL_BLUE='\033[34m'
-   HOL_MAGENTA='\033[35m'
-   HOL_CYAN='\033[36m'
-   HOL_WHITE='\033[37m'
-else
-   HOL_RESET='' HOL_BOLD='' HOL_DIM='' HOL_RED='' HOL_GREEN='' HOL_YELLOW=''
-   HOL_BLUE='' HOL_MAGENTA='' HOL_CYAN='' HOL_WHITE=''
-fi
+# Default-on ANSI for shell helpers, Ansible, and Terraform (Jenkins docker logs are often non-TTY).
+# Opt out with NO_COLOR=1, ANSIBLE_NOCOLOR=1, or HOL_ANSIBLE_COLOR=false.
+hol_color_enabled() {
+   if [[ -n "${NO_COLOR:-}" ]]; then
+      echo 0
+      return 0
+   fi
+   case "${ANSIBLE_NOCOLOR:-}" in
+   1|true|TRUE|yes|YES) echo 0; return 0 ;;
+   esac
+   case "${HOL_ANSIBLE_COLOR:-}" in
+   0|false|FALSE|no|NO|off|OFF) echo 0; return 0 ;;
+   1|true|TRUE|yes|YES|on|ON) echo 1; return 0 ;;
+   esac
+   echo 1
+}
+
+_hol_init_color_vars() {
+   if [[ "$(hol_color_enabled)" == 1 ]]; then
+      HOL_RESET='\033[0m'
+      HOL_BOLD='\033[1m'
+      HOL_DIM='\033[2m'
+      HOL_RED='\033[31m'
+      HOL_GREEN='\033[32m'
+      HOL_YELLOW='\033[33m'
+      HOL_BLUE='\033[34m'
+      HOL_MAGENTA='\033[35m'
+      HOL_CYAN='\033[36m'
+      HOL_WHITE='\033[37m'
+   else
+      HOL_RESET='' HOL_BOLD='' HOL_DIM='' HOL_RED='' HOL_GREEN='' HOL_YELLOW=''
+      HOL_BLUE='' HOL_MAGENTA='' HOL_CYAN='' HOL_WHITE=''
+   fi
+}
+
+_hol_init_color_vars
 
 # Section headers: left-aligned title with full-width rule lines.
 HOL_SECTION_WIDTH=86
@@ -403,21 +424,47 @@ hol_wait_parallel_data_services() {
    return 1
 }
 
-# Ansible writes to per-service log files; tailers stream to the console.
-# Default-callback ANSI is on unless explicitly disabled (see opt-outs below).
-hol_ansible_force_color() {
-   if [[ -n "${NO_COLOR:-}" ]]; then
-      echo 0
-      return 0
+# Terraform: same default-on color policy as Ansible/shell helpers.
+hol_apply_terraform_env() {
+   if [[ "$(hol_color_enabled)" == 1 ]]; then
+      unset TF_CLI_ARGS
+      export TF_IN_AUTOMATION=false
+   else
+      export TF_CLI_ARGS=-no-color
+      unset TF_IN_AUTOMATION
    fi
-   case "${ANSIBLE_NOCOLOR:-}" in
-      1|true|TRUE|yes|YES) echo 0; return 0 ;;
+}
+
+hol_terraform() {
+   hol_apply_terraform_env
+   local sub="${1:-}" arg has_color_flag=0
+   for arg in "$@"; do
+      case "$arg" in
+      -color|-color=*|-no-color) has_color_flag=1; break ;;
+      esac
+   done
+   if (( has_color_flag )); then
+      terraform "$@"
+      return $?
+   fi
+   case "$sub" in
+   apply|destroy|plan|refresh|init)
+      shift
+      if [[ "$(hol_color_enabled)" != 1 ]]; then
+         terraform "$sub" "$@" -no-color
+      else
+         terraform "$sub" "$@"
+      fi
+      ;;
+   *)
+      terraform "$@"
+      ;;
    esac
-   case "${HOL_ANSIBLE_COLOR:-}" in
-      0|false|FALSE|no|NO|off|OFF) echo 0; return 0 ;;
-      1|true|TRUE|yes|YES|on|ON) echo 1; return 0 ;;
-   esac
-   echo 1
+}
+
+# Ansible writes to per-service log files; tailers stream to the console.
+hol_ansible_force_color() {
+   hol_color_enabled
 }
 
 _hol_strip_ansi_from_stream() {
@@ -426,8 +473,11 @@ _hol_strip_ansi_from_stream() {
 
 # Console/streaming Ansible (Keycloak IDP, etc.) — same color env as hol_run_ansible_playbook.
 hol_ansible_playbook() {
-   local force_color
+   local force_color stream_cmd=()
    force_color="$(hol_ansible_force_color)"
+   if command -v stdbuf >/dev/null 2>&1; then
+      stream_cmd=(stdbuf -oL -eL)
+   fi
    env \
       HOL_SERVICE_TAG= \
       ANSIBLE_STDOUT_CALLBACK=default \
@@ -436,11 +486,11 @@ hol_ansible_playbook() {
       PY_COLORS="${force_color}" \
       PYTHONUNBUFFERED=1 \
       PYTHONWARNINGS="${HOL_ANSIBLE_PYTHONWARNINGS:-ignore::SyntaxWarning}" \
-      ansible-playbook "$@"
+      "${stream_cmd[@]}" ansible-playbook "$@"
 }
 
 hol_run_ansible_playbook() {
-   local log_file tag rc stream_cmd
+   local log_file tag rc
    tag="${HOL_SERVICE_TAG:-ansible}"
    log_file="$(hol_ansible_log_file)"
    : >"$log_file"
@@ -449,13 +499,7 @@ hol_run_ansible_playbook() {
 
    hol_info "${tag} playbook log: ${log_file}"
 
-   if command -v stdbuf >/dev/null 2>&1; then
-      stream_cmd=(stdbuf -oL -eL)
-   else
-      stream_cmd=()
-   fi
-
-   "${stream_cmd[@]}" hol_ansible_playbook "$@" >>"$log_file" 2>&1
+   hol_ansible_playbook "$@" >>"$log_file" 2>&1
    rc=$?
 
    if (( rc != 0 )); then

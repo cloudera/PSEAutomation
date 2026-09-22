@@ -1,6 +1,7 @@
 #!/bin/bash
 # ***************************************************************************************************#
 source /usr/local/bin/hol-functions.sh
+hol_apply_terraform_env
 hol_fixup_cloudera_cloud_python
 configure_git_for_userconfig
 # Setting required path and variables.

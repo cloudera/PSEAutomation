@@ -28,7 +28,7 @@ hol_keycloak_ip_from_terraform() {
    local ip=""
 
    [[ -n "${workshop_name:-}" && -d "$kc_tf_dir" ]] || return 1
-   ip=$(cd "$kc_tf_dir" && terraform output -raw elastic_ip 2>/dev/null || true)
+   ip=$(cd "$kc_tf_dir" && hol_terraform output -raw elastic_ip 2>/dev/null || true)
    [[ -n "$ip" && "$ip" != "null" ]] || return 1
    printf '%s\n' "$ip"
 }
@@ -732,14 +732,14 @@ generate_keypair() {
    fi
 
    cd /userconfig/.$USER_NAMESPACE/keypair_gen
-   terraform init
-   terraform apply -auto-approve \
+   hol_terraform init
+   hol_terraform apply -auto-approve \
       -var "keypair_name=$workshop_name" \
       -var "aws_key_pair=$aws_key_pair" \
       -var "aws_region=$aws_region"
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
-      export aws_key_pair=$(terraform output -raw aws_key_pair_output) #updated the value of aws_key_pair if initially not exists
+      export aws_key_pair=$(hol_terraform output -raw aws_key_pair_output) #updated the value of aws_key_pair if initially not exists
       echo "true" >keypair_generated.flag                              # Store a flag to indicate the keypair was generated
       cp -f ${workshop_name}-keypair.pem /userconfig/.$USER_NAMESPACE/
       return 0
@@ -752,8 +752,8 @@ destroy_keypair() {
    hol_subsection "Destroying generated keypair" "🔑"
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/keypair_gen
-   terraform init
-   terraform destroy -auto-approve \
+   hol_terraform init
+   hol_terraform destroy -auto-approve \
       -var "keypair_name=$workshop_name" \
       -var "aws_key_pair=$aws_key_pair" \
       -var "aws_region=$aws_region"
@@ -840,10 +840,10 @@ setup_keycloak_ec2() {
       sg_name="$sg_name-$workshop_name"
    fi
 
-   terraform init
-   if terraform state list 2>/dev/null | grep -q 'aws_instance.keycloak-server'; then
+   hol_terraform init
+   if hol_terraform state list 2>/dev/null | grep -q 'aws_instance.keycloak-server'; then
       hol_skip "Keycloak EC2 already exists in Terraform state — skipping apply"
-      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip 2>/dev/null || true)
+      KEYCLOAK_SERVER_IP=$(hol_terraform output -raw elastic_ip 2>/dev/null || true)
       if [[ -n "$KEYCLOAK_SERVER_IP" ]]; then
          hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
          hol_kv "Keycloak instance IP" "$KEYCLOAK_SERVER_IP"
@@ -852,7 +852,7 @@ setup_keycloak_ec2() {
       # Extract only the first IP for Keycloak (admin access only)
       kc_ip=$(echo "$local_ip" | cut -d',' -f1)
 
-      terraform apply -auto-approve \
+      hol_terraform apply -auto-approve \
          -var "workshop_name=$workshop_name" \
          -var "local_ip=$kc_ip" \
          -var "instance_keypair=$aws_key_pair" \
@@ -867,7 +867,7 @@ setup_keycloak_ec2() {
       if [ $RETURN -ne 0 ]; then
          return 1
       fi
-      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip)
+      KEYCLOAK_SERVER_IP=$(hol_terraform output -raw elastic_ip)
       hol_step "Saving Keycloak IP to $(hol_keycloak_ip_path)"
       hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
       hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
@@ -905,7 +905,7 @@ destroy_keycloak() {
    USER_NAMESPACE=$workshop_name
    hol_subsection "Destroying Keycloak" "🔐"
    cd /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
-   terraform init
+   hol_terraform init
    hol_step "Waiting 30 seconds before Keycloak teardown..."
    sleep 30
    hol_step "Deleting Route53 DNS record"
@@ -918,7 +918,7 @@ destroy_keycloak() {
                 "Name": "'"$workshop_name.$domain"'",
                 "Type": "A",
                 "TTL": 300,
-                "ResourceRecords": [{"Value": "'"$(terraform output -raw elastic_ip)"'"}]
+                "ResourceRecords": [{"Value": "'"$(hol_terraform output -raw elastic_ip)"'"}]
             }
         }]
     }'
@@ -926,7 +926,7 @@ destroy_keycloak() {
 
    # Extract only the first IP for Keycloak (admin access only)
    kc_ip=$(echo "$local_ip" | cut -d',' -f1)
-   terraform destroy -auto-approve \
+   hol_terraform destroy -auto-approve \
       -var "workshop_name=$workshop_name" \
       -var "local_ip=$kc_ip" \
       -var "instance_keypair=$aws_key_pair" \
@@ -1036,7 +1036,7 @@ output "log_storage_bucket_name" {
 }
 EOF
    fi
-   terraform init
+   hol_terraform init
 
    # Default to empty map if ENV_TAGS not provided in configfile
    env_tags="${env_tags:-{}}"
@@ -1073,7 +1073,7 @@ EOF
    )
 
    hol_subsection "Running Terraform for CDP environment & datalake" "☁️"
-   terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
+   hol_terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
 
    if [ $? -ne 0 ]; then
       return 1
@@ -1084,18 +1084,18 @@ EOF
 
    cdp_provision_status=0
    if [ $cdp_provision_status -eq 0 ]; then
-      export ENV_PUBLIC_SUBNETS=$(terraform output -json aws_public_subnet_ids)
-      export ENV_PRIVATE_SUBNETS=$(terraform output -json aws_private_subnet_ids)
+      export ENV_PUBLIC_SUBNETS=$(hol_terraform output -json aws_public_subnet_ids)
+      export ENV_PRIVATE_SUBNETS=$(hol_terraform output -json aws_private_subnet_ids)
 
       hol_kv "Public subnets" "$ENV_PUBLIC_SUBNETS"
       hol_kv "Private subnets" "$ENV_PRIVATE_SUBNETS"
 
-      ENV_PUBLIC_SUBNETS=$(terraform output -json aws_public_subnet_ids | jq -c '.[0:3]')
+      ENV_PUBLIC_SUBNETS=$(hol_terraform output -json aws_public_subnet_ids | jq -c '.[0:3]')
       hol_info "First 3 public subnets (CDW/CDF): $ENV_PUBLIC_SUBNETS"
-      ENV_PRIVATE_SUBNETS=$(terraform output -json aws_private_subnet_ids | jq -c '.[0:3]')
+      ENV_PRIVATE_SUBNETS=$(hol_terraform output -json aws_private_subnet_ids | jq -c '.[0:3]')
       hol_info "First 3 private subnets (CDW/CDF): $ENV_PRIVATE_SUBNETS"
 
-      export BUCKET_NAME=$(terraform output -raw log_storage_bucket_name)
+      export BUCKET_NAME=$(hol_terraform output -raw log_storage_bucket_name)
 
       # Count elements in ENV_PUBLIC_SUBNETS and ENV_PRIVATE_SUBNETS
       count_public=$(count_elements "$ENV_PUBLIC_SUBNETS")
@@ -1136,15 +1136,15 @@ aws_enhancements() {
    fi
 
    cd /userconfig/.$USER_NAMESPACE/aws_enhancements/s3_enhancements
-   terraform init
-   terraform apply -auto-approve \
+   hol_terraform init
+   hol_terraform apply -auto-approve \
       -var="log_bucket_name=$BUCKET_NAME" \
       -var="aws_region=$aws_region"
 
    hol_subsection "Attaching log PutObject policy to datalake admin role" "🔐"
    cd /userconfig/.$USER_NAMESPACE/aws_enhancements/dladmin_log_policy
-   terraform init
-   terraform apply -auto-approve \
+   hol_terraform init
+   hol_terraform apply -auto-approve \
       -var="env_prefix=$workshop_name" \
       -var="aws_region=$aws_region"
 }
@@ -1159,8 +1159,8 @@ destroy_aws_enhancements() {
       return 0
    fi
    cd "$dladmin_tf_dir" || return 1
-   terraform init -input=false
-   terraform destroy -auto-approve \
+   hol_terraform init -input=false
+   hol_terraform destroy -auto-approve \
       -var="env_prefix=$workshop_name" \
       -var="aws_region=$aws_region"
    local status=$?
@@ -1641,6 +1641,404 @@ hol_cdp_sync_all_users_resilient() {
    hol_fail "cdp environments sync-all-users for '${env_name}' still conflicting after ${max_attempts} attempts: ${output}"
 }
 
+# Resolve the workshop CDP VPC from Terraform state/output or the ${workshop_name}-net Name tag.
+hol_aws_resolve_workshop_vpc_id() {
+   local tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/aws"
+   local vpc_id="" addr subnet state_id
+
+   if [[ -d "$tf_dir" ]]; then
+      while IFS= read -r addr; do
+         [[ -z "$addr" ]] && continue
+         state_id=$(cd "$tf_dir" && hol_terraform state show "$addr" 2>/dev/null \
+            | awk -F= '/^[[:space:]]*id[[:space:]]*=/ {gsub(/"/, "", $2); gsub(/^[[:space:]]+/, "", $2); print $2; exit}')
+         if [[ -n "$state_id" && "$state_id" != "null" ]]; then
+            vpc_id="$state_id"
+            break
+         fi
+      done < <(cd "$tf_dir" && hol_terraform state list 2>/dev/null | grep -E 'aws_vpc\.|module\..*\.aws_vpc\.' || true)
+
+      if [[ -z "$vpc_id" ]]; then
+         subnet=$(cd "$tf_dir" && hol_terraform output -json aws_public_subnet_ids 2>/dev/null \
+            | jq -r '.[0] // empty' 2>/dev/null || true)
+         if [[ -n "$subnet" && "$subnet" != "null" ]]; then
+            vpc_id=$(aws ec2 describe-subnets --subnet-ids "$subnet" --region "$aws_region" \
+               --query 'Subnets[0].VpcId' --output text 2>/dev/null || true)
+         fi
+      fi
+   fi
+
+   if [[ -z "$vpc_id" || "$vpc_id" == "None" ]]; then
+      vpc_id=$(aws ec2 describe-vpcs --region "$aws_region" \
+         --filters "Name=tag:Name,Values=${workshop_name}-net" \
+         --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true)
+   fi
+
+   [[ -n "$vpc_id" && "$vpc_id" != "None" ]] && printf '%s\n' "$vpc_id"
+}
+
+hol_cdp_data_services_still_listed() {
+   local env_name="${workshop_name}-cdp-env"
+   local ml_count df_count compute_count cdw_count cde_count total
+
+   ml_count=$(cdp ml list-workspaces 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.workspaces[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   df_count=$(cdp df list-services --no-paginate 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.services[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   compute_count=$(cdp compute list-clusters 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.clusters[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   cdw_count=$(cdp dw list-clusters 2>/dev/null \
+      | jq -r --arg prefix "$workshop_name" '[.clusters[]? | select((.clusterName // "") | startswith($prefix))] | length' 2>/dev/null || echo 0)
+   cde_count=$(cdp de list-services 2>/dev/null \
+      | jq -r --arg name "${workshop_name}-cde" '[.services[]? | select((.name // .serviceName // "") == $name)] | length' 2>/dev/null || echo 0)
+
+   ml_count=${ml_count:-0}
+   df_count=${df_count:-0}
+   compute_count=${compute_count:-0}
+   cdw_count=${cdw_count:-0}
+   cde_count=${cde_count:-0}
+   total=$((ml_count + df_count + compute_count + cdw_count + cde_count))
+   [[ "$total" -gt 0 ]]
+}
+
+hol_cdp_wait_for_data_services_absent() {
+   local max_wait_sec="${1:-${HOL_CDP_DS_DESTROY_WAIT_SEC:-1800}}"
+   local poll_sec="${HOL_CDP_DS_DESTROY_POLL_SEC:-30}"
+   local elapsed=0
+
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      if ! hol_cdp_data_services_still_listed; then
+         hol_ok "CDP data services no longer appear in list APIs for '${workshop_name}-cdp-env'"
+         return 0
+      fi
+      hol_step "Waiting for CDP data services to finish teardown (${elapsed}s / ${max_wait_sec}s)..."
+      sleep "$poll_sec"
+      elapsed=$((elapsed + poll_sec))
+   done
+   hol_warn "Timed out after ${max_wait_sec}s waiting for CDP data services to leave list APIs — continuing CDP Terraform destroy"
+   return 1
+}
+
+# If the environment is already deleting, wait until describe fails or status is terminal.
+hol_cdp_wait_for_environment_teardown_idle() {
+   local env_name="${workshop_name}-cdp-env"
+   local max_wait_sec="${1:-${HOL_CDP_ENV_DESTROY_WAIT_SEC:-3600}}"
+   local poll_sec="${HOL_CDP_ENV_DESTROY_POLL_SEC:-30}"
+   local elapsed=0 status=""
+
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      if ! cdp environments describe-environment --environment-name "$env_name" >/dev/null 2>&1; then
+         hol_ok "CDP environment '${env_name}' is no longer registered"
+         return 0
+      fi
+      status=$(cdp environments describe-environment --environment-name "$env_name" 2>/dev/null \
+         | jq -r '.environment.status // empty' 2>/dev/null || true)
+      case "$status" in
+         DELETING|TERMINATING|DELETE_IN_PROGRESS|STOPPING)
+            hol_step "CDP environment status '${status}' — waiting ${poll_sec}s..."
+            sleep "$poll_sec"
+            elapsed=$((elapsed + poll_sec))
+            ;;
+         *)
+            return 0
+            ;;
+      esac
+   done
+   hol_warn "Timed out after ${max_wait_sec}s waiting for CDP environment '${env_name}' to finish deleting (last status: ${status:-unknown})"
+   return 1
+}
+
+hol_aws_vpc_eni_public_ip_count() {
+   local vpc_id="$1"
+   aws ec2 describe-network-interfaces --region "$aws_region" \
+      --filters "Name=vpc-id,Values=${vpc_id}" \
+      --query 'length(NetworkInterfaces[?Association.PublicIp!=null])' \
+      --output text 2>/dev/null || echo 0
+}
+
+# NAT gateway ENIs cannot be EIP-disassociated; delete the NAT gateway instead.
+hol_aws_eni_owned_by_nat_gateway() {
+   local desc="${1:-}"
+   [[ "$desc" == *"Interface for NAT Gateway"* || "$desc" == *"NAT Gateway"* ]]
+}
+
+hol_aws_vpc_pending_nat_gateway_count() {
+   local vpc_id="$1"
+   aws ec2 describe-nat-gateways --region "$aws_region" \
+      --filter "Name=vpc-id,Values=${vpc_id}" \
+      --query 'length(NatGateways[?State!=`deleted`])' \
+      --output text 2>/dev/null || echo 0
+}
+
+hol_aws_vpc_igw_detach_blockers_remain() {
+   local vpc_id="$1"
+   local nat_count public_count
+   [[ -z "$vpc_id" ]] && return 1
+   nat_count=$(hol_aws_vpc_pending_nat_gateway_count "$vpc_id")
+   public_count=$(hol_aws_vpc_eni_public_ip_count "$vpc_id")
+   [[ "${nat_count:-0}" -gt 0 || "${public_count:-0}" -gt 0 ]]
+}
+
+# Print leaf AWS resources that block Internet Gateway detach (mapped public addresses).
+hol_aws_trace_vpc_destroy_blockers() {
+   local vpc_id="${1:-$(hol_aws_resolve_workshop_vpc_id)}"
+   local igw_id eni_json line nat_id nat_state nat_subnet nat_pub
+
+   hol_subsection "Leaf blockers for Internet Gateway detach" "🔍"
+   if [[ -z "$vpc_id" || "$vpc_id" == "None" ]]; then
+      hol_warn "Workshop VPC id unknown — cannot trace blockers"
+      return 1
+   fi
+   hol_kv "VPC" "$vpc_id"
+
+   igw_id=$(aws ec2 describe-internet-gateways --region "$aws_region" \
+      --filters "Name=attachment.vpc-id,Values=${vpc_id}" \
+      --query 'InternetGateways[0].InternetGatewayId' --output text 2>/dev/null || true)
+   if [[ -n "$igw_id" && "$igw_id" != "None" ]]; then
+      hol_kv "Internet gateway (attached)" "$igw_id"
+   else
+      hol_info "No Internet Gateway attached to this VPC (or already detached)"
+   fi
+
+   hol_info "NAT gateways (delete these — do not disassociate their Elastic IPs):"
+   while IFS=$'\t' read -r nat_id nat_state nat_subnet nat_pub; do
+      [[ -z "$nat_id" || "$nat_id" == "None" ]] && continue
+      hol_warn "  NAT ${nat_id} state=${nat_state} subnet=${nat_subnet} publicIp=${nat_pub:-n/a} → aws ec2 delete-nat-gateway --nat-gateway-id ${nat_id}"
+   done < <(aws ec2 describe-nat-gateways --region "$aws_region" \
+      --filter "Name=vpc-id,Values=${vpc_id}" \
+      --query 'NatGateways[?State!=`deleted`].[NatGatewayId,State,SubnetId,NatGatewayAddresses[0].PublicIp]' \
+      --output text 2>/dev/null || true)
+
+   hol_info "ENIs with mapped public IPs:"
+   eni_json=$(aws ec2 describe-network-interfaces --region "$aws_region" \
+      --filters "Name=vpc-id,Values=${vpc_id}" --output json 2>/dev/null || echo '{}')
+   while IFS=$'\t' read -r line; do
+      [[ -z "$line" ]] && continue
+      if hol_aws_eni_owned_by_nat_gateway "$(cut -f4 <<<"$line")"; then
+         hol_warn "  ENI $(cut -f1 <<<"$line") publicIp=$(cut -f3 <<<"$line") — NAT ENI; delete NAT gateway $(grep -oE 'nat-[a-f0-9]+' <<<"$(cut -f4 <<<"$line")" | head -1 || echo 'above')"
+      else
+         hol_warn "  ENI $(cut -f1 <<<"$line") status=$(cut -f2 <<<"$line") publicIp=$(cut -f3 <<<"$line") desc=$(cut -f4 <<<"$line")"
+      fi
+   done < <(jq -r '.NetworkInterfaces[]? | select(.Association.PublicIp != null) | [.NetworkInterfaceId,.Status,.Association.PublicIp,(.Description // "")] | @tsv' <<<"$eni_json")
+
+   hol_info "Elastic IPs associated to ENIs in this account (VPC domain):"
+   aws ec2 describe-addresses --region "$aws_region" --output json 2>/dev/null \
+      | jq -r '.Addresses[]? | select(.NetworkInterfaceId != null) | [.AllocationId,.PublicIp,.NetworkInterfaceId,(.AssociationId // "")] | @tsv' \
+      | while IFS=$'\t' read -r alloc pub eni assoc; do
+         [[ -z "$alloc" ]] && continue
+         hol_info "  ${alloc} ${pub} eni=${eni} association=${assoc}"
+      done
+
+   hol_info "Remediation order: (1) delete NAT gateways and wait until deleted, (2) delete/release other ENIs/EIPs in this VPC only, (3) retry HoL destroy — Terraform 'Still destroying' on IGW/subnets often means AWS never started detach because of the rows above."
+}
+
+hol_aws_workshop_eip_tagged() {
+   local tags_json="$1"
+   jq -e --arg p "$workshop_name" '(.[]? | .Value) | test($p; "i")' <<<"$tags_json" >/dev/null 2>&1
+}
+
+hol_aws_prepare_vpc_for_terraform_destroy() {
+   local vpc_id="${1:-$(hol_aws_resolve_workshop_vpc_id)}"
+   local max_wait_sec="${HOL_AWS_VPC_PREP_WAIT_SEC:-900}"
+   local poll_sec="${HOL_AWS_VPC_PREP_POLL_SEC:-20}"
+   local elapsed=0 public_count nat_id eni_json eni_id status desc pub_ip inst_id
+   local assoc_id alloc_id tags_json
+
+   if [[ -z "$vpc_id" ]]; then
+      hol_warn "Workshop VPC id not found (Terraform state/output or tag Name=${workshop_name}-net) — skipping AWS VPC pre-destroy cleanup"
+      return 1
+   fi
+
+   hol_subsection "Preparing workshop VPC for Terraform destroy" "🧹"
+   hol_kv "VPC" "$vpc_id"
+
+   for nat_id in $(aws ec2 describe-nat-gateways --region "$aws_region" \
+      --filter "Name=vpc-id,Values=${vpc_id}" \
+      --query 'NatGateways[?State!=`deleted` && State!=`deleting`].NatGatewayId' \
+      --output text 2>/dev/null); do
+      [[ -z "$nat_id" || "$nat_id" == "None" ]] && continue
+      hol_step "Deleting NAT gateway ${nat_id} in workshop VPC"
+      aws ec2 delete-nat-gateway --region "$aws_region" --nat-gateway-id "$nat_id" >/dev/null 2>&1 || \
+         hol_warn "Could not delete NAT gateway ${nat_id} — it may still be in use"
+   done
+
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      local pending_nat
+      pending_nat=$(aws ec2 describe-nat-gateways --region "$aws_region" \
+         --filter "Name=vpc-id,Values=${vpc_id}" \
+         --query 'length(NatGateways[?State!=`deleted`])' \
+         --output text 2>/dev/null || echo 0)
+      [[ "${pending_nat:-0}" -eq 0 ]] && break
+      hol_step "Waiting for NAT gateways to finish deleting (${elapsed}s / ${max_wait_sec}s)..."
+      sleep "$poll_sec"
+      elapsed=$((elapsed + poll_sec))
+   done
+
+   eni_json=$(aws ec2 describe-network-interfaces --region "$aws_region" \
+      --filters "Name=vpc-id,Values=${vpc_id}" --output json 2>/dev/null || echo '{}')
+
+   while IFS= read -r eni_id; do
+      [[ -z "$eni_id" ]] && continue
+      desc=$(jq -r --arg id "$eni_id" '.NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Description // ""' <<<"$eni_json")
+      if hol_aws_eni_owned_by_nat_gateway "$desc"; then
+         continue
+      fi
+      assoc_id=$(jq -r --arg id "$eni_id" '
+         .NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Association.AssociationId // empty
+      ' <<<"$eni_json")
+      if [[ -n "$assoc_id" && "$assoc_id" != "null" ]]; then
+         hol_step "Disassociating Elastic IP (association ${assoc_id}) from ENI ${eni_id}"
+         aws ec2 disassociate-address --region "$aws_region" --association-id "$assoc_id" >/dev/null 2>&1 || \
+            hol_warn "Could not disassociate ${assoc_id} from ${eni_id} (skip if NAT or ELB-owned ENI)"
+      fi
+   done < <(jq -r '.NetworkInterfaces[]? | select(.Association.PublicIp != null) | .NetworkInterfaceId' <<<"$eni_json")
+
+   while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      alloc_id="${line%%$'\t'*}"
+      tags_json="${line#*$'\t'}"
+      [[ -z "$alloc_id" || "$alloc_id" == "None" ]] && continue
+      if hol_aws_workshop_eip_tagged "$tags_json"; then
+         hol_step "Releasing unassociated workshop Elastic IP ${alloc_id}"
+         aws ec2 release-address --region "$aws_region" --allocation-id "$alloc_id" >/dev/null 2>&1 || \
+            hol_warn "Could not release Elastic IP ${alloc_id}"
+      fi
+   done < <(aws ec2 describe-addresses --region "$aws_region" --output json 2>/dev/null \
+      | jq -r --arg p "$workshop_name" '
+         .Addresses[]?
+         | select(.NetworkInterfaceId == null)
+         | select((.Tags // []) | map(.Value) | join(" ") | test($p; "i"))
+         | [.AllocationId, ((.Tags // []) | tojson)] | @tsv
+      ' 2>/dev/null || true)
+
+   eni_json=$(aws ec2 describe-network-interfaces --region "$aws_region" \
+      --filters "Name=vpc-id,Values=${vpc_id}" --output json 2>/dev/null || echo '{}')
+
+   while IFS= read -r eni_id; do
+      [[ -z "$eni_id" ]] && continue
+      status=$(jq -r --arg id "$eni_id" '.NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Status' <<<"$eni_json")
+      desc=$(jq -r --arg id "$eni_id" '.NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Description // ""' <<<"$eni_json")
+      pub_ip=$(jq -r --arg id "$eni_id" '.NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Association.PublicIp // ""' <<<"$eni_json")
+      inst_id=$(jq -r --arg id "$eni_id" '.NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Attachment.InstanceId // ""' <<<"$eni_json")
+      if [[ "$status" == "available" ]]; then
+         hol_step "Deleting available ENI ${eni_id} (${desc})"
+         aws ec2 delete-network-interface --region "$aws_region" --network-interface-id "$eni_id" >/dev/null 2>&1 || \
+            hol_warn "Could not delete ENI ${eni_id}"
+         continue
+      fi
+      if [[ -n "$pub_ip" ]]; then
+         hol_warn "ENI ${eni_id} still has public IP ${pub_ip} (status=${status}, instance=${inst_id:-n/a}, desc=${desc}) — remove in AWS console or wait for CDP to release it"
+      fi
+   done < <(jq -r '.NetworkInterfaces[]? | .NetworkInterfaceId' <<<"$eni_json")
+
+   elapsed=0
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      public_count=$(hol_aws_vpc_eni_public_ip_count "$vpc_id")
+      [[ "${public_count:-0}" -eq 0 ]] && {
+         hol_ok "No ENIs with mapped public IPs remain in workshop VPC ${vpc_id}"
+         return 0
+      }
+      eni_json=$(aws ec2 describe-network-interfaces --region "$aws_region" \
+         --filters "Name=vpc-id,Values=${vpc_id}" --output json 2>/dev/null || echo '{}')
+      while IFS= read -r eni_id; do
+         [[ -z "$eni_id" ]] && continue
+         desc=$(jq -r --arg id "$eni_id" '.NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Description // ""' <<<"$eni_json")
+         if hol_aws_eni_owned_by_nat_gateway "$desc"; then
+            continue
+         fi
+         assoc_id=$(jq -r --arg id "$eni_id" '
+            .NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Association.AssociationId // empty
+         ' <<<"$eni_json")
+         if [[ -n "$assoc_id" && "$assoc_id" != "null" ]]; then
+            aws ec2 disassociate-address --region "$aws_region" --association-id "$assoc_id" >/dev/null 2>&1 || true
+         fi
+         status=$(jq -r --arg id "$eni_id" '.NetworkInterfaces[] | select(.NetworkInterfaceId == $id) | .Status' <<<"$eni_json")
+         if [[ "$status" == "available" ]]; then
+            aws ec2 delete-network-interface --region "$aws_region" --network-interface-id "$eni_id" >/dev/null 2>&1 || true
+         fi
+      done < <(jq -r '.NetworkInterfaces[]? | select(.Association.PublicIp != null) | .NetworkInterfaceId' <<<"$eni_json")
+      hol_step "Waiting for ${public_count} ENI(s) with public IPs to clear (${elapsed}s / ${max_wait_sec}s)..."
+      sleep "$poll_sec"
+      elapsed=$((elapsed + poll_sec))
+   done
+
+   public_count=$(hol_aws_vpc_eni_public_ip_count "$vpc_id")
+   hol_warn "Workshop VPC ${vpc_id} still has ${public_count} ENI(s) with mapped public IPs after ${max_wait_sec}s — CDP Terraform may fail to detach the Internet Gateway"
+   hol_aws_trace_vpc_destroy_blockers "$vpc_id"
+   return 1
+}
+
+terraform_output_vpc_destroy_blocker() {
+   grep -qiE 'DependencyViolation|mapped public address|DetachInternetGateway|NetworkInterfaceInUse' <<<"$1"
+}
+
+hol_warn_terraform_igw_subnet_stuck() {
+   local vpc_id
+   vpc_id=$(hol_aws_resolve_workshop_vpc_id 2>/dev/null || true)
+   hol_warn "Terraform reported 'Still destroying' on Internet Gateway or subnets — AWS often has not started detach yet (mapped public addresses on the VPC)."
+   hol_aws_trace_vpc_destroy_blockers "${vpc_id:-}"
+}
+
+hol_aws_fail_if_vpc_igw_blockers_after_prep() {
+   local vpc_id="${1:-$(hol_aws_resolve_workshop_vpc_id)}"
+   [[ -z "$vpc_id" || "$vpc_id" == "None" ]] && return 0
+   if hol_aws_vpc_igw_detach_blockers_remain "$vpc_id"; then
+      hol_aws_trace_vpc_destroy_blockers "$vpc_id"
+      hol_fail "CDP Terraform destroy not started: Internet Gateway cannot detach while NAT gateways or ENIs still map public IPs in ${vpc_id}. Delete NAT gateways (aws ec2 delete-nat-gateway) and wait until deleted, then retry destroy. Do not disassociate Elastic IPs on NAT ENIs."
+   fi
+}
+
+run_cdp_terraform_destroy() {
+   local -n destroy_args=$1
+   local max_attempts="${HOL_CDP_TERRAFORM_DESTROY_MAX_ATTEMPTS:-12}" attempt=0 output status log
+   local attempt_sec="${HOL_CDP_TERRAFORM_DESTROY_ATTEMPT_SEC:-900}" vpc_id
+
+   vpc_id=$(hol_aws_resolve_workshop_vpc_id 2>/dev/null || true)
+
+   while [[ $attempt -lt $max_attempts ]]; do
+      attempt=$((attempt + 1))
+      if [[ "${HOL_AWS_VPC_DESTROY_PREP:-1}" == "1" && -n "$vpc_id" ]]; then
+         if hol_aws_vpc_igw_detach_blockers_remain "$vpc_id"; then
+            hol_warn "Mapped public IPs still present before Terraform destroy attempt ${attempt}/${max_attempts} — running VPC prep"
+            hol_aws_prepare_vpc_for_terraform_destroy "$vpc_id" || true
+         fi
+         hol_aws_fail_if_vpc_igw_blockers_after_prep "$vpc_id"
+      fi
+      log=$(mktemp)
+      hol_step "Running CDP Terraform destroy (${attempt}/${max_attempts}, max ${attempt_sec}s per attempt)..."
+      if command -v timeout >/dev/null 2>&1; then
+         timeout --preserve-status "$attempt_sec" hol_terraform destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log"
+         status=${PIPESTATUS[0]}
+         if [[ $status -eq 124 ]]; then
+            hol_warn "CDP Terraform destroy exceeded ${attempt_sec}s (no forward progress assumed) — checking VPC leaf blockers"
+            hol_warn_terraform_igw_subnet_stuck
+            status=1
+         fi
+      else
+         hol_terraform destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log"
+         status=${PIPESTATUS[0]}
+      fi
+      output=$(cat "$log")
+      rm -f "$log"
+      if [[ $status -eq 0 ]]; then
+         return 0
+      fi
+      if grep -qiE 'Still destroying.*(aws_internet_gateway|subnet)' <<<"$output"; then
+         hol_warn_terraform_igw_subnet_stuck
+      fi
+      if terraform_output_vpc_destroy_blocker "$output" || grep -qiE 'Still destroying.*(aws_internet_gateway|subnet)' <<<"$output"; then
+         hol_warn "VPC dependency blocked CDP Terraform destroy — running workshop VPC cleanup and retrying"
+         if [[ "${HOL_AWS_VPC_DESTROY_PREP:-1}" == "1" ]]; then
+            hol_aws_prepare_vpc_for_terraform_destroy "$vpc_id" || true
+         fi
+         continue
+      fi
+      return $status
+   done
+   hol_warn "CDP Terraform destroy did not complete after ${max_attempts} attempts"
+   hol_aws_trace_vpc_destroy_blockers "${vpc_id:-}"
+   return 1
+}
+
 #--------------------------------------------------------------------------------------------------#
 # Function to destroy CDP Environment.
 destroy_cdp() {
@@ -1655,14 +2053,24 @@ destroy_cdp() {
    cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
    cdp_cidr="\"${cdp_cidr}\""
 
-   terraform init
-   terraform destroy --auto-approve \
-      -var "env_prefix=${workshop_name}" \
-      -var "aws_region=${aws_region}" \
-      -var "aws_key_pair=${aws_key_pair}" \
-      -var "deployment_template=${deployment_template}" \
+   hol_cdp_wait_for_data_services_absent || true
+   hol_cdp_wait_for_environment_teardown_idle || true
+
+   hol_terraform init
+   if [[ "${HOL_AWS_VPC_DESTROY_PREP:-1}" == "1" ]]; then
+      hol_aws_prepare_vpc_for_terraform_destroy || hol_warn "Workshop VPC pre-destroy cleanup incomplete — CDP Terraform may fail on Internet Gateway detach"
+   fi
+
+   local cdp_tf_destroy_args=(
+      -var "env_prefix=${workshop_name}"
+      -var "aws_region=${aws_region}"
+      -var "aws_key_pair=${aws_key_pair}"
+      -var "deployment_template=${deployment_template}"
       -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
-      
+   )
+   export TF_INPUT=0
+   hol_info "Destroying CDP Terraform stack (workshop VPC cleanup retries on DependencyViolation / mapped public addresses)"
+   run_cdp_terraform_destroy cdp_tf_destroy_args
    cdp_destroy_status=$?
    if [ "${cdp_destroy_status:-1}" -eq 0 ]; then
       rm -rf /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/
@@ -1677,13 +2085,20 @@ destroy_hol_infra() {
    USER_NAMESPACE=$workshop_name
    keycloak_destroy_status=0
    enhancements_destroy_status=0
-   destroy_aws_enhancements
-   enhancements_destroy_status=$?
-   destroy_cdp
-   cdp_destroy_status=$?
-   if [[ "$provision_keycloak" == "yes" && "$cdp_destroy_status" -eq 0 ]]; then
+   cdp_destroy_status=0
+   if [[ "$provision_keycloak" == "yes" ]]; then
       destroy_keycloak
       keycloak_destroy_status=$?
+   fi
+   if [[ "$keycloak_destroy_status" -eq 0 ]]; then
+      destroy_aws_enhancements
+      enhancements_destroy_status=$?
+   fi
+   if [[ "$keycloak_destroy_status" -eq 0 && "$enhancements_destroy_status" -eq 0 ]]; then
+      destroy_cdp
+      cdp_destroy_status=$?
+   else
+      cdp_destroy_status=1
    fi
 
    if [[ "$enhancements_destroy_status" -eq 0 && "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]]; then
