@@ -20,6 +20,7 @@
     cdf_disable_already_absent: false
     cdf_fully_absent: false
     cdf_skip_disable_service: false
+    cdf_service_requires_disable: false
     cdf_needs_teardown: false
 
   tasks:
@@ -189,6 +190,9 @@
               (cdf_current_state | default('NOT_FOUND') not in cdf_absent_states)
             ) | bool
           }}
+
+    - name: Set CDF skip-disable-service flag
+      ansible.builtin.set_fact:
         cdf_skip_disable_service: >-
           {{
             (
