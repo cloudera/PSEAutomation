@@ -2610,6 +2610,23 @@ hol_cdp_data_services_still_listed() {
    [[ "$total" -gt 0 ]]
 }
 
+hol_cdp_log_data_services_list_summary() {
+   local env_name="${workshop_name}-cdp-env"
+   local ml_count df_count compute_count cdw_count cde_count
+
+   ml_count=$(cdp ml list-workspaces 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.workspaces[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   df_count=$(cdp df list-services --no-paginate 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.services[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   compute_count=$(cdp compute list-clusters 2>/dev/null \
+      | jq -r --arg env "$env_name" '[.clusters[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+   cdw_count=$(cdp dw list-clusters 2>/dev/null \
+      | jq -r --arg prefix "$workshop_name" '[.clusters[]? | select((.clusterName // "") | startswith($prefix))] | length' 2>/dev/null || echo 0)
+   cde_count=$(cdp de list-services 2>/dev/null \
+      | jq -r --arg name "${workshop_name}-cde" '[.services[]? | select((.name // .serviceName // "") == $name)] | length' 2>/dev/null || echo 0)
+   hol_warn "CDP list-API counts for ${env_name}: ML=${ml_count:-0} CDF=${df_count:-0} compute=${compute_count:-0} CDW=${cdw_count:-0} CDE=${cde_count:-0}"
+}
+
 hol_cdp_environment_registered() {
    cdp environments describe-environment --environment-name "${workshop_name}-cdp-env" >/dev/null 2>&1
 }
@@ -2684,9 +2701,6 @@ destroy_cdp() {
 
    if [[ -z "${ssh_public_key:-}" && -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem" ]]; then
       export ssh_public_key=$(ssh-keygen -y -f "/userconfig/.${workshop_name}/${ssh_key_name}.pem")
-   fi
-   if [[ "${HOL_CDP_DESTROY_STRICT:-0}" == "1" ]]; then
-      hol_cdp_assert_data_services_absent_before_destroy || return 1
    fi
    hol_terraform init
    if should_provision_cai_nfs || cdp_nfs_enabled_in_state; then

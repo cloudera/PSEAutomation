@@ -109,7 +109,7 @@ The container `destroy` action runs, in order:
 
 The CDP environment and VPC are removed by **CDP quickstart Terraform destroy**, not by a separate `cdp environments delete` CLI call. Before Terraform runs, the automation:
 
-* Disable playbooks poll until data services leave CDP list APIs; **`destroy_cdp` does not poll by default** (one-shot check only when strict destroy is active). Skips the check when the CDP environment and workshop VPC are already gone (manual cleanup / Terraform state only). Optional extra poll: `HOL_CDP_DS_DESTROY_WAIT_SEC` (default **0**)
+* Disable playbooks poll until data services leave CDP list APIs; **`destroy_cdp` does not re-check list APIs** after a successful disable step (avoids stale CDP rows blocking Terraform). Teardown failures still fail the pipeline at `disable_data_services`. Optional extra poll: `HOL_CDP_DS_DESTROY_WAIT_SEC` (default **0**, used only if `hol_cdp_assert_data_services_absent_before_destroy` is invoked elsewhere)
 * When `HOL_CDP_DELETE_ENV_BEFORE_TF=1` (default), calls **`cdp environments delete-environment`** for `{workshop}-cdp-env` and waits — this tears down CDP-managed CloudFormation, EKS, and ELB dependencies that block VPC/subnet/IGW deletion (fixing the case where NAT/ENI leaf scans are empty but Terraform still hangs)
 * If the environment is already in a deleting state, waits until it is gone or idle (`HOL_CDP_ENV_DESTROY_WAIT_SEC`, default 3600)
 * Optionally prepares the **workshop VPC only** (from Terraform state/output or EC2 Name tag `{workshop}-net`): delete NAT gateways, disassociate Elastic IPs on non-NAT ENIs in that VPC, release unassociated workshop-tagged EIPs, delete `available` ENIs, poll until no ENIs have mapped public IPs (`HOL_AWS_VPC_DESTROY_PREP=1`, default on)
