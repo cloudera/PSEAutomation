@@ -271,8 +271,25 @@ hol_stop_service_log_tailers() {
    sleep 0.2
 }
 
+# Ansible writes to per-service log files; tailers stream to the console.
+# Enable default-callback ANSI when the console is a TTY or HOL_ANSIBLE_COLOR is set.
+hol_ansible_force_color() {
+   case "${HOL_ANSIBLE_COLOR:-}" in
+      1|true|TRUE|yes|YES|on|ON) echo 1; return 0 ;;
+   esac
+   if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+      echo 1
+      return 0
+   fi
+   echo 0
+}
+
+_hol_strip_ansi_from_stream() {
+   sed $'s/\x1b\\[[0-9;]*[a-zA-Z]//g'
+}
+
 hol_run_ansible_playbook() {
-   local log_file tag rc stream_cmd
+   local log_file tag rc stream_cmd force_color
    tag="${HOL_SERVICE_TAG:-ansible}"
    log_file="$(hol_ansible_log_file)"
    : >"$log_file"
@@ -287,10 +304,12 @@ hol_run_ansible_playbook() {
       stream_cmd=()
    fi
 
+   force_color="$(hol_ansible_force_color)"
+
    "${stream_cmd[@]}" env \
       HOL_SERVICE_TAG= \
       ANSIBLE_STDOUT_CALLBACK=default \
-      ANSIBLE_FORCE_COLOR=0 \
+      ANSIBLE_FORCE_COLOR="${force_color}" \
       PYTHONUNBUFFERED=1 \
       PYTHONWARNINGS="${HOL_ANSIBLE_PYTHONWARNINGS:-ignore::SyntaxWarning}" \
       ansible-playbook "$@" >>"$log_file" 2>&1
@@ -299,7 +318,9 @@ hol_run_ansible_playbook() {
    if (( rc != 0 )); then
       hol_warn "${tag} playbook failed — full log: ${log_file}"
       if [[ -f "$log_file" ]]; then
-         grep -E '(^fatal: |fatal: \[|UNREACHABLE!|failed=[1-9]|unreachable=[1-9]|^PLAY RECAP)' "$log_file" | tail -40 >&2 || true
+         _hol_strip_ansi_from_stream <"$log_file" \
+            | grep -E '(^fatal: |fatal: \[|UNREACHABLE!|failed=[1-9]|unreachable=[1-9]|^PLAY RECAP)' \
+            | tail -40 >&2 || true
       fi
       return "$rc"
    fi
