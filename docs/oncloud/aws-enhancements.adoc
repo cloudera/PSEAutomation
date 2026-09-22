@@ -13,3 +13,7 @@ Applies a lifecycle policy on the CDP log bucket so objects under `logs/` are re
 == dladmin_log_policy
 
 Attaches the CDP `${env_prefix}-logs-policy` IAM policy to the `${env_prefix}-dladmin-role`. This grants `s3:PutObject` on the logs location, which the datalake admin role does not receive from the default quickstart role attachments alone.
+
+=== Destroy order
+
+On **destroy**, the provisioner runs `destroy_aws_enhancements()` first to detach this policy from the datalake admin role before CDP quickstart Terraform destroys shared IAM policies. Without that step, Terraform can fail with HTTP 409 while deleting `${env_prefix}-logs-policy` because the HoL-owned `aws_iam_role_policy_attachment` is still in place.

@@ -124,6 +124,8 @@ If omitted, a key pair is generated automatically.
 
 == Data service sizing (optional)
 
+The provisioner applies cloud-specific defaults for data service compute sizing on AWS and Azure; leave the keys below commented unless you need a non-default size. CDE and CAI use built-in defaults when `CDE_INSTANCE_TYPE` / `CAI_WS_INSTANCE_TYPE` are omitted (`m5.2xlarge` on AWS; `Standard_D8s_v5` on Azure). On Azure, `resolve_azure_instance_type` in `hol-functions.sh` verifies the requested SKU in `AZURE_REGION` and falls back through the v5 family list used for CDE and CAI workspace types (and for `CDF_INSTANCE_TYPE` when set). CDF enable omits `instance_type` unless `CDF_INSTANCE_TYPE` is set, so CDP chooses the default Kubernetes node type. CDW sizing uses virtual warehouse and DataViz size keys only—not VM instance types.
+
 |===
 | Key | Services | Description
 
@@ -137,7 +139,7 @@ If omitted, a key pair is generated automatically.
 
 | `CDE_INSTANCE_TYPE`
 | CDE
-| CDE service cluster instance type. Azure default `Standard_D8s_v5`; fallbacks include `Standard_D8as_v5`, `Standard_D8ds_v5`, `Standard_D16s_v5` (pick from the CDE UI workload dropdown for your region)
+| CDE service cluster instance type. AWS default `m5.2xlarge`. Azure default `Standard_D8s_v5`; provisioner fallbacks include `Standard_D8as_v5`, `Standard_D8ds_v5`, `Standard_D16s_v5` (pick from the CDE UI workload dropdown for your region)
 
 | `CDE_INITIAL_INSTANCES` / `CDE_MIN_INSTANCES` / `CDE_MAX_INSTANCES`
 | CDE
@@ -153,7 +155,7 @@ If omitted, a key pair is generated automatically.
 
 | `CAI_WS_INSTANCE_TYPE`
 | CAI
-| CAI workspace instance type. Azure default `Standard_D8s_v5` (same v5 family fallbacks as CDE)
+| CAI workspace instance type. AWS default `m5.2xlarge`. Azure default `Standard_D8s_v5` (same v5 family fallbacks as CDE)
 
 | `CAI_MIN_INSTANCES` / `CAI_MAX_INSTANCES`
 | CAI
@@ -173,15 +175,15 @@ If omitted, a key pair is generated automatically.
 
 | `CDF_INSTANCE_TYPE`
 | CDF
-| CDF instance type. Azure default `Standard_D8s_v5` (same v5 family fallbacks as CDE)
+| Optional. When unset, CDF enable omits instance type and CDP chooses the default Kubernetes node type. Set only when the CDP actor may use custom DataFlow instance types (for example `m5.2xlarge` on AWS or `Standard_D8s_v5` on Azure). Requires environment-scoped `DFAdmin` on the API caller (`assignCdpEnvAdminRoles.sh` runs after Terraform on provision).
 
 | `CDF_MIN_NODES` / `CDF_MAX_NODES`
 | CDF
-| CDF node count bounds
+| CDF node count bounds (`--min-k8s-node-count` / `--max-k8s-node-count`)
 
 | `CDF_USE_PUBLIC_LB`
 | CDF
-| `yes` or `no`
+| `yes` or `no` — public load balancer for the CDF service. Cluster and load-balancer subnets come from CDP Terraform outputs, not configfile.
 |===
 
 == Resource tags (optional)

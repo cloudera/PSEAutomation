@@ -77,8 +77,8 @@ See link:configfile-reference.adoc[configfile reference] for all supported keys.
 3. Workshop users mapped to CDP IAM groups with least-privilege roles
 4. Parameterized Keycloak admin password
 5. AWS and CDP prerequisite checks (VPC, Elastic IP, S3, IAM users/groups, SAML IdP quotas)
-6. Optional activation of CDW, CDE, CAI, and CDF data services
-7. Idempotent provision and destroy workflows
+6. Optional activation of CDW, CDE, CAI, and CDF data services (parallel when multiple are selected; enable/disable playbooks skip redundant API calls when a service is already healthy or absent)
+7. Idempotent provision and destroy workflows (CDF disable resolves service CRN, stops flows, terminates deployments, then `cdp df disable-service --terminate-deployments --no-persist`)
 8. Uses `cdp-tf-quickstarts` Terraform modules pulled at runtime
 9. Dynamic CDW virtual warehouse count based on workshop user count
 10. Optional GPU-backed CAI workspaces
