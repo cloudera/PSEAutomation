@@ -474,7 +474,7 @@ hol_terraform_timed() {
       return $?
    fi
    timeout --preserve-status "$attempt_sec" \
-      bash -c 'source "$0"; shift; hol_terraform "$@"' "${hol_lib}/hol-output.sh" "$@"
+      bash -c 'source "$1"; shift; hol_terraform "$@"' _ "${hol_lib}/hol-output.sh" "$@"
 }
 
 # Ansible writes to per-service log files; tailers stream to the console.
