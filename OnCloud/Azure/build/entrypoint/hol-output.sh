@@ -271,6 +271,38 @@ hol_stop_service_log_tailers() {
    sleep 0.2
 }
 
+# Wait for every background data-service job (continue-on-failure). Nameref arrays:
+# pids[i] aligns with service_tokens[i]. Sets HOL_FAILED_DATA_SERVICES to short names (CDW, CDE, …).
+hol_wait_parallel_data_services() {
+   local -n _hol_pids=$1
+   local -n _hol_tokens=$2
+   local failed_short=() joined workshop
+   local i pid
+
+   HOL_FAILED_DATA_SERVICES=""
+   workshop="${workshop_name:-hol}"
+
+   for i in "${!_hol_pids[@]}"; do
+      pid=${_hol_pids[$i]}
+      if ! wait "$pid"; then
+         if [[ -n "${_hol_tokens[$i]:-}" ]]; then
+            failed_short+=("$(hol_service_short "${_hol_tokens[$i]}")")
+         else
+            failed_short+=("unknown")
+         fi
+      fi
+   done
+
+   if ((${#failed_short[@]} == 0)); then
+      return 0
+   fi
+
+   joined=$(IFS=', '; echo "${failed_short[*]}")
+   HOL_FAILED_DATA_SERVICES="$joined"
+   hol_warn "Data service playbook(s) failed: ${joined} — see /userconfig/.${workshop}/logs/*.log"
+   return 1
+}
+
 # Ansible writes to per-service log files; tailers stream to the console.
 # Enable default-callback ANSI when the console is a TTY or HOL_ANSIBLE_COLOR is set.
 hol_ansible_force_color() {

@@ -2366,11 +2366,8 @@ hol_enable_data_services() {
       pids+=($!)
    done
 
-   wait_for_pids "${pids[@]}" || failed=1
+   hol_wait_parallel_data_services pids services_to_deploy || failed=1
    hol_stop_service_log_tailers
-   if (( failed != 0 )); then
-      hol_warn "One or more data service playbooks failed — see /userconfig/.${workshop_name}/logs/*.log"
-   fi
 
    hol_subsection "Deploy playbook logs" "📋"
    for service in "${services_to_deploy[@]}"; do
@@ -2401,6 +2398,7 @@ disable_data_services() {
    hol_subsection "Disabling data services in parallel" "🗑️"
    hol_info "Services: ${services_to_disable[*]}"
 
+   local failed=0
    local pids=()
    local service
 
@@ -2414,12 +2412,13 @@ disable_data_services() {
       pids+=($!)
    done
 
-   wait_for_pids "${pids[@]}"
+   hol_wait_parallel_data_services pids services_to_disable || failed=1
    hol_stop_service_log_tailers
 
    hol_subsection "Disable playbook logs" "📋"
    for service in "${services_to_disable[@]}"; do
       hol_kv "$(hol_service_short "$service")" "/userconfig/.${workshop_name}/logs/$(hol_service_short "$service").log"
    done
+   return $failed
 }
 #--------------------------------------------------------------------------------------------------#

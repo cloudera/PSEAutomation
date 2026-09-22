@@ -91,7 +91,7 @@ destroy)
         hol_subsection "CAII teardown" "🧠"
         destroy_cai_inference
     fi
-    disable_data_services
+    disable_data_services || hol_destroy_failed "$workshop_name"
     if [ "$provision_keycloak" == "yes" ]; then
         cdp_idp_user_teardown
     fi
