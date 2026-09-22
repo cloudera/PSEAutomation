@@ -425,3 +425,7 @@
           - (final_vws.stdout_lines | select('match', workshop_name ~ '-impala-' ~ item) | list | length) > 0
         fail_msg: "Impala virtual warehouse {{ workshop_name }}-impala-{{ item }} does not exist after deployment."
       with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
+
+    - name: Print success message on successful CDW cluster enable
+      ansible.builtin.debug:
+        msg: "Successfully provisioned CDW cluster in environment {{ cdp_env_name }}."

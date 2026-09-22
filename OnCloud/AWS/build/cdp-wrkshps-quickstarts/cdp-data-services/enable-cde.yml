@@ -234,3 +234,7 @@
         - item.rc | default(0) != 0
         - "'already exists' not in (item.stderr | default('') | lower)"
         - "'ALREADY_EXISTS' not in (item.stderr | default(''))"
+
+    - name: Print success message on successful CDE service enable
+      ansible.builtin.debug:
+        msg: "Successfully provisioned CDE service {{ workshop_name }}-cde in environment {{ cdp_env_name }}."

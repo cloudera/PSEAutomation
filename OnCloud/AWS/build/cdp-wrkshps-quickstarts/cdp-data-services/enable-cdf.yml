@@ -239,6 +239,13 @@
           list_state: {{ cdf_list_state }}) — skipping enable-service.
       when: cdf_skip_enable | default(false)
 
+    - name: Print success message when CDF is already healthy
+      ansible.builtin.debug:
+        msg: "Successfully provisioned CDF for environment {{ cdp_env_name }}."
+      when:
+        - cdf_skip_enable | default(false)
+        - cdf_service_healthy | default(false)
+
     - name: End play when CDF enable is not required
       ansible.builtin.meta: end_play
       when: cdf_skip_enable | default(false)
@@ -377,9 +384,7 @@
           The enable request may not have started — check CDP DF service events and subnet configuration.
       when: not cdf_final_healthy | default(false)
 
-    - name: Print CDF enable success message
+    - name: Print success message on successful CDF service enable
       ansible.builtin.debug:
-        msg: >-
-          Successfully enabled CDF for environment {{ cdp_env_name }}
-          (state: {{ cdf_final_state }}, detailedState: {{ cdf_final_detailed_state | default('n/a') }}).
+        msg: "Successfully provisioned CDF for environment {{ cdp_env_name }}."
       when: cdf_final_healthy | default(false)

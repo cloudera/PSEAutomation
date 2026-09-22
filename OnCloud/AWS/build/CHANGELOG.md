@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
+
 ### Fixed
 - CDF `disable-cdf.yml` (AWS/Azure): resolve service CRN from list-services; skip `disable-service` only when all list/info/current states are absent/disabled or DISABLING is already in progress.
 - CDF `disable-cdf.yml` (AWS/Azure): set `cdf_disable_in_progress` and related flags in separate `set_fact` tasks so Ansible does not reference undefined sibling facts during derived-flag evaluation.
