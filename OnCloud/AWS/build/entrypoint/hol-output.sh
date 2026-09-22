@@ -1,21 +1,42 @@
 #!/bin/bash
 # Shared colorful / emoji logging helpers for HoL automation scripts.
 
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-   HOL_RESET='\033[0m'
-   HOL_BOLD='\033[1m'
-   HOL_DIM='\033[2m'
-   HOL_RED='\033[31m'
-   HOL_GREEN='\033[32m'
-   HOL_YELLOW='\033[33m'
-   HOL_BLUE='\033[34m'
-   HOL_MAGENTA='\033[35m'
-   HOL_CYAN='\033[36m'
-   HOL_WHITE='\033[37m'
-else
-   HOL_RESET='' HOL_BOLD='' HOL_DIM='' HOL_RED='' HOL_GREEN='' HOL_YELLOW=''
-   HOL_BLUE='' HOL_MAGENTA='' HOL_CYAN='' HOL_WHITE=''
-fi
+# Default-on ANSI for shell helpers and Ansible (Jenkins docker logs are often non-TTY).
+# Opt out with NO_COLOR=1, ANSIBLE_NOCOLOR=1, or HOL_ANSIBLE_COLOR=false.
+hol_color_enabled() {
+   if [[ -n "${NO_COLOR:-}" ]]; then
+      echo 0
+      return 0
+   fi
+   case "${ANSIBLE_NOCOLOR:-}" in
+   1|true|TRUE|yes|YES) echo 0; return 0 ;;
+   esac
+   case "${HOL_ANSIBLE_COLOR:-}" in
+   0|false|FALSE|no|NO|off|OFF) echo 0; return 0 ;;
+   1|true|TRUE|yes|YES|on|ON) echo 1; return 0 ;;
+   esac
+   echo 1
+}
+
+_hol_init_color_vars() {
+   if [[ "$(hol_color_enabled)" == 1 ]]; then
+      HOL_RESET='\033[0m'
+      HOL_BOLD='\033[1m'
+      HOL_DIM='\033[2m'
+      HOL_RED='\033[31m'
+      HOL_GREEN='\033[32m'
+      HOL_YELLOW='\033[33m'
+      HOL_BLUE='\033[34m'
+      HOL_MAGENTA='\033[35m'
+      HOL_CYAN='\033[36m'
+      HOL_WHITE='\033[37m'
+   else
+      HOL_RESET='' HOL_BOLD='' HOL_DIM='' HOL_RED='' HOL_GREEN='' HOL_YELLOW=''
+      HOL_BLUE='' HOL_MAGENTA='' HOL_CYAN='' HOL_WHITE=''
+   fi
+}
+
+_hol_init_color_vars
 
 # Section headers: left-aligned title with full-width rule lines.
 HOL_SECTION_WIDTH=86
@@ -404,20 +425,8 @@ hol_wait_parallel_data_services() {
 }
 
 # Ansible writes to per-service log files; tailers stream to the console.
-# Default-callback ANSI is on unless explicitly disabled (see opt-outs below).
 hol_ansible_force_color() {
-   if [[ -n "${NO_COLOR:-}" ]]; then
-      echo 0
-      return 0
-   fi
-   case "${ANSIBLE_NOCOLOR:-}" in
-      1|true|TRUE|yes|YES) echo 0; return 0 ;;
-   esac
-   case "${HOL_ANSIBLE_COLOR:-}" in
-      0|false|FALSE|no|NO|off|OFF) echo 0; return 0 ;;
-      1|true|TRUE|yes|YES|on|ON) echo 1; return 0 ;;
-   esac
-   echo 1
+   hol_color_enabled
 }
 
 _hol_strip_ansi_from_stream() {

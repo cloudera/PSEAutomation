@@ -4,6 +4,37 @@
 # hol_assign_pipeline_cdp_env_admin_roles() in the provisioner (/usr/local/bin/assignCdpEnvAdminRoles.sh).
 set -uo pipefail
 
+_hol_try_source_output() {
+   local d f here
+   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+   for d in /usr/local/bin "${here}/../entrypoint"; do
+      f="${d}/hol-output.sh"
+      if [[ -f "$f" ]]; then
+         # shellcheck source=/dev/null
+         source "$f"
+         return 0
+      fi
+   done
+   return 1
+}
+_hol_try_source_output || true
+
+_hol_assign_ok() {
+   if [[ -n "${HOL_GREEN:-}" ]]; then
+      printf "  ${HOL_GREEN}✓ %s${HOL_RESET}\n" "$1"
+   else
+      echo "  ✓ $1"
+   fi
+}
+
+_hol_assign_fail() {
+   if [[ -n "${HOL_RED:-}" ]]; then
+      printf "  ${HOL_RED}✗ %s${HOL_RESET}\n" "$1"
+   else
+      echo "  ✗ $1"
+   fi
+}
+
 WORKSHOP_NAME="${WORKSHOP_NAME:-}"
 CDP_ENV_NAME="${CDP_ENV_NAME:-}"
 BUILD_USER_ID="${BUILD_USER_ID:-}"
@@ -213,7 +244,7 @@ assign_machine_user_roles() {
 
    for role_name in "${ENV_ADMIN_ROLES[@]}"; do
       if machine_user_has_resource_role "$machine_user_crn" "$role_name"; then
-         echo "  ✓ ${role_name} (already assigned)"
+         _hol_assign_ok "${role_name} (already assigned)"
          continue
       fi
 
@@ -228,11 +259,11 @@ assign_machine_user_roles() {
          --machine-user "$machine_user_crn" \
          --resource-role-crn "$role_crn" \
          --resource-crn "$CDP_ENV_CRN" >"$err_file" 2>&1; then
-         echo "  ✓ ${role_name} assigned"
+         _hol_assign_ok "${role_name} assigned"
       elif grep -qiE 'ALREADY_EXISTS|already assigned' "$err_file"; then
-         echo "  ✓ ${role_name} (already assigned)"
+         _hol_assign_ok "${role_name} (already assigned)"
       else
-         echo "  ✗ Failed to assign ${role_name}:"
+         _hol_assign_fail "Failed to assign ${role_name}:"
          sed 's/^/    /' "$err_file"
          assign_failed=1
       fi
@@ -251,7 +282,7 @@ assign_human_user_roles() {
 
    for role_name in "${ENV_ADMIN_ROLES[@]}"; do
       if human_user_has_resource_role "$user_crn" "$role_name"; then
-         echo "  ✓ ${role_name} (already assigned)"
+         _hol_assign_ok "${role_name} (already assigned)"
          continue
       fi
 
@@ -266,11 +297,11 @@ assign_human_user_roles() {
          --user "$user_crn" \
          --resource-role-crn "$role_crn" \
          --resource-crn "$CDP_ENV_CRN" >"$err_file" 2>&1; then
-         echo "  ✓ ${role_name} assigned"
+         _hol_assign_ok "${role_name} assigned"
       elif grep -qiE 'ALREADY_EXISTS|already assigned' "$err_file"; then
-         echo "  ✓ ${role_name} (already assigned)"
+         _hol_assign_ok "${role_name} (already assigned)"
       else
-         echo "  ✗ Failed to assign ${role_name}:"
+         _hol_assign_fail "Failed to assign ${role_name}:"
          sed 's/^/    /' "$err_file"
          assign_failed=1
       fi
