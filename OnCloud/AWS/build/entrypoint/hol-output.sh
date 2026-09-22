@@ -424,8 +424,23 @@ _hol_strip_ansi_from_stream() {
    sed $'s/\x1b\\[[0-9;]*[a-zA-Z]//g'
 }
 
+# Console/streaming Ansible (Keycloak IDP, etc.) — same color env as hol_run_ansible_playbook.
+hol_ansible_playbook() {
+   local force_color
+   force_color="$(hol_ansible_force_color)"
+   env \
+      HOL_SERVICE_TAG= \
+      ANSIBLE_STDOUT_CALLBACK=default \
+      ANSIBLE_FORCE_COLOR="${force_color}" \
+      ANSIBLE_NOCOLOR="$(( 1 - force_color ))" \
+      PY_COLORS="${force_color}" \
+      PYTHONUNBUFFERED=1 \
+      PYTHONWARNINGS="${HOL_ANSIBLE_PYTHONWARNINGS:-ignore::SyntaxWarning}" \
+      ansible-playbook "$@"
+}
+
 hol_run_ansible_playbook() {
-   local log_file tag rc stream_cmd force_color
+   local log_file tag rc stream_cmd
    tag="${HOL_SERVICE_TAG:-ansible}"
    log_file="$(hol_ansible_log_file)"
    : >"$log_file"
@@ -440,17 +455,7 @@ hol_run_ansible_playbook() {
       stream_cmd=()
    fi
 
-   force_color="$(hol_ansible_force_color)"
-
-   "${stream_cmd[@]}" env \
-      HOL_SERVICE_TAG= \
-      ANSIBLE_STDOUT_CALLBACK=default \
-      ANSIBLE_FORCE_COLOR="${force_color}" \
-      ANSIBLE_NOCOLOR="$(( 1 - force_color ))" \
-      PY_COLORS="${force_color}" \
-      PYTHONUNBUFFERED=1 \
-      PYTHONWARNINGS="${HOL_ANSIBLE_PYTHONWARNINGS:-ignore::SyntaxWarning}" \
-      ansible-playbook "$@" >>"$log_file" 2>&1
+   "${stream_cmd[@]}" hol_ansible_playbook "$@" >>"$log_file" 2>&1
    rc=$?
 
    if (( rc != 0 )); then

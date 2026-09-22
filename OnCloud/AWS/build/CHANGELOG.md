@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed
+- Keycloak/IDP Ansible (AWS/Azure): `cdp_idp_setup_user` and `cdp_idp_user_teardown` call `hol_ansible_playbook` so Jenkins console gets the same `hol_ansible_force_color` / `ANSIBLE_FORCE_COLOR` / `PY_COLORS` as data-service playbooks.
 - CDF `disable-cdf.yml` (AWS/Azure): set `cdf_service_requires_disable` before `cdf_skip_disable_service` (separate `set_fact` + play default) so Ansible does not reference an undefined sibling fact during derived-flag evaluation.
 - CDF enable (AWS/Azure): treat CDP `412 FAILED_PRECONDITION` / `CANCEL_ENABLE` (stale in-flight enable) as poll-only — no repeated enable-service retries; refresh list-services before enable when state was absent; wait for GOOD_HEALTH when list shows ENABLING/DISABLING instead of exiting early; clearer fail text when a stuck enable never becomes healthy (suggest `disable-cdf.yml` or UI cancel).
 - Data service enable/disable (AWS/Azure): parallel batches wait for every service playbook even when one fails; aggregate failures list failed services (CDW, CDE, …) and return non-zero so Jenkins fails after all playbooks finish. Destroy propagates disable failures via `hol_destroy_failed`.

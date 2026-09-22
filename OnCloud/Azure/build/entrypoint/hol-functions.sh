@@ -2734,7 +2734,7 @@ cdp_idp_setup_user() {
    wait_for_keycloak_ready "$KEYCLOAK_SERVER_IP" 30 || return 1
    cdp_region=$(cdp environments describe-environment --environment-name $workshop_name-cdp-env | jq -r .environment.crn | cut -d: -f4)
    echo "cdp_region:$cdp_region"
-   ansible-playbook create_keycloak_client.yml --extra-vars \
+   hol_ansible_playbook create_keycloak_client.yml --extra-vars \
       "keycloak__admin_username=admin \
       keycloak__admin_password=$keycloak__admin_password \
       keycloak__domain=https://$KEYCLOAK_SERVER_IP \
@@ -2744,7 +2744,7 @@ cdp_idp_setup_user() {
       cdp_region=$cdp_region" || hol_fail "create_keycloak_client playbook failed — Keycloak IDP client was not created"
    hol_subsection "Creating Users & Groups" "👥"
    sleep 5
-   ansible-playbook keycloak_hol_user_setup.yml --extra-vars \
+   hol_ansible_playbook keycloak_hol_user_setup.yml --extra-vars \
       "keycloak__admin_username=admin \
       keycloak__admin_password=$keycloak__admin_password \
       keycloak__domain=https://$KEYCLOAK_SERVER_IP \
@@ -2778,7 +2778,7 @@ cdp_idp_setup_user() {
    sleep 5
    hol_subsection "Generating workshop report" "📄"
    cd /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
-   ansible-playbook keycloak_hol_user_fetch.yml --extra-vars \
+   hol_ansible_playbook keycloak_hol_user_fetch.yml --extra-vars \
       "keycloak__admin_username=admin \
       keycloak__admin_password=$keycloak__admin_password \
       keycloak__domain=https://$KEYCLOAK_SERVER_IP \
@@ -2801,7 +2801,7 @@ cdp_idp_user_teardown() {
    if [[ -n "$KEYCLOAK_SERVER_IP" && -d "$kc_ansible_dir" && -f "$kc_ansible_dir/keycloak_hol_user_teardown.yml" ]]; then
       hol_info "Keycloak server IP: $KEYCLOAK_SERVER_IP"
       cd "$kc_ansible_dir"
-      ansible-playbook keycloak_hol_user_teardown.yml --extra-vars \
+      hol_ansible_playbook keycloak_hol_user_teardown.yml --extra-vars \
          "keycloak__admin_username=admin \
          keycloak__admin_password=$keycloak__admin_password \
          keycloak__domain=https://$KEYCLOAK_SERVER_IP \
