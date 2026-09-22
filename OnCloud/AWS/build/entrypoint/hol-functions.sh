@@ -903,26 +903,53 @@ setup_keycloak_ec2() {
 # Function to rollback keycloack EC2 Instance in case of failure during provision.
 destroy_keycloak() {
    USER_NAMESPACE=$workshop_name
+   local kc_tf_dir="/userconfig/.$USER_NAMESPACE/keycloak_terraform_config"
+
+   if [[ ! -d "$kc_tf_dir" ]]; then
+      hol_skip "Keycloak Terraform directory not found — skipping Keycloak destroy"
+      hol_remove_keycloak_ip_on_destroy
+      return 0
+   fi
+
    hol_subsection "Destroying Keycloak" "🔐"
-   cd /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
+   cd "$kc_tf_dir" || {
+      hol_skip "Unable to enter Keycloak Terraform directory — skipping Keycloak destroy"
+      hol_remove_keycloak_ip_on_destroy
+      return 0
+   }
    hol_terraform init
+   if ! hol_terraform state list 2>/dev/null | grep -q .; then
+      hol_skip "Keycloak Terraform state is empty — skipping Keycloak destroy"
+      hol_remove_keycloak_ip_on_destroy
+      rm -rf "$kc_tf_dir" /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
+      return 0
+   fi
+
    hol_step "Waiting 30 seconds before Keycloak teardown..."
    sleep 30
    hol_step "Deleting Route53 DNS record"
-   # Delete Route53 DNS record to unmap subdomain to instance IP
-   aws route53 change-resource-record-sets --hosted-zone-id "$hostedzoneid" \
-      --change-batch '{
+   local keycloak_ip=""
+   keycloak_ip=$(hol_terraform output -raw elastic_ip 2>/dev/null || true)
+   if [[ -n "$keycloak_ip" && -n "${hostedzoneid:-}" ]]; then
+      if aws route53 change-resource-record-sets --hosted-zone-id "$hostedzoneid" \
+         --change-batch '{
         "Changes": [{
             "Action": "DELETE",
             "ResourceRecordSet": {
                 "Name": "'"$workshop_name.$domain"'",
                 "Type": "A",
                 "TTL": 300,
-                "ResourceRecords": [{"Value": "'"$(hol_terraform output -raw elastic_ip)"'"}]
+                "ResourceRecords": [{"Value": "'"$keycloak_ip"'"}]
             }
         }]
-    }'
-   hol_ok "DNS record deleted for $workshop_name.$domain"
+    }' 2>/dev/null; then
+         hol_ok "DNS record deleted for $workshop_name.$domain"
+      else
+         hol_skip "Route53 A record not found or already removed ($workshop_name.$domain)"
+      fi
+   else
+      hol_skip "No Keycloak IP or hosted zone — skipping Route53 cleanup"
+   fi
 
    # Extract only the first IP for Keycloak (admin access only)
    kc_ip=$(echo "$local_ip" | cut -d',' -f1)
@@ -2152,7 +2179,7 @@ run_cdp_terraform_destroy() {
       log=$(mktemp)
       hol_step "Running CDP Terraform destroy (${attempt}/${max_attempts}, max ${attempt_sec}s per attempt)..."
       if command -v timeout >/dev/null 2>&1; then
-         timeout --preserve-status "$attempt_sec" hol_terraform destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log"
+         hol_terraform_timed "$attempt_sec" destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log"
          status=${PIPESTATUS[0]}
          if [[ $status -eq 124 ]]; then
             hol_warn "CDP Terraform destroy exceeded ${attempt_sec}s (no forward progress assumed) — checking VPC leaf blockers"

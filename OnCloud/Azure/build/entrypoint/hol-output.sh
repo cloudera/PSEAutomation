@@ -462,6 +462,21 @@ hol_terraform() {
    esac
 }
 
+# GNU timeout runs external commands only — invoke hol_terraform in a sourced bash subshell.
+hol_terraform_timed() {
+   local attempt_sec="$1"
+   shift
+   local hol_lib
+   hol_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+   if [[ -z "$attempt_sec" || "$attempt_sec" -le 0 ]] || ! command -v timeout >/dev/null 2>&1; then
+      hol_terraform "$@"
+      return $?
+   fi
+   timeout --preserve-status "$attempt_sec" \
+      bash -c 'source "$0"; shift; hol_terraform "$@"' "${hol_lib}/hol-output.sh" "$@"
+}
+
 # Ansible writes to per-service log files; tailers stream to the console.
 hol_ansible_force_color() {
    hol_color_enabled
