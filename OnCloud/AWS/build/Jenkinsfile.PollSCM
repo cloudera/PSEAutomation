@@ -3,14 +3,17 @@ pipeline {
 
     environment {
         GIT_REPO_URL = 'https://github.com/cloudera-labs/cdp-tf-quickstarts.git'
-        REMOTE_JOB = 'hol-automation'  // Replace with your remote job's name
+        REMOTE_JOB_AWS = 'hol-automation'  // Replace with your AWS deploy job name
+        REMOTE_JOB_AZURE = 'hol-automation-azure'  // Replace with your Azure deploy job name
         EMAIL_RECIPIENTS = 'pse-apac@cloudera.com,aktiwari@cloudera.com,ksahu@cloudera.com'  // Email recipient(s)
         HOL_AUTO_EXEC_DIR = "/home/holautosa/HOL_AUTO_EXEC_DIR"
         REPO_DIR = "${HOL_AUTO_EXEC_DIR}/cdp-tf-quickstarts"
     }
 
     parameters {
-        string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Branch to be used for building Docker image')
+        string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Git branch for AWS local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
+        string(name: 'AZURE_BUILD_BRANCH', defaultValue: 'azure-automation', description: 'Git branch for Azure local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
+        string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testbuildimage', description: 'Local Docker image tag passed to deploy/destroy when BUILD_LOCAL_IMAGE=true')
     }
     
     triggers {
@@ -26,16 +29,31 @@ pipeline {
                 }
             }
         }
-        stage('Build Test Image') {
+        stage('Build Test Images') {
             steps {
                 script {
-                    // Define parameters for build image job
-                    echo 'Triggering hol-automation-build job...'
-                    build job: 'hol-automation-build',
-                        parameters: [
-                            string(name: 'BUILD_BRANCH', value: "${params.BUILD_BRANCH}")
-                        ],
-                        propagate: true
+                    echo 'Skipping registry image build — deploy/destroy jobs build locally (BUILD_LOCAL_IMAGE=true).'
+                    // Registry image build (re-enable to push to Docker Hub before deploy):
+                    /*
+                    parallel(
+                        'AWS': {
+                            echo 'Triggering hol-automation-build-aws job...'
+                            build job: 'hol-automation-build-aws',
+                                parameters: [
+                                    string(name: 'BUILD_BRANCH', value: "${params.BUILD_BRANCH}")
+                                ],
+                                propagate: true
+                        },
+                        'Azure': {
+                            echo 'Triggering hol-automation-build-azure job...'
+                            build job: 'hol-automation-build-azure',
+                                parameters: [
+                                    string(name: 'BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}")
+                                ],
+                                propagate: true
+                        }
+                    )
+                    */
                 }
             }
         }
@@ -45,39 +63,99 @@ pipeline {
             }
             steps {
                 script {
-                    // Define common parameters for deploy
-                    def deployParams = [
+                    def awsWorkshopName = "caws${env.BUILD_NUMBER}"
+                    def azureWorkshopName = "cazs${env.BUILD_NUMBER}"
+
+                    // Define common parameters for AWS deploy
+                    def awsDeployParams = [
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'AWS_REGION', value: 'ap-southeast-1'),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
-                        string(name: 'WORKSHOP_NAME', value: "CICD${env.BUILD_NUMBER}"),
+                        string(name: 'WORKSHOP_NAME', value: awsWorkshopName),
                         string(name: 'NUMBER_OF_WORKSHOP_USERS', value: '1'),
-                        string(name: 'WORKSHOP_USER_PREFIX', value: "CICD${env.BUILD_NUMBER}"),
+                        string(name: 'WORKSHOP_USER_PREFIX', value: awsWorkshopName),
                         password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', value: 'changeme'),
-                        extendedChoice(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CDW,CML'),
+                        string(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CDW,CAI,CDF'),
                         string(name: 'CDW_VRTL_WAREHOUSE_SIZE', value: 'xsmall'),
                         string(name: 'CDW_DATAVIZ_SIZE', value: 'viz-default'),
-                        string(name: 'CDE_SPARK_VERSION', value: 'SPARK3'),
+                        string(name: 'CDE_SPARK_VERSION', value: 'AUTO'),
+                        string(name: 'CDE_VC_TIER', value: 'CORE'),
                         string(name: 'CDE_INSTANCE_TYPE', value: 'm5.2xlarge'),
                         string(name: 'CDE_INITIAL_INSTANCES', value: '1'),
-                        string(name: 'CDE_MIN_INSTANCES', value: '1'),
-                        string(name: 'CDE_MAX_INSTANCES', value: '1'),
-                        string(name: 'CML_WS_INSTANCE_TYPE', value: 'm5.2xlarge'),
-                        string(name: 'CML_MIN_INSTANCES', value: '1'),
-                        string(name: 'CML_MAX_INSTANCES', value: '1'),
-                        booleanParam(name: 'CML_ENABLE_GPU', value: false),
-                        string(name: 'CML_GPU_INSTANCE_TYPE', value: 'g4dn.xlarge'),
-                        string(name: 'CML_MIN_GPU_INSTANCES', value: '1'),
-                        string(name: 'CML_MAX_GPU_INSTANCES', value: '1'),
+                        string(name: 'CDE_MIN_INSTANCES', value: '0'),
+                        string(name: 'CDE_MAX_INSTANCES', value: '25'),
+                        string(name: 'CAI_WS_INSTANCE_TYPE', value: 'm5.2xlarge'),
+                        string(name: 'CAI_MIN_INSTANCES', value: '1'),
+                        string(name: 'CAI_MAX_INSTANCES', value: '1'),
+                        booleanParam(name: 'CAI_ENABLE_GPU', value: false),
+                        string(name: 'CAI_GPU_INSTANCE_TYPE', value: 'g4dn.xlarge'),
+                        string(name: 'CAI_MIN_GPU_INSTANCES', value: '1'),
+                        string(name: 'CAI_MAX_GPU_INSTANCES', value: '1'),
+                        string(name: 'CDF_INSTANCE_TYPE', value: ''),
+                        string(name: 'CDF_MIN_NODES', value: '3'),
+                        string(name: 'CDF_MAX_NODES', value: '3'),
+                        booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'ACTION', value: 'provision'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain')        
+                        string(name: 'IMAGE_TAG', value: 'testmain'),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_BUILD_BRANCH', value: "${params.BUILD_BRANCH}"),
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
 
-                    echo 'Triggering deploy job...'
-                    build job: REMOTE_JOB, parameters: deployParams
+                    // Define common parameters for Azure deploy
+                    def azureDeployParams = [
+                        string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
+                        string(name: 'PROVISION_CAII', value: 'NO'),
+                        string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
+                        string(name: 'AZURE_REGION', value: 'eastus'),
+                        string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
+                        string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
+                        string(name: 'WORKSHOP_NAME', value: azureWorkshopName),
+                        string(name: 'NUMBER_OF_WORKSHOP_USERS', value: '1'),
+                        string(name: 'WORKSHOP_USER_PREFIX', value: azureWorkshopName),
+                        password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', value: 'changeme'),
+                        string(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CDW,CAI,CDF'),
+                        string(name: 'CDW_VRTL_WAREHOUSE_SIZE', value: 'xsmall'),
+                        string(name: 'CDW_DATAVIZ_SIZE', value: 'viz-default'),
+                        string(name: 'CDE_SPARK_VERSION', value: 'AUTO'),
+                        string(name: 'CDE_VC_TIER', value: 'CORE'),
+                        string(name: 'CDE_INSTANCE_TYPE', value: 'Standard_D8s_v3'),
+                        string(name: 'CDE_INITIAL_INSTANCES', value: '1'),
+                        string(name: 'CDE_MIN_INSTANCES', value: '0'),
+                        string(name: 'CDE_MAX_INSTANCES', value: '25'),
+                        string(name: 'CAI_WS_INSTANCE_TYPE', value: 'Standard_D8s_v3'),
+                        string(name: 'CAI_MIN_INSTANCES', value: '1'),
+                        string(name: 'CAI_MAX_INSTANCES', value: '1'),
+                        booleanParam(name: 'CAI_ENABLE_GPU', value: false),
+                        string(name: 'CAI_GPU_INSTANCE_TYPE', value: 'Standard_NC4as_T4_v3'),
+                        string(name: 'CAI_MIN_GPU_INSTANCES', value: '1'),
+                        string(name: 'CAI_MAX_GPU_INSTANCES', value: '1'),
+                        string(name: 'CDF_INSTANCE_TYPE', value: ''),
+                        string(name: 'CDF_MIN_NODES', value: '3'),
+                        string(name: 'CDF_MAX_NODES', value: '3'),
+                        booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
+                        string(name: 'ACTION', value: 'provision'),  // Set action for deploy
+                        string(name: 'IMAGE_TAG', value: 'testmain'),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
+                    ]
+
+                    parallel(
+                        'AWS': {
+                            echo 'Triggering AWS deploy job...'
+                            build job: REMOTE_JOB_AWS, parameters: awsDeployParams
+                        },
+                        'Azure': {
+                            echo 'Triggering Azure deploy job...'
+                            build job: REMOTE_JOB_AZURE, parameters: azureDeployParams
+                        }
+                    )
                 }
             }
             post {
@@ -124,39 +202,99 @@ pipeline {
             }
             steps {
                 script {
-                    // Define common parameters for destroy
-                    def destroyParams = [
+                    def awsWorkshopName = "caws${env.BUILD_NUMBER}"
+                    def azureWorkshopName = "cazs${env.BUILD_NUMBER}"
+
+                    // Define common parameters for AWS destroy
+                    def awsDestroyParams = [
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'AWS_REGION', value: 'ap-southeast-1'),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
-                        string(name: 'WORKSHOP_NAME', value: "CICD${env.BUILD_NUMBER}"),
+                        string(name: 'WORKSHOP_NAME', value: awsWorkshopName),
                         string(name: 'NUMBER_OF_WORKSHOP_USERS', value: '1'),
-                        string(name: 'WORKSHOP_USER_PREFIX', value: "CICD${env.BUILD_NUMBER}"),
+                        string(name: 'WORKSHOP_USER_PREFIX', value: awsWorkshopName),
                         password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', value: 'changeme'),
-                        extendedChoice(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CML,CDW'),
+                        string(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CAI,CDW,CDF'),
                         string(name: 'CDW_VRTL_WAREHOUSE_SIZE', value: 'xsmall'),
                         string(name: 'CDW_DATAVIZ_SIZE', value: 'viz-default'),
-                        string(name: 'CDE_SPARK_VERSION', value: 'SPARK3'),
+                        string(name: 'CDE_SPARK_VERSION', value: 'AUTO'),
+                        string(name: 'CDE_VC_TIER', value: 'CORE'),
                         string(name: 'CDE_INSTANCE_TYPE', value: 'm5.2xlarge'),
                         string(name: 'CDE_INITIAL_INSTANCES', value: '1'),
-                        string(name: 'CDE_MIN_INSTANCES', value: '1'),
-                        string(name: 'CDE_MAX_INSTANCES', value: '1'),
-                        string(name: 'CML_WS_INSTANCE_TYPE', value: 'm5.2xlarge'),
-                        string(name: 'CML_MIN_INSTANCES', value: '1'),
-                        string(name: 'CML_MAX_INSTANCES', value: '1'),
-                        booleanParam(name: 'CML_ENABLE_GPU', value: false),
-                        string(name: 'CML_GPU_INSTANCE_TYPE', value: 'g4dn.xlarge'),
-                        string(name: 'CML_MIN_GPU_INSTANCES', value: '1'),
-                        string(name: 'CML_MAX_GPU_INSTANCES', value: '1'),
+                        string(name: 'CDE_MIN_INSTANCES', value: '0'),
+                        string(name: 'CDE_MAX_INSTANCES', value: '25'),
+                        string(name: 'CAI_WS_INSTANCE_TYPE', value: 'm5.2xlarge'),
+                        string(name: 'CAI_MIN_INSTANCES', value: '1'),
+                        string(name: 'CAI_MAX_INSTANCES', value: '1'),
+                        booleanParam(name: 'CAI_ENABLE_GPU', value: false),
+                        string(name: 'CAI_GPU_INSTANCE_TYPE', value: 'g4dn.xlarge'),
+                        string(name: 'CAI_MIN_GPU_INSTANCES', value: '1'),
+                        string(name: 'CAI_MAX_GPU_INSTANCES', value: '1'),
+                        string(name: 'CDF_INSTANCE_TYPE', value: ''),
+                        string(name: 'CDF_MIN_NODES', value: '3'),
+                        string(name: 'CDF_MAX_NODES', value: '3'),
+                        booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain')        
+                        string(name: 'IMAGE_TAG', value: 'testmain'),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_BUILD_BRANCH', value: "${params.BUILD_BRANCH}"),
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
 
-                    echo 'Triggering destroy job...'
-                    build job: REMOTE_JOB, parameters: destroyParams
+                    // Define common parameters for Azure destroy
+                    def azureDestroyParams = [
+                        string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
+                        string(name: 'PROVISION_CAII', value: 'NO'),
+                        string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
+                        string(name: 'AZURE_REGION', value: 'eastus'),
+                        string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
+                        string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
+                        string(name: 'WORKSHOP_NAME', value: azureWorkshopName),
+                        string(name: 'NUMBER_OF_WORKSHOP_USERS', value: '1'),
+                        string(name: 'WORKSHOP_USER_PREFIX', value: azureWorkshopName),
+                        password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', value: 'changeme'),
+                        string(name: 'ENABLE_DATA_SERVICES', value: 'CDE,CAI,CDW,CDF'),
+                        string(name: 'CDW_VRTL_WAREHOUSE_SIZE', value: 'xsmall'),
+                        string(name: 'CDW_DATAVIZ_SIZE', value: 'viz-default'),
+                        string(name: 'CDE_SPARK_VERSION', value: 'AUTO'),
+                        string(name: 'CDE_VC_TIER', value: 'CORE'),
+                        string(name: 'CDE_INSTANCE_TYPE', value: 'Standard_D8s_v3'),
+                        string(name: 'CDE_INITIAL_INSTANCES', value: '1'),
+                        string(name: 'CDE_MIN_INSTANCES', value: '0'),
+                        string(name: 'CDE_MAX_INSTANCES', value: '25'),
+                        string(name: 'CAI_WS_INSTANCE_TYPE', value: 'Standard_D8s_v3'),
+                        string(name: 'CAI_MIN_INSTANCES', value: '1'),
+                        string(name: 'CAI_MAX_INSTANCES', value: '1'),
+                        booleanParam(name: 'CAI_ENABLE_GPU', value: false),
+                        string(name: 'CAI_GPU_INSTANCE_TYPE', value: 'Standard_NC4as_T4_v3'),
+                        string(name: 'CAI_MIN_GPU_INSTANCES', value: '1'),
+                        string(name: 'CAI_MAX_GPU_INSTANCES', value: '1'),
+                        string(name: 'CDF_INSTANCE_TYPE', value: ''),
+                        string(name: 'CDF_MIN_NODES', value: '3'),
+                        string(name: 'CDF_MAX_NODES', value: '3'),
+                        booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
+                        string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
+                        string(name: 'IMAGE_TAG', value: 'testmain'),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
+                        string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
+                    ]
+
+                    parallel(
+                        'AWS': {
+                            echo 'Triggering AWS destroy job...'
+                            build job: REMOTE_JOB_AWS, parameters: awsDestroyParams
+                        },
+                        'Azure': {
+                            echo 'Triggering Azure destroy job...'
+                            build job: REMOTE_JOB_AZURE, parameters: azureDestroyParams
+                        }
+                    )
                 }
             }
             post {

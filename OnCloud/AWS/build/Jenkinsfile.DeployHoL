@@ -4,48 +4,56 @@
     parameters {
         choice(name: 'ACTION', choices: ['provision', 'destroy'], description: 'Choose whether to provision or destroy the stack')
         choice(name: 'PROVISION_KEYCLOAK', choices: ['YES', 'NO'], description: 'Choose whether to provision Keycloak Instance (YES/NO)')
-        choice(name: 'PROVISION_CAII', choices: ['NO', 'YES'], description: 'Choose whether to provision CAII Service (YES/NO)')	
+        choice(name: 'PROVISION_CAII', choices: ['NO', 'YES'], description: 'Provision CAII (YES/NO). When YES, LOCAL_MACHINE_IP cannot be 0.0.0.0/0 — use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
         password(name: 'KEYCLOAK_ADMIN_PASSWORD', defaultValue: 'admin', description: '❗❗❗(MANDATORY) Admin User Password for Keycloak')
         choice(name: 'CDP_DEPLOYMENT_TYPE', choices: ['public', 'private', 'semi-private'], description: 'Choose the CDP Deployment Type (public/private/semi-private). Default: public')
         string(name: 'AWS_REGION', defaultValue: 'ap-southeast-1', description: 'AWS Region (e.g., ap-southeast-1). Please provide a valid AWS region format (e.g., ap-southeast-1).')
-        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'IP or network range to whitelist (e.g., 172.31.x.x/32 or a subnet range). Default: 0.0.0.0/0 allows open access for all.')
+        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'IP/CIDR to whitelist. Default 0.0.0.0/0 allows all. If PROVISION_CAII=YES, 0.0.0.0/0 is rejected — use Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
         string(name: 'WORKSHOP_NAME', defaultValue: 'pseworkshop', description: 'Workshop Name (5-12 characters long, no underscores allowed)')
         string(name: 'NUMBER_OF_WORKSHOP_USERS', defaultValue: '1', description: 'Number of Workshop Users')
         string(name: 'WORKSHOP_USER_PREFIX', defaultValue: 'pseworkshop', description: 'Prefix for Workshop Users')
         password(name: 'WORKSHOP_USER_DEFAULT_PASSWORD', defaultValue: 'changeme', description: '❗❗❗(MANDATORY) Default password for Workshop Users')
         extendedChoice(
             name: 'ENABLE_DATA_SERVICES',
-            value: 'CDW,CML,CDE,NONE',
+            value: 'CDW,CAI,CDE,CDF,NONE',
             type: 'PT_CHECKBOX',
             description: 'Select the data services to enable. Default: NONE (No data services enabled)',
             // defaultValue: 'NONE',
             multiSelectDelimiter: ','
         )
-        string(name: 'OWNER', defaultValue: '', description: '❗❗❗(MANDATORY) Resource tag: owner (e.g. provide your name or email)')
+        string(name: 'OWNER', defaultValue: 'pse-apac@cloudera.com', description: '❗❗❗(MANDATORY) Resource tag: pse-owner (email or name). Default: pse-apac@cloudera.com. Cannot use "owner" — CDP reserves it as a default tag.')
         string(name: 'CDP_SAML_PROVIDER_LIMIT', defaultValue: '10', description: 'Maximum number of SAML providers allowed')
         string(name: 'CDP_USER_LIMIT', defaultValue: '3000', description: 'Maximum number of CDP users allowed')
         string(name: 'CDP_GROUP_LIMIT', defaultValue: '50', description: 'Maximum number of CDP groups allowed')
         string(name: 'CDW_VRTL_WAREHOUSE_SIZE', defaultValue: 'xsmall', description: 'Size of the CDW Virtual Warehouse (e.g., small, medium, large, etc.)')
         string(name: 'CDW_DATAVIZ_SIZE', defaultValue: 'viz-default', description: 'Size of the CDW Dataviz (e.g., viz-small, viz-default)')
-        choice(name: 'CDE_SPARK_VERSION', choices: ['SPARK3', 'SPARK2', 'SPARK3_2', 'SPARK3_3', 'SPARK3_5'], description: 'Choose the Spark version to deploy')
-        choice(name: 'CDE_VC_TIER', choices: ['ALLP', 'CORE'], description: 'Choose Virtual Cluster Tier Type to deploy')
+        choice(name: 'CDE_SPARK_VERSION', choices: ['AUTO', 'SPARK3_5_4', 'SPARK3_5', 'SPARK3_3', 'SPARK3_2', 'SPARK3', 'SPARK2'], description: 'AUTO (default) picks SPARK3_5_4 on Datalake 7.3+. Avoid SPARK3 on 7.3.x — it resolves to Spark 3.2.x and fails runtime catalog lookup for create-vc.')
+        choice(name: 'CDE_VC_TIER', choices: ['CORE', 'ALLP'], description: 'Virtual cluster tier (default CORE: HoL 1-1 on Core pool; ALLP uses All Purpose pool)')
         string(name: 'CDE_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CDE Instance type (e.g., m5.2xlarge)')
         string(name: 'CDE_INITIAL_INSTANCES', defaultValue: '1', description: 'Initial number of CDE instances to deploy')
         string(name: 'CDE_MIN_INSTANCES', defaultValue: '0', description: 'Minimum number of CDE instances to scale down to')
         string(name: 'CDE_MAX_INSTANCES', defaultValue: '25', description: 'Maximum number of CDE instances to scale up to')
-        string(name: 'CML_WS_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CML Workspace Instance Type')
-        string(name: 'CML_MIN_INSTANCES', defaultValue: '1', description: 'Minimum number of CML instances')
-        string(name: 'CML_MAX_INSTANCES', defaultValue: '10', description: 'Maximum number of CML instances')
-        booleanParam(name: 'CML_ENABLE_GPU', defaultValue: false, description: 'Enable GPU instances for CML, if supported by the AWS region')
-        string(name: 'CML_GPU_INSTANCE_TYPE', defaultValue: 'g4dn.xlarge', description: 'CML GPU instance type')
-        string(name: 'CML_MIN_GPU_INSTANCES', defaultValue: '0', description: 'Minimum number of GPU instances for CML')
-        string(name: 'CML_MAX_GPU_INSTANCES', defaultValue: '10', description: 'Maximum number of GPU instances for CML')
+        string(name: 'CAI_WS_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CAI Workspace Instance Type')
+        string(name: 'CAI_MIN_INSTANCES', defaultValue: '1', description: 'Minimum number of CAI instances')
+        string(name: 'CAI_MAX_INSTANCES', defaultValue: '10', description: 'Maximum number of CAI instances')
+        booleanParam(name: 'CAI_ENABLE_GPU', defaultValue: false, description: 'Enable GPU instances for CAI, if supported by the AWS region')
+        string(name: 'CAI_GPU_INSTANCE_TYPE', defaultValue: 'g4dn.xlarge', description: 'CAI GPU instance type')
+        string(name: 'CAI_MIN_GPU_INSTANCES', defaultValue: '0', description: 'Minimum number of GPU instances for CAI')
+        string(name: 'CAI_MAX_GPU_INSTANCES', defaultValue: '10', description: 'Maximum number of GPU instances for CAI')
+        string(name: 'CDF_INSTANCE_TYPE', defaultValue: '', description: 'Optional CDF Kubernetes node instance type. Leave empty so CDP chooses the default. Setting a value requires permission to set custom DataFlow instance types.')
+        string(name: 'CDF_MIN_NODES', defaultValue: '3', description: 'Minimum number of CDF Kubernetes nodes (minimum 3)')
+        string(name: 'CDF_MAX_NODES', defaultValue: '10', description: 'Maximum number of CDF Kubernetes nodes')
+        booleanParam(name: 'CDF_USE_PUBLIC_LB', defaultValue: true, description: 'Expose CDF with a public load balancer')
         string(name: 'DOMAIN', defaultValue: 'example.com', description: '❗❗❗(MANDATORY) Route53 registered domain or subdomain (e.g., sub.example.com)')
         string(name: 'HOSTEDZONEID', defaultValue: 'Example: ZCLOUDERAPSEAPACTEAM1', description: '❗❗❗(MANDATORY) Route53 Hosted Zone Id for the above domain')
         string(name: 'DATALAKE_VERSION', defaultValue: '7.3.2', description: 'The Datalake runtime version to be used (e.g., 7.2.18)')
         choice(name: 'DELETE_WORKDIR', choices: ['false', 'true'], description: 'Choose whether to delete the work directory after the job completes')
         booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
-        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag to run the automation')
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag to pull from registry when BUILD_LOCAL_IMAGE is false')
+        booleanParam(name: 'BUILD_LOCAL_IMAGE', defaultValue: false, description: 'Build image in this job from IMAGE_BUILD_BRANCH, tag with BUILD_IMAGE_TAG, and use it for provision/destroy (skips docker pull)')
+        string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testmain', description: 'Docker image tag for locally built image when BUILD_LOCAL_IMAGE is true (ignored when BUILD_LOCAL_IMAGE is false)')
+        string(name: 'IMAGE_BUILD_BRANCH', defaultValue: 'main', description: 'Git branch to checkout and build when BUILD_LOCAL_IMAGE is true')
+        string(name: 'IMAGE_BUILD_TF_QS_VER', defaultValue: 'main', description: 'TF_QUICKSTART_VERSION docker build-arg when BUILD_LOCAL_IMAGE is true')
     }
 
     options {
@@ -57,7 +65,6 @@
 
     environment {
         LANG = "C.UTF-8"
-        DOCKER_IMAGE = "clouderapartners/cdp-public-cloud-hol-provisioner:${params.IMAGE_TAG}"
         HOL_AUTO_EXEC_DIR = "/home/holautosa/HOL_AUTO_EXEC_DIR"
         CONFIG_DIR = "${HOL_AUTO_EXEC_DIR}/userconfig"
         CONFIG_FILE = "${CONFIG_DIR}/configfile"
@@ -114,13 +121,15 @@
     					printError("LOCAL_MACHINE_IP cannot be '0.0.0.0/32'. Please provide a valid IP.")
 					}
 
+                    def caiiLocalIpError = "When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be '0.0.0.0/0'. Use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32."
+
 					// Additional restriction when PROVISION_CAII is YES
 					if (params.PROVISION_CAII?.trim().equalsIgnoreCase("YES")) {
     					def ip = params.LOCAL_MACHINE_IP?.trim()
     					if (!ip) {
-        					printError("When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be empty. Please provide a valid IP.")
+        					printError("When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be empty. ${caiiLocalIpError}")
     					} else if (ip == "0.0.0.0/0") {
-        					printError("When PROVISION_CAII is YES, LOCAL_MACHINE_IP cannot be '0.0.0.0/0'. Please provide a valid IP.")
+        					printError(caiiLocalIpError)
     					}
 					}
 
@@ -192,6 +201,21 @@
             }
         }
 
+        stage('Resolve Docker Image') {
+            steps {
+                script {
+                    def imageRepo = 'clouderapartners/cdp-public-cloud-hol-provisioner'
+                    if (params.BUILD_LOCAL_IMAGE) {
+                        def tag = params.BUILD_IMAGE_TAG?.trim() ?: 'testmain'
+                        env.DOCKER_IMAGE = "${imageRepo}:${tag}"
+                    } else {
+                        def tag = params.IMAGE_TAG?.trim() ?: 'latest'
+                        env.DOCKER_IMAGE = "${imageRepo}:${tag}"
+                    }
+                }
+            }
+        }
+
         stage('Prepare Environment') {
             steps {
                 sh 'echo "Stage :: Prepare Environment"'
@@ -218,8 +242,9 @@
                     // Print the formatted list
                     echo "Selected services: ${formattedServices}"
 
-                     // Build ENV_TAGS — owner mandatory, apn-id always included
-                    def envTags = "{owner=${params.OWNER.trim()},apn-id=${env.AWS_APN_ID}}"
+                     // Build ENV_TAGS — pse-owner mandatory, apn-id always included.
+                     // Do not use "owner": CDP account default tags include it and reject overrides.
+                    def envTags = "{pse-owner=${params.OWNER.trim()},apn-id=${env.AWS_APN_ID}}"
                     
                     // Combine LOCAL_MACHINE_IP and VPN_CIDRS
                     def allCidrs = "${params.LOCAL_MACHINE_IP.trim()},${env.VPN_CIDRS.trim()}"
@@ -251,13 +276,17 @@ CDE_MAX_INSTANCES:${params.CDE_MAX_INSTANCES}
 CDE_SPARK_VERSION:${params.CDE_SPARK_VERSION}
 CDE_VC_TIER:${params.CDE_VC_TIER}
 
-CML_WS_INSTANCE_TYPE:${params.CML_WS_INSTANCE_TYPE}
-CML_MIN_INSTANCES:${params.CML_MIN_INSTANCES}
-CML_MAX_INSTANCES:${params.CML_MAX_INSTANCES}
-CML_ENABLE_GPU:${params.CML_ENABLE_GPU}
-CML_GPU_INSTANCE_TYPE:${params.CML_GPU_INSTANCE_TYPE}
-CML_MIN_GPU_INSTANCES:${params.CML_MIN_GPU_INSTANCES}
-CML_MAX_GPU_INSTANCES:${params.CML_MAX_GPU_INSTANCES}
+CAI_WS_INSTANCE_TYPE:${params.CAI_WS_INSTANCE_TYPE}
+CAI_MIN_INSTANCES:${params.CAI_MIN_INSTANCES}
+CAI_MAX_INSTANCES:${params.CAI_MAX_INSTANCES}
+CAI_ENABLE_GPU:${params.CAI_ENABLE_GPU}
+CAI_GPU_INSTANCE_TYPE:${params.CAI_GPU_INSTANCE_TYPE}
+CAI_MIN_GPU_INSTANCES:${params.CAI_MIN_GPU_INSTANCES}
+CAI_MAX_GPU_INSTANCES:${params.CAI_MAX_GPU_INSTANCES}
+
+${(params.CDF_INSTANCE_TYPE ?: '').trim() ? "CDF_INSTANCE_TYPE:${params.CDF_INSTANCE_TYPE.trim()}\n" : ''}CDF_MIN_NODES:${params.CDF_MIN_NODES}
+CDF_MAX_NODES:${params.CDF_MAX_NODES}
+CDF_USE_PUBLIC_LB:${params.CDF_USE_PUBLIC_LB}
 DATALAKE_VERSION:${params.DATALAKE_VERSION}
 
 DOMAIN:${params.DOMAIN}
@@ -297,7 +326,46 @@ ENV_TAGS:${envTags}
             }
         }*/
 
+        stage('Build Local Docker Image') {
+            when { expression { return params.BUILD_LOCAL_IMAGE } }
+            steps {
+                script {
+                    def branch = params.IMAGE_BUILD_BRANCH?.trim()
+                    if (!branch) {
+                        error('IMAGE_BUILD_BRANCH is required when BUILD_LOCAL_IMAGE is enabled.')
+                    }
+                    def dockerfileDir = 'OnCloud/AWS/build'
+                    def tfQsVer = params.IMAGE_BUILD_TF_QS_VER?.trim() ?: 'main'
+                    def buildImageTag = env.DOCKER_IMAGE.tokenize(':')[-1]
+
+                    echo "Building image from branch ${branch} -> ${env.DOCKER_IMAGE}"
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "refs/heads/${branch}"]],
+                        userRemoteConfigs: [[url: 'https://github.com/cloudera/PSEAutomation.git']],
+                        extensions: [
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'CloneOption', depth: 1, shallow: true, noTags: false, honorRefspec: true]
+                        ]
+                    ])
+                    sh """
+                        set -e
+                        test -f ${dockerfileDir}/Dockerfile
+                        HOL_GIT_REVISION=\$(git rev-parse HEAD)
+                        echo "Docker build HOL_GIT_REVISION=\${HOL_GIT_REVISION}"
+                        docker build --platform linux/amd64 \\
+                          --build-arg TF_QUICKSTART_VERSION=${tfQsVer} \\
+                          --build-arg HOL_GIT_REVISION=\${HOL_GIT_REVISION} \\
+                          -t ${env.DOCKER_IMAGE} ${dockerfileDir}
+                        docker images | grep '${buildImageTag}' || true
+                    """
+                    echo "Using locally built image: ${env.DOCKER_IMAGE}"
+                }
+            }
+        }
+
         stage('Pull Docker Image') {
+            when { expression { return !params.BUILD_LOCAL_IMAGE } }
             steps {
                 sh 'echo "Stage :: Pull Docker Image"'
                 script {
@@ -307,150 +375,120 @@ ENV_TAGS:${envTags}
             }
         }
 
+        stage('Assign CDP env admin roles for pipeline') {
+            steps {
+                script {
+                    def assignScriptCandidates = [
+                        "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/assignCdpEnvAdminRoles.sh",
+                        "${env.WORKSPACE}/jenkins/assignCdpEnvAdminRoles.sh",
+                        "jenkins/assignCdpEnvAdminRoles.sh"
+                    ]
+                    def assignScript = assignScriptCandidates.find { fileExists(it) }
+                    if (!assignScript) {
+                        echo 'WARN: assignCdpEnvAdminRoles.sh not found — skipping pre-run role assignment'
+                        return
+                    }
+                    sh """
+                        set -e
+                        chmod +x '${assignScript}'
+                        WORKSHOP_NAME='${params.WORKSHOP_NAME}' \
+                        BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' \
+                        CDP_MACHINE_USERNAME='psejenkins' \
+                        ASSIGN_BUILD_USER=true \
+                        ASSIGN_MACHINE_USER=true \
+                        ASSIGN_CALLER=true \
+                        '${assignScript}'
+                    """
+                }
+            }
+        }
+
         stage('Run Docker Container') {
             steps {
                 sh 'echo "Stage :: Run Docker Container"'
                 script {
-                    sh "docker run --name hol-provisioner-${BUILD_NUMBER} -i -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp ${env.DOCKER_IMAGE} ${params.ACTION}"
+                    if (params.BUILD_LOCAL_IMAGE) {
+                        echo "Using locally built image: ${env.DOCKER_IMAGE}"
+                    }
+                    // Non-zero container exit (including ansible-playbook propagated via hol_enable_data_services) fails this stage.
+                    sh "docker run --name hol-provisioner-${BUILD_NUMBER} -i -e BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' -e BUILD_URL='${env.BUILD_URL ?: ''}' -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp ${env.DOCKER_IMAGE} ${params.ACTION}"
                 }
             }
         }
         stage('Check Logs for Failures') {
             steps {
                 script {
-                    // Check the container logs for failure strings
-                    sh "docker logs hol-provisioner-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log"
+                    sh "docker logs hol-provisioner-${BUILD_NUMBER} > ${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log 2>&1 || true"
                     def logOutput = readFile("${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log")
-                    // def logOutput = """
-                    // 17:37:24  fatal: [localhost]: FAILED! => {"changed": false, "error": "{'base_error': ClientError('An error occurred: failed to activate the environment (cause: unable to create cluster initial state: state validation error (cause: public load balancer selected. worker subnets should be exactly 3. got: 5)) [request-id: ] (Status Code: 500; Error Code: UNKNOWN; Service: dw; Operation: createCluster; Request ID: cbbf3c45-fb32-488c-adff-a44ac8702490;)')", "msg": "Client request error", "violations": "failed to activate the environment (cause: unable to create cluster initial state: state validation error (cause: public load balancer selected. worker subnets should be exactly 3. got: 5)) [request-id: ]"}
-                    // 03:04:32  fatal: [localhost]: FAILED! => {"changed": true, "cmd": ["cdp", "ml", "create-workspace", "--environment-name", "cicdworkshop-cdp-env", "--workspace-name", "cicdworkshop-cml-ws", "--use-public-load-balancer", "--enable-model-metrics", "--no-disable-tls", "--enable-monitoring", "--static-subdomain", "cicdworksho-cml", "--provision-k8s-request", "{\"environmentName\": \"cicdworkshop-cdp-env\", \"instanceGroups\": [{\"name\": \"default_settings\", \"instanceType\": \"m5.2xlarge\", \"rootVolume\": {\"size\": 256}, \"autoscaling\": {\"minInstances\": 1, \"maxInstances\": 1, \"enabled\": true}}]}"], "delta": "0:00:01.558565", "end": "2025-03-27 21:34:32.531632", "msg": "non-zero return code", "rc": 255, "start": "2025-03-27 21:34:30.973067", "stderr": "\\nAn error occurred: INTERNAL: Failed to create workbench: the workbench with name cicdworkshop-cml-ws in environment cicdworkshop-cdp-env already exists. Can not retry create workflow for the workbench because it is in : state (Status Code: 500; Error Code: UNKNOWN; Service: ml; Operation: createWorkspace; Request ID: 082fcc7e-dcf6-4f57-99ab-12bdfcd994e4;)", "stderr_lines": ["", "An error occurred: INTERNAL: Failed to create workbench: the workbench with name cicdworkshop-cml-ws in environment cicdworkshop-cdp-env already exists. Can not retry create workflow for the workbench because it is in : state (Status Code: 500; Error Code: UNKNOWN; Service: ml; Operation: createWorkspace; Request ID: 082fcc7e-dcf6-4f57-99ab-12bdfcd994e4;)"], "stdout": "", "stdout_lines": []}
-                    // """
-                
-                    // Initialize a list to hold error messages
+
+                    def parserCandidates = [
+                        "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/provisionFailureParser.groovy",
+                        "${env.WORKSPACE}/jenkins/provisionFailureParser.groovy",
+                        "jenkins/provisionFailureParser.groovy"
+                    ]
+                    def parserPath = parserCandidates.find { fileExists(it) }
                     def errorMessages = []
 
-                    // Match multiple occurrences of error messages
-                    def fatalPattern = ~/fatal: .*?"(?:stderr|error)": ".*?(An error occurred: .*?)"/
-                    def matcher = fatalPattern.matcher(logOutput)
-
-                    // Define fatal patterns to ignore
-                    def ignoredFatalPatterns = [
-                        ~/fatal: detected dubious ownership in repository.*/
-                    ]
-
-                    // Check for specific failure messages
-                    if (logOutput.contains('Workspace Provisioning Got Failed.')) {
-                        errorMessages.add("CML Data service provisioning failed.")
-                    } 
-                    if (logOutput.contains('Cluster Creation Got Failed.')) {
-                        errorMessages.add("CDW data service provisioning failed.")
-                    } 
-                    if (logOutput.contains('CDE Service Deletion Failed.')) {
-                        errorMessages.add("While destroying, CDE data service deletion failed.")
-                    }
-                    if (logOutput.contains('Workspace Deletion Got Failed.')) {
-                        errorMessages.add("While destroying, CML data service deletion failed.")
-                    }
-                    if (logOutput.contains('Cluster deletion failed.')) {
-                        errorMessages.add("While destroying, CDW data service deletion failed.")
+                    if (parserPath) {
+                        def failureParser = load parserPath
+                        errorMessages = failureParser.extract(logOutput)
                     }
 
-                    // Check each line for 'fatal', skipping ignored patterns
-                    def lines = logOutput.readLines()
-                    for (line in lines) {
-                        if (line.toLowerCase().contains('fatal')) {
-                            def isIgnored = ignoredFatalPatterns.any { pattern -> line ==~ pattern }
-                            if (!isIgnored) {
-                                errorMessages.add("Job failed with error code 'fatal': ${line.trim()}")
+                    def isAnsibleFailure = { String message ->
+                        def lower = (message ?: '').toLowerCase()
+                        return (lower.contains('fatal:') && (lower.contains('failed!') || lower.contains('unreachable!'))) ||
+                            lower.contains('unreachable!') ||
+                            lower.contains('ansible recap') ||
+                            (lower.contains('playbook failed') && lower.contains('full log')) ||
+                            lower.contains('data service playbooks failed') ||
+                            (lower =~ /failed=[1-9]/) ||
+                            (lower =~ /unreachable=[1-9]/)
+                    }
+                    def ansibleFailures = errorMessages.findAll { isAnsibleFailure(it) }
+                    if (ansibleFailures.isEmpty()) {
+                        logOutput.readLines().each { line ->
+                            def trimmed = line.trim()
+                            if (isAnsibleFailure(trimmed)) {
+                                ansibleFailures << trimmed
                             }
                         }
                     }
 
-                    // Extract structured fatal error messages from JSON blobs
-                    while (matcher.find()) {
-                        def errorMessage = matcher.group(1).replaceAll("\\\\n", "\n").trim() // Replace escaped \n with actual newline
-                        errorMessages.add("\nJob failed: 'FATAL': \n${errorMessage}")
-                    }
-
-                    // Print all extracted errors
-                    if (!errorMessages.isEmpty()) {
+                    if (!ansibleFailures.isEmpty()) {
                         currentBuild.result = 'FAILURE'
-                        println errorMessages.join("\n") // Separate multiple errors with a newline
-
-                        // Save error messages in build variable for use in post section
-                        currentBuild.description = errorMessages.join('\n')
-
-                        // Send an email with the error logs
-
-                        // Mark the build as failed with the error messages
+                        currentBuild.description = ansibleFailures.unique().take(10).join('\n')
+                        error(currentBuild.description)
                     }
                 }
             }
         }
         stage('Assign admin roles to builduser') {
             when {
-            expression { params.ACTION == 'provision' }
+                expression { params.ACTION == 'provision' }
             }
             steps {
-                echo 'Assigning Resorce roles'
-                script{
-                    sh '''
-                    CDP_WORKLOAD_USERNAME="${BUILD_USER_ID//_/.}"
-		            echo "CDP_WORKLOAD_USERNAME: $CDP_WORKLOAD_USERNAME"
-                    # Set your environment name
-                    CDP_ENV_NAME="$(echo "$WORKSHOP_NAME" | tr '[:upper:]' '[:lower:]')-cdp-env"
-                    echo "CDP_ENV_NAME: $CDP_ENV_NAME"
-                    # Get User CRN
-                    export CDP_USER_CRN=$(cdp iam list-users --max-items 10000 | jq --arg CDP_WORKLOAD_USERNAME "$CDP_WORKLOAD_USERNAME" \'.users[] | select(.workloadUsername==$CDP_WORKLOAD_USERNAME).userId\'| tr -d \'"\')
-                    
-                    # Get Environment CRN
-                    export CDP_ENV_CRN=$(cdp environments describe-environment --environment-name ${CDP_ENV_NAME} | jq -r .environment.crn)
-                    
-                    export RESOURCE_ROLES=(EnvironmentAdmin Owner)
-			
-                    # Function: Get Resource Role CRN from its name
-                    get_crn_resource_role () {
-                    local role_name="$1"
-                    cdp iam list-resource-roles | jq -r \
-                        --arg role "$role_name" \
-                        '.resourceRoles[] | select(.crn | endswith(":" + $role)) | .crn'
+                script {
+                    def assignScriptCandidates = [
+                        "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/assignCdpEnvAdminRoles.sh",
+                        "${env.WORKSPACE}/jenkins/assignCdpEnvAdminRoles.sh",
+                        "jenkins/assignCdpEnvAdminRoles.sh"
+                    ]
+                    def assignScript = assignScriptCandidates.find { fileExists(it) }
+                    if (!assignScript) {
+                        echo 'WARN: assignCdpEnvAdminRoles.sh not found — skipping build user role assignment'
+                        return
                     }
-                    
-                    # Assign resource roles to the user
-                    for role_name in "${RESOURCE_ROLES[@]}"; do
-                    role_crn=$(get_crn_resource_role "$role_name")
-                    
-                    if [ -z "$role_crn" ]; then
-                        echo "❌ Could not find CRN for role '$role_name'. Skipping..."
-                        continue
-                    fi
-                    
-                    echo "➡️  Assigning role '$role_name' to user '${CDP_USER_CRN}'..."
-
-                    # Temporarily disable the "exit on error" behavior
-		    set +e
-                    output=$(cdp iam assign-user-resource-role \
-                        --user "$CDP_USER_CRN" \
-                        --resource-role-crn "$role_crn" \
-                        --resource-crn "$CDP_ENV_CRN" 2>&1)
-                    exit_status=$?
-		    # Re-enable "exit on error" for the rest of the script
-		    set -e
-		    echo "check_output"
-
-                    if [ $exit_status -eq 0 ]; then
-                        echo "✅ Role '$role_name' assigned successfully."
-                    elif echo "$output" | grep -q "ALREADY_EXISTS"; then
-                        echo "ℹ️  Role '$role_name' is already assigned. Skipping..."
-                    else
-                        echo "❌ Error assigning role '$role_name':"
-                    fi
-                    done
-                    
-                    # Synchronize CDP user data
-                    cdp environments sync-all-users --environment-name "$CDP_ENV_NAME"
-                    cdp environments sync-id-broker-mappings --environment-name "$CDP_ENV_NAME"
-                    '''
+                    sh """
+                        set -e
+                        chmod +x '${assignScript}'
+                        WORKSHOP_NAME='${params.WORKSHOP_NAME}' \
+                        BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' \
+                        CDP_MACHINE_USERNAME='psejenkins' \
+                        ASSIGN_BUILD_USER=true \
+                        ASSIGN_MACHINE_USER=false \
+                        ASSIGN_CALLER=false \
+                        '${assignScript}'
+                    """
                 }
             }
         }
@@ -560,7 +598,34 @@ ENV_TAGS:${envTags}
 
         failure {
             script {
-                def errorLog = currentBuild.description ?: "Unknown error occurred."
+                def errorLog = currentBuild.description ?: ""
+                def logFile = "${WORKSPACE}/hol-provisioner-${BUILD_NUMBER}.log"
+                def containerName = env.HOL_PROVISIONER_CONTAINER ?: "hol-provisioner-${BUILD_NUMBER}"
+
+                if (!fileExists(logFile)) {
+                    sh "docker logs ${containerName} > ${logFile} 2>&1 || true"
+                }
+
+                if ((!errorLog || errorLog == "Unknown error occurred.") && fileExists(logFile)) {
+                    def parserCandidates = [
+                        "${env.WORKSPACE}/OnCloud/AWS/build/jenkins/provisionFailureParser.groovy",
+                        "${env.WORKSPACE}/jenkins/provisionFailureParser.groovy",
+                        "jenkins/provisionFailureParser.groovy"
+                    ]
+                    def parserPath = parserCandidates.find { fileExists(it) }
+                    if (parserPath) {
+                        def failureParser = load parserPath
+                        def parsedErrors = failureParser.extract(readFile(logFile))
+                        if (!parsedErrors.isEmpty()) {
+                            errorLog = parsedErrors.take(10).join('\n')
+                            currentBuild.description = errorLog
+                        }
+                    }
+                }
+
+                if (!errorLog) {
+                    errorLog = "Unknown error occurred."
+                }
 
                 env.WORKSHOP_NAME_LOWER = params.WORKSHOP_NAME.toLowerCase()
                 if (params.ACTION == 'provision') {

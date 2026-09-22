@@ -2,6 +2,209 @@
 # *************************************************************************************************************#
 # Setting required path and variables.
 
+HOL_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=hol-output.sh
+source "${HOL_LIB_DIR}/hol-output.sh"
+
+# Jenkins mounts /userconfig with a different uid than the container process.
+configure_git_for_userconfig() {
+   git config --global --add safe.directory '*' 2>/dev/null || true
+}
+
+# Keycloak IP: persist per workshop at /userconfig/.${workshop_name}/keycloak_ip.
+# Legacy /userconfig/keycloak_ip is read-only fallback during migration. Parallel Jenkins
+# workshop jobs (e.g. PollSCM AWS+Azure on one agent) share the same host /userconfig mount.
+
+hol_keycloak_ip_path() {
+   local ns="${1:-${workshop_name:-}}"
+   if [[ -z "$ns" ]]; then
+      hol_fail "workshop_name is not set (cannot resolve Keycloak IP path)"
+   fi
+   echo "/userconfig/.${ns}/keycloak_ip"
+}
+
+hol_keycloak_ip_from_terraform() {
+   local kc_tf_dir="/userconfig/.${workshop_name}/keycloak_terraform_config"
+   local ip=""
+
+   [[ -n "${workshop_name:-}" && -d "$kc_tf_dir" ]] || return 1
+   ip=$(cd "$kc_tf_dir" && terraform output -raw elastic_ip 2>/dev/null || true)
+   [[ -n "$ip" && "$ip" != "null" ]] || return 1
+   printf '%s\n' "$ip"
+}
+
+hol_save_keycloak_ip() {
+   local ip="$1"
+   local path
+
+   [[ -n "$ip" ]] || hol_fail "Cannot save empty Keycloak IP"
+   [[ -n "${workshop_name:-}" ]] || hol_fail "workshop_name is not set (cannot save Keycloak IP)"
+   path=$(hol_keycloak_ip_path)
+   mkdir -p "/userconfig/.${workshop_name}"
+   printf '%s\n' "$ip" >"$path"
+}
+
+# Order: per-workshop keycloak_ip file, legacy /userconfig/keycloak_ip, then Terraform elastic_ip.
+# Partial destroy may leave a stale IP file if Keycloak destroy failed; cdp_idp_setup_user readiness
+# check catches unreachable hosts. Successful destroy_keycloak removes the IP file and tf/ansible dirs.
+resolve_keycloak_server_ip() {
+   local mode="${1:-required}"
+   local path legacy ip
+
+   [[ -n "${workshop_name:-}" ]] || hol_fail "workshop_name is not set (cannot resolve Keycloak IP)"
+   path=$(hol_keycloak_ip_path)
+
+   if [[ -f "$path" ]]; then
+      ip=$(tr -d '[:space:]' <"$path")
+      if [[ -n "$ip" ]]; then
+         printf '%s\n' "$ip"
+         return 0
+      fi
+   fi
+
+   legacy=/userconfig/keycloak_ip
+   if [[ -f "$legacy" ]]; then
+      ip=$(tr -d '[:space:]' <"$legacy")
+      if [[ -n "$ip" ]]; then
+         hol_warn "Using legacy Keycloak IP from ${legacy}; saving per-workshop copy at ${path}"
+         hol_save_keycloak_ip "$ip"
+         printf '%s\n' "$ip"
+         return 0
+      fi
+   fi
+
+   ip=$(hol_keycloak_ip_from_terraform 2>/dev/null || true)
+   if [[ -n "$ip" ]]; then
+      hol_warn "Keycloak IP file missing — recovered from Terraform output in /userconfig/.${workshop_name}/keycloak_terraform_config"
+      hol_save_keycloak_ip "$ip"
+      printf '%s\n' "$ip"
+      return 0
+   fi
+
+   if [[ "$mode" == "optional" ]]; then
+      return 1
+   fi
+   hol_fail "Keycloak server IP not found for workshop '${workshop_name}'. Checked: $(hol_keycloak_ip_path), legacy /userconfig/keycloak_ip, and terraform output elastic_ip under /userconfig/.${workshop_name}/keycloak_terraform_config. Parallel jobs on this Jenkins agent share /userconfig; use per-workshop storage and ensure Keycloak was not destroyed for this workshop."
+}
+
+hol_remove_keycloak_ip_on_destroy() {
+   rm -f "$(hol_keycloak_ip_path)"
+}
+
+# True when per-workshop keycloak_ip or Keycloak Terraform elastic_ip output exists (provision rerun).
+# Does not probe VM liveness; cdp_idp_setup_user waits for Keycloak HTTPS before Ansible.
+hol_keycloak_already_provisioned() {
+   resolve_keycloak_server_ip optional >/dev/null 2>&1
+}
+
+hol_keycloak_users_json_path() {
+   local hol_session_name="$1"
+   echo "/tmp/$(echo "$hol_session_name" | tr '[:upper:]' '[:lower:]').json"
+}
+
+# Validates keycloak_hol_user_fetch output for the workshop report. Always run fetch on rerun;
+# hol_write_keycloak_workshop_report replaces any prior Keycloak block in the report file.
+hol_load_keycloak_report_users() {
+   local hol_session_name="$1"
+   local json_path
+
+   json_path=$(hol_keycloak_users_json_path "$hol_session_name")
+   if [[ ! -f "$json_path" ]]; then
+      hol_fail "Keycloak user export not found at ${json_path}. keycloak_hol_user_fetch did not write users (Keycloak unreachable, IDP setup failed, or fetch playbook did not run)."
+   fi
+   sample_keycloak_user1=$(jq -r '.[0].username // "n/a"' "$json_path")
+   sample_keycloak_user2=$(jq -r '.[1].username // "n/a"' "$json_path")
+}
+
+# Remove an existing Keycloak block from the workshop report (rerun-safe).
+hol_strip_keycloak_workshop_report_section() {
+   local report_path="$1"
+   local ws="$2"
+
+   [[ -f "$report_path" ]] || return 0
+   awk -v ws="$ws" '
+   BEGIN { state=0 }
+   state == 0 {
+      if ($0 ~ /^={63}$/) { hold = $0 ORS; state = 1; next }
+      printf "%s", $0 ORS
+      next
+   }
+   state == 1 {
+      if (index($0, "Keycloak Details For") && index($0, ws)) { state = 2; hold = ""; next }
+      printf "%s%s", hold, $0 ORS
+      hold = ""
+      state = 0
+      next
+   }
+   state == 2 {
+      if ($0 ~ /^={63}$/) { state = 0 }
+      next
+   }
+   ' "$report_path"
+}
+
+# Write Keycloak report section once per workshop report file (replace prior block).
+hol_write_keycloak_workshop_report() {
+   local report_path="/userconfig/${workshop_name}.txt"
+   local tmp stripped
+
+   tmp=$(mktemp)
+   if [[ -f "$report_path" ]]; then
+      stripped=$(hol_strip_keycloak_workshop_report_section "$report_path" "$workshop_name")
+      printf '%s' "$stripped" | sed -e '${/^$/d;}' >"$tmp"
+      if [[ -s "$tmp" ]]; then
+         tail -c1 "$tmp" | read -r _ || echo >>"$tmp"
+      fi
+   else
+      : >"$tmp"
+   fi
+   cat >>"$tmp" <<EOF
+===============================================================
+            Keycloak Details For ${workshop_name} HOL:           
+===============================================================
+Keycloak Server IP: ${KEYCLOAK_SERVER_IP}
+Keycloak Admin HTTPS URL: https://${workshop_name}.${domain}
+Keycloak Admin User: admin
+Keycloak Admin Password: ${keycloak__admin_password}
+Keycloak SSO HTTPS URL: https://${workshop_name}.${domain}/realms/master/protocol/saml/clients/cdp-sso
+Numbers Of Users Created: ${number_of_workshop_users}
+Sample Usernames: User1: ${sample_keycloak_user1}, User2: ${sample_keycloak_user2}
+Default Password for HOL Users: ${workshop_user_default_password} 
+UserAssignment App Admin URL: http://${KEYCLOAK_SERVER_IP}:5000/admin
+UserAssignment App Participant URL: http://${KEYCLOAK_SERVER_IP}:5000/participant
+===============================================================
+EOF
+   mv "$tmp" "$report_path"
+}
+
+wait_for_keycloak_ready() {
+   local host="${1:-}"
+   local max_attempts="${2:-90}"
+   local attempt=0 url code
+
+   if [[ -z "$host" ]]; then
+      host=$(resolve_keycloak_server_ip optional || true)
+   fi
+   [[ -z "$host" ]] && hol_fail "Keycloak host is not set for readiness check"
+
+   url="https://${host}/realms/master/protocol/saml/descriptor"
+   hol_step "Waiting for Keycloak HTTPS (${host}) — up to $((max_attempts * 10 / 60)) min..."
+
+   while [[ $attempt -lt $max_attempts ]]; do
+      code=$(curl -sk --connect-timeout 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || echo "000")
+      if [[ "$code" == "200" ]]; then
+         hol_ok "Keycloak is ready"
+         return 0
+      fi
+      attempt=$((attempt + 1))
+      if [[ $((attempt % 6)) -eq 0 ]]; then
+         hol_info "Keycloak not ready yet (HTTP ${code}) — waited $((attempt * 10))s"
+      fi
+      sleep 10
+   done
+   hol_fail "Keycloak did not become ready on ${host} within $((max_attempts * 10 / 60)) minutes"
+}
+
 #TF_QUICKSTART_VERSION=v0.8.0
 USER_CONFIG_FILE="/userconfig/configfile"
 KEYGEN_TF_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/keypair_gen
@@ -11,23 +214,43 @@ DS_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/cdp-data-services
 ENHANCEMENTS_TF_CONFIG_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/aws_enhancements/
 CAII_SCRIPTS_DIR=$HOME_DIR/cdp-wrkshps-quickstarts/CAII
 USER_ACTION=$1
+
+# ENABLE_DATA_SERVICES config (CSV, optional brackets). Must not use the name
+# enable_data_services — hol_enable_data_services() is the provision entrypoint.
+HOL_ENABLE_DATA_SERVICES=""
+
+hol_trim() {
+   local s="$1"
+   s="${s#"${s%%[![:space:]]*}"}"
+   s="${s%"${s##*[![:space:]]}"}"
+   printf '%s' "$s"
+}
+
+hol_normalize_data_service_token() {
+   local token
+   token=$(hol_trim "$1" | tr '[:upper:]' '[:lower:]')
+   case "$token" in
+   cml) printf '%s' "cai" ;;
+   none | "") printf '%s' "" ;;
+   *) printf '%s' "$token" ;;
+   esac
+}
+
+hol_enabled_data_services_csv() {
+   local raw="${HOL_ENABLE_DATA_SERVICES:-}"
+   raw="${raw//[/}"
+   raw="${raw//]/}"
+   raw=$(echo "$raw" | tr '[:upper:]' '[:lower:]')
+   printf '%s' "$raw"
+}
+
 validating_variables() {
-   echo
-   echo "                    ---------------------------------------------------------------------                "
-   echo "                    Validating the Configfile and Verifying the Provided Input Parameters                "
-   echo "                    ---------------------------------------------------------------------                "
-   echo
+   hol_subsection "Validating configfile & input parameters" "📋"
    sleep 10
    if [ ! -f "/userconfig/configfile" ]; then
-      echo "=================================================================================="
-      echo "FATAL: Not able to find Config File ('configfile') inside /userconfig folder.
-   Please make sure you have mounted the local directory using -v flag and you
-   have created a file by name 'configfile' without any file extension like '.txt'.
-   if you are running docker on windows then create the folder inside your
-   'C:/Users/<Your_Windows_User_Name>/' and try again.
-   Exiting......"
-      echo "=================================================================================="
-      exit 9999 # die with error code 9999
+      hol_fail "Config file 'configfile' not found in /userconfig.
+Please mount your config directory with -v and create a file named 'configfile' (no extension).
+On Windows, use C:/Users/<Your_User>/ and try again." 9999
    fi
    # Cleaning up 'configfile' to remove ^M characters.
    sed -i 's/^M//g' $USER_CONFIG_FILE
@@ -57,7 +280,7 @@ validating_variables() {
          "DOMAIN"
          "HOSTEDZONEID"
       )
-      echo "Provision_keycloak: $provision_keycloak"
+      hol_kv "Provision Keycloak" "$provision_keycloak"
       # Conditionally add Keycloak keys based on PROVISION_KEYCLOAK
       if [[ "$provision_keycloak" == "yes" ]]; then
          REQUIRED_KEYS+=(
@@ -70,21 +293,17 @@ validating_variables() {
             # Conditionally validate LOCAL_MACHINE_IP for CAII
       if [[ "$provision_caii" == "yes" ]]; then
          if [[ "$local_ip" == "0.0.0.0/0" ]]; then
-            echo "=================================================================================="
-            echo "FATAL: LOCAL_MACHINE_IP cannot be '0.0.0.0/0' when PROVISION_CAII is set to 'yes'."
-            echo "Please update the 'configfile' and provide a more restrictive IP or CIDR range."
-            echo "=================================================================================="
-            exit 1
+            hol_fail "LOCAL_MACHINE_IP cannot be '0.0.0.0/0' when PROVISION_CAII is 'yes'. Provide a restrictive IP or CIDR in configfile."
          fi
       fi
 
 
       # Check if user-provided config file exists
       if [ ! -f "$USER_CONFIG_FILE" ]; then
-         echo -e "\nUser config file not found :: $USER_CONFIG_FILE\n"
+         hol_warn "User config file not found: $USER_CONFIG_FILE"
          return 1
       else
-         echo -e "\nVerify Configfile Is Present ..... Passed"
+         hol_check_pass "Configfile present"
       fi
 
       # Function to check if a key exists in the config file
@@ -111,43 +330,36 @@ validating_variables() {
 
       # Report missing keys
       if [ ${#MISSING_KEYS[@]} -gt 0 ]; then
-         echo -e "\nThe following keys are missing in the user config file:"
+         hol_warn "Missing keys in configfile:"
          for key in "${MISSING_KEYS[@]}"; do
-            echo "- $key"
+            hol_kv "missing" "$key"
          done
-         echo -e "Please update the 'configfile' and try again...\n"
       fi
 
       # Report keys with empty values
       if [ ${#EMPTY_VALUES[@]} -gt 0 ]; then
-         echo -e "\nThe following keys have empty values in the user config file:"
+         hol_warn "Empty values in configfile:"
          for key in "${EMPTY_VALUES[@]}"; do
-            echo "- $key"
+            hol_kv "empty" "$key"
          done
-         echo -e "Please update the 'configfile' and try again...\n"
       fi
 
       # Exising on missing keys
       if [ ${#MISSING_KEYS[@]} -gt 0 ] || [ ${#EMPTY_VALUES[@]} -gt 0 ]; then
-         echo "========================================================================================="
-         echo "EXITING......               "
-         echo "========================================================================================="
-         exit 1
+         hol_fail "Configfile validation failed. Update configfile and try again."
       fi
 
       #workshop_name variable to validate
       validate_workshop_name() {
          if [[ ! "$workshop_name" =~ ^[a-z0-9-]+$ || ${#workshop_name} -gt 12 ]]; then
-            echo "Error: workshop_name must be 12 characters or less and consist only of lowercase letters, numbers, and hyphens (-)."
-            exit 1
+            hol_fail "workshop_name must be 12 characters or less and use only lowercase letters, numbers, and hyphens."
          fi
       }
       validate_datalake_version() {
          if [[ -z "$datalake_version" || "$datalake_version" == "latest" || "$datalake_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             return 0 # Valid value
          else
-            echo "Error: Valid values for datalake_version are 'latest' or a semantic version (e.g., 7.2.17)."
-            return 1 # Invalid value
+            hol_fail "datalake_version must be 'latest' or a semantic version (e.g., 7.2.17)."
          fi
       }
       validate_workshop_name
@@ -191,26 +403,13 @@ validating_variables() {
             if [[ "$value" == "public" || "$value" == "private" || "$value" == "semi-private" ]]; then
                deployment_template=$value
             else
-               echo "=================================================================================="
-               echo "FATAL: Invalid value for CDP Deployment Type. The allowed values are:
-               public (* all in lowercase *)
-               private (* all in lowercase *)
-               semi-private (* all in lowercase and one hyphen (-) *)
-
-               ****Exiting****
-               Please update the 'configfile' and try again."
-               echo "=================================================================================="
-               exit 9999
+               hol_fail "Invalid CDP_DEPLOYMENT_TYPE '${value}'. Allowed: public, private, semi-private." 9999
             fi
             ;;
          WORKSHOP_NAME)
             case $value in
             *_*)
-               echo "=================================================================================="
-               echo "FATAL: The value for Workshop Name parameter can not have underscore ('_').
-   Please update the value in 'configfile' and try again."
-               echo "=================================================================================="
-               exit 1
+               hol_fail "WORKSHOP_NAME cannot contain underscores. Update configfile and try again."
                ;;
             *)
                workshop_name=$(echo "$value" | tr '[:upper:]' '[:lower:'])
@@ -229,20 +428,14 @@ validating_variables() {
          # New domain and hostedzoneid fields
          DOMAIN)
             if [[ -z "$value" || ! "$value" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-               echo "=================================================================================="
-               echo "FATAL: Invalid value for DOMAIN. Please provide a valid domain name."
-               echo "=================================================================================="
-               exit 1
+               hol_fail "Invalid DOMAIN value. Provide a valid domain name in configfile."
             else
                domain=$(echo $value | tr '[:upper:]' '[:lower:]')
             fi
             ;;
          HOSTEDZONEID)
             if [[ -z "$value" || ! "$value" =~ ^[A-Z0-9]{0,32}$ ]]; then
-               echo "=================================================================================="
-               echo "FATAL: Invalid value for HOSTEDZONEID. Hosted Zone ID should be in the format: ZXXXXXXXXX"
-               echo "=================================================================================="
-               exit 1
+               hol_fail "Invalid HOSTEDZONEID. Use Route53 format: ZXXXXXXXXX"
             else
                hostedzoneid=$(echo $value | tr '[:lower:]' '[:upper:]')
             fi
@@ -257,7 +450,7 @@ validating_variables() {
             local_ip=$value
             ;;
          ENABLE_DATA_SERVICES)
-            enable_data_services=$value
+            HOL_ENABLE_DATA_SERVICES=$value
             ;;
          CDW_VRTL_WAREHOUSE_SIZE)
             cdw_vrtl_warehouse_size=$(echo $value | tr '[:upper:]' '[:lower:]')
@@ -266,7 +459,7 @@ validating_variables() {
             cdw_dataviz_size=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
          CDE_INSTANCE_TYPE)
-            cde_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+            cde_instance_type="$value"
             ;;
          CDE_INITIAL_INSTANCES)
             cde_initial_instances=$value
@@ -283,26 +476,38 @@ validating_variables() {
          CDE_VC_TIER)
             cde_vc_tier=$value
             ;;
-         CML_WS_INSTANCE_TYPE)
-            cml_ws_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+         CAI_WS_INSTANCE_TYPE)
+            cai_ws_instance_type="$value"
             ;;
-         CML_MIN_INSTANCES)
-            cml_min_instances=$value
+         CAI_MIN_INSTANCES)
+            cai_min_instances=$value
             ;;
-         CML_MAX_INSTANCES)
-            cml_max_instances=$value
+         CAI_MAX_INSTANCES)
+            cai_max_instances=$value
             ;;
-         CML_ENABLE_GPU)
-            cml_enable_gpu=$(echo $value | tr '[:upper:]' '[:lower:]')
+         CAI_ENABLE_GPU)
+            cai_enable_gpu=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
-         CML_GPU_INSTANCE_TYPE)
-            cml_gpu_instance_type=$(echo $value | tr '[:upper:]' '[:lower:]')
+         CAI_GPU_INSTANCE_TYPE)
+            cai_gpu_instance_type="$value"
             ;;
-         CML_MIN_GPU_INSTANCES)
-            cml_min_gpu_instances=$value
+         CAI_MIN_GPU_INSTANCES)
+            cai_min_gpu_instances=$value
             ;;
-         CML_MAX_GPU_INSTANCES)
-            cml_max_gpu_instances=$value
+         CAI_MAX_GPU_INSTANCES)
+            cai_max_gpu_instances=$value
+            ;;
+         CDF_INSTANCE_TYPE)
+            cdf_instance_type="$value"
+            ;;
+         CDF_MIN_NODES)
+            cdf_min_nodes=$value
+            ;;
+         CDF_MAX_NODES)
+            cdf_max_nodes=$value
+            ;;
+         CDF_USE_PUBLIC_LB)
+            cdf_use_public_lb=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
          CDP_SAML_PROVIDER_LIMIT)
             cdp_saml_provider_limit=$value
@@ -338,11 +543,7 @@ validating_variables() {
 
    # Call the function with the user-provided config file as an argument
    check_config "$USER_CONFIG_FILE"
-   echo
-   echo "                     -------------------------------------------------------------------                 "
-   echo "                     Validated the Configfile and Verified the Provided Input Parameters                 "
-   echo "                     -------------------------------------------------------------------                 "
-   echo
+   hol_ok "Configfile validated — input parameters verified"
 }
 #--------------------------------------------------------------------------------------------------------------#
 # Function for checking .pem file.
@@ -350,15 +551,11 @@ key_pair_file() {
    USER_NAMESPACE=$workshop_name
    # Checking if SSH Keypair File exists.
    if [[ ! -f "/userconfig/$aws_key_pair.pem" ]]; then
-      echo "=================================================================================="
-      echo "FATAL: SSH Key Pair File Not Found. Please place the '$aws_key_pair.pem'
-file in your config directory and try again.
-EXITING....."
-      echo "=================================================================================="
-      exit 9999 # die with error code 9999
+      hol_fail "SSH key pair file not found: /userconfig/$aws_key_pair.pem" 9999
    else
-      echo "copying pem file to usernamespace"
+      hol_step "Copying PEM file to user namespace"
       cp -pf "/userconfig/$aws_key_pair.pem" "/userconfig/.$USER_NAMESPACE/"
+      hol_ok "SSH key pair copied"
    fi
 }
 
@@ -370,11 +567,9 @@ check_key_pair() {
       # If keypair is empty, check if it's already generated and stored internally
       if [[ -f "/userconfig/.$USER_NAMESPACE/keypair_gen/${workshop_name}-keypair.pem" ]]; then
          export aws_key_pair=${workshop_name}-keypair
-         echo -e "\nUsing previously generated keypair: $aws_key_pair"
+         hol_ok "Using previously generated keypair: $aws_key_pair"
       else
-         echo "=================================================================================="
-         echo "Info: No AWS Key Pair provided. A new key pair will be generated via automation."
-         echo "=================================================================================="
+         hol_info "No AWS key pair provided — generating a new keypair"
          generate_keypair
       fi
    fi
@@ -394,44 +589,45 @@ check_key_pair() {
 #---------------------------------------------------------------------------------------------------------------------#
 # Function to verify AWS pre-requisites
 aws_prereq() {
-   vpc_limit=$(aws service-quotas get-service-quota \
-      --service-code vpc \
-      --output json \
-      --region $aws_region \
-      --quota-code L-F678F1CE | jq -r '.[]["Value"]' | cut -d'.' -f1)
-
-   vpc_used=$(aws ec2 describe-vpcs --output json --region $aws_region | jq -r '.[] | length')
-   echo -e "\nCurrent VPC count: $vpc_used"
-
-   if [ $vpc_limit -gt $vpc_used ]; then
-      echo -e "Check Available VPC ..... Passed"
+   local cdp_env_name="${workshop_name}-cdp-env"
+   # Only skip VPC quota on rerun when the CDP environment already exists (VPC was
+   # created with it). Partial-failure reruns may still need EIP/S3/other checks below.
+   if cdp environments describe-environment --environment-name "$cdp_env_name" >/dev/null 2>&1; then
+      hol_skip "CDP environment '${cdp_env_name}' already exists — skipping VPC quota check only"
+      hol_check_info "Continuing Elastic IP and S3 quota checks for partial-failure rerun"
    else
-      echo
-      echo "************************************************************************************************************************************************************"
-      echo "* Fatal !! Can't Continue: The VPC limit has been reached in the $aws_region region. Either select any other region in 'configfile' or remove unused VPC's *"
-      echo "************************************************************************************************************************************************************"
-      exit
+      vpc_limit=$(aws service-quotas get-service-quota \
+         --service-code vpc \
+         --output json \
+         --region $aws_region \
+         --quota-code L-F678F1CE | jq -r '.[]["Value"]' | cut -d'.' -f1)
+
+      vpc_used=$(aws ec2 describe-vpcs --output json --region $aws_region | jq -r '.[] | length')
+      hol_check_info "VPC count in ${aws_region}: ${vpc_used}/${vpc_limit}"
+
+      if [ $vpc_limit -gt $vpc_used ]; then
+         hol_check_pass "VPC quota available"
+      else
+         hol_quota_fail "VPC limit reached in ${aws_region}. Choose another region or remove unused VPCs."
+      fi
    fi
+
    eip_limit=$(aws service-quotas get-service-quota \
       --service-code ec2 \
       --output json \
       --region $aws_region \
       --quota-code L-0263D0A3 | jq -r '.[]["Value"]' | cut -d'.' -f1)
    eip_used=$(aws ec2 describe-addresses --output json --region $aws_region | jq -r '.[] | length')
-   echo -e "\nCurrent ElasticIP count: $eip_used"
+   hol_check_info "Elastic IP count in ${aws_region}: ${eip_used} (need 5 free)"
 
    if [[ $(($eip_limit - $eip_used)) -ge 5 ]]; then
-      echo -e "Check Available EIP ..... Passed"
+      hol_check_pass "Elastic IP quota available"
    else
-      echo
-      echo "*************************************************************************************************************************************************************************************************"
-      echo "* Fatal !! Can't Continue: There are not enough free Elastic IP's available in the $aws_region region. Either select any other region in 'configfile' or release unused EIPs in $aws_region     *"
-      echo "*************************************************************************************************************************************************************************************************"
-      exit
+      hol_quota_fail "Not enough free Elastic IPs in ${aws_region}. Choose another region or release unused EIPs."
    fi
    # Check current bucket count
    bucket_count=$(aws s3api list-buckets --query "Buckets | length(@)" --output text)
-   echo -e "\nCurrent S3 bucket count: $bucket_count"
+   hol_check_info "S3 bucket count: ${bucket_count}"
 
    remaining_buckets=$((100 - bucket_count))
 
@@ -442,17 +638,13 @@ aws_prereq() {
       if [ $? -eq 0 ]; then
          aws s3api delete-bucket --bucket $bucket_name --region us-east-1
          if [ $? -eq 0 ]; then
-            echo -e "Check Available S3 Bucket ..... Passed"
+            hol_check_pass "S3 bucket quota available"
          fi
       else
-         echo
-         echo "************************************************************************************************************************************************************"
-         echo "* Fatal !! Can't Continue: The S3 bucket limit has been reached on your AWS account. Either increase quota or remove unused S3 Buckets *"
-         echo "************************************************************************************************************************************************************"
-         exit 1
+         hol_quota_fail "S3 bucket limit reached. Increase quota or remove unused buckets."
       fi
    else
-      echo -e "Check Available S3 Bucket ..... Passed"
+      hol_check_pass "S3 bucket quota available"
    fi
 }
 #---------------------------------------------------------------------------------------------------------------------#
@@ -471,7 +663,7 @@ check_aws_sg_exists() {
 #---------------------------------------------------------------------------------------------------------------------#
 # Function to verify CDP pre-requisites i.e. num_of_grps and num_of_saml_prvdrs
 cdp_prereq() {
-   echo -e "\n               ==========================Initializing Parameter Values for CDP limits=========================="
+   hol_subsection "Checking CDP account limits" "📊"
    # echo "  cdp_group_limit: $cdp_group_limit"
    # Default Values
    DEFAULT_CDP_SAML_PROVIDER_LIMIT=10
@@ -484,83 +676,54 @@ cdp_prereq() {
    export cdp_group_limit="${cdp_group_limit:-$DEFAULT_CDP_GROUP_LIMIT}"
 
    # Print Assigned Values for CDP_limits
-   echo "cdp_saml_provider_limit: $cdp_saml_provider_limit"
-   echo "cdp_user_limit: $cdp_user_limit"
-   echo "cdp_group_limit: $cdp_group_limit"
+   hol_kv "SAML provider limit" "$cdp_saml_provider_limit"
+   hol_kv "User limit" "$cdp_user_limit"
+   hol_kv "Group limit" "$cdp_group_limit"
 
    # Check current CDP IAM Groups count
    cdp_group_count=$(cdp iam list-groups | jq -r '.groups[].groupName' | wc -l)
-   echo -e "\nCurrent CDP Groups count: $cdp_group_count"
+   hol_check_info "CDP groups: ${cdp_group_count} (limit ${cdp_group_limit})"
 
    remaining_groups=$(($cdp_group_limit - $cdp_group_count))
    if [ "$remaining_groups" -lt 0 ]; then
-      echo
-      echo "************************************************************************************************************************************************************"
-      echo "* The current group count exceeds the default quota. Kindly provide the correct CDP_GROUP_LIMIT to continue. *"
-      echo "************************************************************************************************************************************************************"
-      exit 1
-
+      hol_quota_fail "Group count exceeds CDP_GROUP_LIMIT (${cdp_group_limit}). Increase CDP_GROUP_LIMIT in configfile."
    elif [ "$remaining_groups" -lt 2 ]; then
-      echo
-      echo "************************************************************************************************************************************************************"
-      echo "* Fatal !! Can't Continue: The CDP IAM Group count limit has been reached on your CDP account. Either increase quota or remove unused CDP IAM Groups *"
-      echo "************************************************************************************************************************************************************"
-      exit 1
+      hol_quota_fail "CDP IAM group limit reached. Increase quota or remove unused groups."
    else
-      echo -e "Check CDP IAM Group Count ..... Passed"
+      hol_check_pass "CDP IAM group quota available"
    fi
 
    # Check current CDP IAM Users count
    cdp_user_count=$(cdp iam list-users --max-items 10000 | jq -r '.users[].userId' | wc -l)
-   echo -e "\nCurrent CDP Users count: $cdp_user_count"
-   echo -e "Number of Workshop Users count: $number_of_workshop_users"
+   hol_check_info "CDP users: ${cdp_user_count} (limit ${cdp_user_limit}, workshop users ${number_of_workshop_users})"
 
    remaining_users=$(($cdp_user_limit - $cdp_user_count))
-   #echo -e "Number of Remaining Users count: $remaining_users"
    if [ "$remaining_users" -lt 0 ]; then
-      echo
-      echo "************************************************************************************************************************************************************"
-      echo "* The current user count exceeds the default quota. Kindly provide the correct CDP_USER_LIMIT to continue. *"
-      echo "************************************************************************************************************************************************************"
-      exit 1
-
+      hol_quota_fail "User count exceeds CDP_USER_LIMIT (${cdp_user_limit}). Increase CDP_USER_LIMIT in configfile."
    elif [ "$number_of_workshop_users" -gt "$remaining_users" ]; then
-      echo
-      echo "************************************************************************************************************************************************************"
-      echo "* Fatal !! Can't Continue: The CDP IAM Users count limit has been reached on your CDP account. Either increase quota or remove unused CDP IAM Users *"
-      echo "************************************************************************************************************************************************************"
-      exit 1
+      hol_quota_fail "Not enough CDP user quota for ${number_of_workshop_users} workshop users."
    else
-      echo -e "Check CDP IAM Users Count ..... Passed"
+      hol_check_pass "CDP IAM user quota available"
    fi
 
    # Check current CDP SAML Providers count
    cdp_saml_provider_count=$(cdp iam list-saml-providers | jq -r '.samlProviders[].samlProviderName' | wc -l)
-   echo -e "\nCurrent CDP SAML Identity Provider (IdP) count: $cdp_saml_provider_count"
+   hol_check_info "CDP SAML providers: ${cdp_saml_provider_count} (limit ${cdp_saml_provider_limit})"
 
    remaining_saml=$(($cdp_saml_provider_limit - $cdp_saml_provider_count))
 
    if [ "$remaining_saml" -lt 0 ]; then
-      echo
-      echo "************************************************************************************************************************************************************"
-      echo "* The current samlProviders count exceeds the default quota. Kindly provide the correct CDP_SAML_PROVIDER_LIMIT to continue. *"
-      echo "************************************************************************************************************************************************************"
-      exit 1
-
+      hol_quota_fail "SAML provider count exceeds CDP_SAML_PROVIDER_LIMIT (${cdp_saml_provider_limit})."
    elif [ "$remaining_saml" -eq 0 ]; then
-      echo
-      echo "************************************************************************************************************************************************************"
-      echo "* Fatal !! Can't Continue: The CDP SAML Providers count limit has been reached on your CDP account. Either increase quota or remove unused CDP SAML Providers *"
-      echo "************************************************************************************************************************************************************"
-      exit 1
+      hol_quota_fail "CDP SAML provider limit reached. Increase quota or remove unused providers."
    else
-      echo -e "Check CDP SAML Identity Providers (IdP) Count ..... Passed"
+      hol_check_pass "CDP SAML provider quota available"
    fi
 }
 #-------------------------------------------------------------------------------------------------#
 # Function to provision EC2 Instance for Keycloak
 generate_keypair() {
-   echo -e "\n               ==============================Generating keypair if not exists ========================================="
+   hol_subsection "Generating keypair (if needed)" "🔑"
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
 
@@ -586,7 +749,7 @@ generate_keypair() {
 }
 
 destroy_keypair() {
-   echo -e "\n               ==============================Destroying generated keypair========================================="
+   hol_subsection "Destroying generated keypair" "🔑"
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/keypair_gen
    terraform init
@@ -604,7 +767,7 @@ destroy_keypair() {
 }
 
 setup_keycloak_ec2() {
-   echo -e "\n               ==============================Provisioning Keycloak=========================================\n"
+   hol_banner "Provisioning Keycloak" "🔐"
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
 
@@ -624,17 +787,17 @@ setup_keycloak_ec2() {
    # CERT_EMAIL=admin@$domain     # Email for Let's Encrypt (e.g., admin@example.com)
    # Check if required variables are provided
    if [[ -z "$workshop_name" || -z "$domain" || -z "$hostedzoneid" ]]; then
-      echo "Missing Values for required parameters for SSL Certs"
-      exit 1
+      hol_fail "Missing workshop_name, domain, or hostedzoneid for SSL certificate generation."
    fi
    # Derived Variables
    SUBDOMAIN="$workshop_name.$domain"
-   echo "=== Subdomain: $SUBDOMAIN for HostedZoneId: $hostedzoneid ==="
+   hol_kv "Subdomain" "$SUBDOMAIN"
+   hol_kv "Hosted Zone ID" "$hostedzoneid"
    CERT_PATH="/etc/letsencrypt/live/$domain"
-   echo "=== Generating Wildcard SSL Certificates ==="
+   hol_subsection "Generating wildcard SSL certificates" "🔒"
    # Install Certbot if not installed
    if ! command -v certbot &>/dev/null; then
-      echo "Certbot not found. Installing..."
+      hol_step "Installing certbot..."
       export DEBIAN_FRONTEND=noninteractive
       apt-get update >/dev/null 2>&1 && apt-get install -y certbot python3-certbot-dns-route53 >/dev/null 2>&1
    fi
@@ -643,7 +806,7 @@ setup_keycloak_ec2() {
    mkdir -p $SSL_MOUNT_PATH
    # Check if certificates are already generated for the same domain name
    if [[ ! -f "$SSL_MOUNT_PATH/fullchain.pem" && ! -f "$SSL_MOUNT_PATH/privkey.pem" ]]; then
-      echo "SSL certificates doesn't exists. Starting certs generation process for Wildcard Domain: *.$domain..."
+      hol_step "Generating SSL certificates for *.$domain..."
       # Generate Wildcard SSL Certificates
       certbot certonly \
          --dns-route53 \
@@ -653,13 +816,12 @@ setup_keycloak_ec2() {
          -m "admin@$domain"
       # Check if certificates were generated successfully
       if [[ ! -f "$CERT_PATH/fullchain.pem" || ! -f "$CERT_PATH/privkey.pem" ]]; then
-         echo "Error: SSL certificates not generated. Exiting."
-         exit 1
+         hol_fail "SSL certificate generation failed for *.$domain"
       fi
-      echo "SSL certificates successfully generated for *.$domain"
+      hol_ok "SSL certificates generated for *.$domain"
       for file in /etc/letsencrypt/archive/$domain/*1.pem; do cp -v "$file" "$SSL_MOUNT_PATH/$(basename "$file" 1.pem).pem"; done
    else
-      echo "SSL certificates already exists. Skipping certs generation process for Wildcard Domain: *.$domain..."
+      hol_skip "SSL certificates already exist for *.$domain"
    fi
 
    # Encode SSL Certificates in Base64 (for Terraform user_data)
@@ -671,47 +833,52 @@ setup_keycloak_ec2() {
    #local sg_name="$1"
    local sg_name="$workshop_name-keyc-sg"
 
-   echo -e "\n=== Running Terraform ===\n" 
+   hol_subsection "Running Terraform for Keycloak" "🏗️"
    # Run Terraform to provision Keycloak instance
    if check_aws_sg_exists "$sg_name"; then
-      echo "EC2 Security Group with the same name already exists. Updating Security Group name to $sg_name-$workshop_name-sg"
+      hol_warn "Security group '$sg_name' exists — using '$sg_name-$workshop_name-sg'"
       sg_name="$sg_name-$workshop_name"
    fi
 
    terraform init
-   # Extract only the first IP for Keycloak (admin access only)
-   kc_ip=$(echo "$local_ip" | cut -d',' -f1)
-
-   terraform apply -auto-approve \
-      -var "workshop_name=$workshop_name" \
-      -var "local_ip=$kc_ip" \
-      -var "instance_keypair=$aws_key_pair" \
-      -var "aws_region=$aws_region" \
-      -var "domain=$domain" \
-      -var "wildcard_fullchain=$FULLCHAIN" \
-      -var "wildcard_privkey=$PRIVKEY" \
-      -var "kc_security_group=$sg_name" \
-      -var "keycloak_admin_password=$keycloak__admin_password"
-
-   RETURN=$?
-   if [ $RETURN -eq 0 ]; then
-      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip)
-      echo "Adding Keycloak instance IP to userconfig/keycloak_ip"
-      echo "$KEYCLOAK_SERVER_IP" >/userconfig/keycloak_ip
-      cat /userconfig/keycloak_ip
-      echo "Keycloak instance IP added to userconfig/keycloak_ip"
+   if terraform state list 2>/dev/null | grep -q 'aws_instance.keycloak-server'; then
+      hol_skip "Keycloak EC2 already exists in Terraform state — skipping apply"
+      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip 2>/dev/null || true)
+      if [[ -n "$KEYCLOAK_SERVER_IP" ]]; then
+         hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
+         hol_kv "Keycloak instance IP" "$KEYCLOAK_SERVER_IP"
+      fi
    else
-      return 1
+      # Extract only the first IP for Keycloak (admin access only)
+      kc_ip=$(echo "$local_ip" | cut -d',' -f1)
+
+      terraform apply -auto-approve \
+         -var "workshop_name=$workshop_name" \
+         -var "local_ip=$kc_ip" \
+         -var "instance_keypair=$aws_key_pair" \
+         -var "aws_region=$aws_region" \
+         -var "domain=$domain" \
+         -var "wildcard_fullchain=$FULLCHAIN" \
+         -var "wildcard_privkey=$PRIVKEY" \
+         -var "kc_security_group=$sg_name" \
+         -var "keycloak_admin_password=$keycloak__admin_password"
+
+      RETURN=$?
+      if [ $RETURN -ne 0 ]; then
+         return 1
+      fi
+      KEYCLOAK_SERVER_IP=$(terraform output -raw elastic_ip)
+      hol_step "Saving Keycloak IP to $(hol_keycloak_ip_path)"
+      hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
+      hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
    fi
 
    # Fetch the public IP of the created Keycloak instance
    if [[ -z "$KEYCLOAK_SERVER_IP" ]]; then
-      echo "Error: Unable to retrieve Keycloak instance IP. Exiting."
-      exit 1
+      hol_fail "Unable to retrieve Keycloak instance IP after Terraform apply."
    fi
 
-   echo "Keycloak instance public IP: $KEYCLOAK_SERVER_IP"
-   echo -e "\n=== Updating DNS Record for Route53 ==="
+   hol_step "Updating Route53 DNS record for $SUBDOMAIN"
    # Update Route53 DNS record to map subdomain to instance IP
    aws route53 change-resource-record-sets --hosted-zone-id "$hostedzoneid" \
       --change-batch '{
@@ -726,23 +893,22 @@ setup_keycloak_ec2() {
         }]
     }'
    if [[ $? -ne 0 ]]; then
-      echo "Error: Failed to update DNS record. Exiting."
-      exit 1
+      hol_fail "Failed to update Route53 DNS record for $SUBDOMAIN"
    fi
-   echo "DNS record updated: $SUBDOMAIN -> $KEYCLOAK_SERVER_IP"
-   echo -e "\n=== Keycloak Setup Completed Successfully ==="
+   hol_ok "DNS record updated: $SUBDOMAIN -> $KEYCLOAK_SERVER_IP"
+   hol_ok "Keycloak setup completed successfully"
 
 }
 #--------------------------------------------------------------------------------------------------#
 # Function to rollback keycloack EC2 Instance in case of failure during provision.
 destroy_keycloak() {
    USER_NAMESPACE=$workshop_name
-   echo -e "\n               ===================================Destroying Keycloak======================================="
+   hol_subsection "Destroying Keycloak" "🔐"
    cd /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
    terraform init
-   echo "=== Wait for 30 seconds... ==="
+   hol_step "Waiting 30 seconds before Keycloak teardown..."
    sleep 30
-   echo "=== Deleting DNS Record ==="
+   hol_step "Deleting Route53 DNS record"
    # Delete Route53 DNS record to unmap subdomain to instance IP
    aws route53 change-resource-record-sets --hosted-zone-id "$hostedzoneid" \
       --change-batch '{
@@ -756,7 +922,7 @@ destroy_keycloak() {
             }
         }]
     }'
-   echo "DNS record deleted: $SUBDOMAIN -> $KEYCLOAK_SERVER_IP"
+   hol_ok "DNS record deleted for $workshop_name.$domain"
 
    # Extract only the first IP for Keycloak (admin access only)
    kc_ip=$(echo "$local_ip" | cut -d',' -f1)
@@ -769,27 +935,65 @@ destroy_keycloak() {
       -var "keycloak_admin_password=$keycloak__admin_password"
    RETURN=$?
    if [ $RETURN -eq 0 ]; then
+      hol_remove_keycloak_ip_on_destroy
       rm -rf /userconfig/.$USER_NAMESPACE/keycloak_terraform_config
       rm -rf /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
-      rm -rf /userconfig/keycloak_ip
       return 0
    else
       return 1
    fi
 }
 #--------------------------------------------------------------------------------------------------#
+# Sync cdp-tf-quickstarts without deleting terraform state or workshop files.
+sync_cdp_tf_quickstarts() {
+   local quickstart_dir="$1"
+   local cloud_path="$2"
+   local repo_url="https://github.com/cloudera-labs/cdp-tf-quickstarts.git"
+   local git_err=""
+   local -a git_safe=(git -c safe.directory='*' -c "safe.directory=${quickstart_dir}")
+
+   configure_git_for_userconfig
+
+   if [[ -d "${quickstart_dir}/.git" ]]; then
+      hol_step "Updating cdp-tf-quickstarts (${TF_QUICKSTART_VERSION})"
+      cd "${quickstart_dir}" || hol_fail "Unable to enter cdp-tf-quickstarts directory."
+      "${git_safe[@]}" fetch --depth 1 origin "${TF_QUICKSTART_VERSION}" 2>/dev/null \
+         || "${git_safe[@]}" fetch --depth 1 origin "refs/tags/${TF_QUICKSTART_VERSION}:refs/tags/${TF_QUICKSTART_VERSION}" 2>/dev/null \
+         || "${git_safe[@]}" fetch --depth 1 origin
+      if ! git_err=$("${git_safe[@]}" checkout -f "${TF_QUICKSTART_VERSION}" 2>&1); then
+         hol_fail "Unable to checkout ${TF_QUICKSTART_VERSION} in cdp-tf-quickstarts: ${git_err}"
+      fi
+      "${git_safe[@]}" sparse-checkout init --cone
+      "${git_safe[@]}" sparse-checkout set "${cloud_path}"
+      "${git_safe[@]}" checkout @ &>/dev/null
+      hol_ok "cdp-tf-quickstarts updated"
+      return 0
+   fi
+
+   if [[ -e "${quickstart_dir}" ]]; then
+      hol_warn "Quickstart path exists but is not a git repo — recloning"
+      rm -rf "${quickstart_dir}"
+   fi
+
+   hol_step "Cloning cdp-tf-quickstarts (${TF_QUICKSTART_VERSION})"
+   if ! "${git_safe[@]}" clone "${repo_url}" -b "${TF_QUICKSTART_VERSION}" --single-branch --depth 1 "${quickstart_dir}"; then
+      hol_fail "Failed to clone cdp-tf-quickstarts (branch/tag: ${TF_QUICKSTART_VERSION})."
+   fi
+   cd "${quickstart_dir}" || hol_fail "Unable to enter cdp-tf-quickstarts directory."
+   "${git_safe[@]}" sparse-checkout init --cone
+   "${git_safe[@]}" sparse-checkout set "${cloud_path}"
+   "${git_safe[@]}" checkout @ &>/dev/null
+}
+
 # Function to provision CDP Environment.
 provision_cdp() {
-   echo -e "\n               ==============================Provisioning CDP Environment==================================="
+   hol_banner "Provisioning CDP environment" "☁️"
    sleep 10
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
-   git clone https://github.com/cloudera-labs/cdp-tf-quickstarts.git -b $TF_QUICKSTART_VERSION --single-branch --depth 1 /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts &>/dev/null
-   cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts
-   git sparse-checkout init --cone
-   git sparse-checkout set aws
-   git checkout @ &>/dev/null
-   cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws
+   local quickstart_dir="/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts"
+   sync_cdp_tf_quickstarts "${quickstart_dir}" "aws"
+   cd "${quickstart_dir}/aws"
 
    # Convert comma-separated IPs into properly quoted Terraform list elements
    cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
@@ -855,31 +1059,41 @@ EOF
       echo '}' >> "$TFVARS_FILE"
    fi
 
-   echo "=== Generated tfvars for env_tags ==="
+   hol_subsection "Generated Terraform env_tags" "🏷️"
    cat "$TFVARS_FILE"
 
-   terraform apply --auto-approve \
-      -var "env_prefix=${workshop_name}" \
-      -var "aws_region=${aws_region}" \
-      -var "aws_key_pair=${aws_key_pair}" \
-      -var "deployment_template=${deployment_template}" \
-      -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}" \
-      -var "datalake_version=${datalake_version}" \
+   local cdp_tf_apply_args=(
+      -var "env_prefix=${workshop_name}"
+      -var "aws_region=${aws_region}"
+      -var "aws_key_pair=${aws_key_pair}"
+      -var "deployment_template=${deployment_template}"
+      -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
+      -var "datalake_version=${datalake_version}"
       -var-file="${TFVARS_FILE}"
+   )
 
-   cdp_provision_status=$?
+   hol_subsection "Running Terraform for CDP environment & datalake" "☁️"
+   terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
+
+   if [ $? -ne 0 ]; then
+      return 1
+   fi
+
+   assign_environment_base_roles
+   hol_assign_pipeline_cdp_env_admin_roles || return 1
+
+   cdp_provision_status=0
    if [ $cdp_provision_status -eq 0 ]; then
       export ENV_PUBLIC_SUBNETS=$(terraform output -json aws_public_subnet_ids)
       export ENV_PRIVATE_SUBNETS=$(terraform output -json aws_private_subnet_ids)
 
-      echo -e "\nSubnet values from Terraform:"
-      echo "ENV_PUBLIC_SUBNETS: $ENV_PUBLIC_SUBNETS"
-      echo "ENV_PRIVATE_SUBNETS: $ENV_PRIVATE_SUBNETS"
+      hol_kv "Public subnets" "$ENV_PUBLIC_SUBNETS"
+      hol_kv "Private subnets" "$ENV_PRIVATE_SUBNETS"
 
       ENV_PUBLIC_SUBNETS=$(terraform output -json aws_public_subnet_ids | jq -c '.[0:3]')
-      echo -e "\nFirst 3 public subnets for CDW (If Applicable): $ENV_PUBLIC_SUBNETS"
+      hol_info "First 3 public subnets (CDW/CDF): $ENV_PUBLIC_SUBNETS"
       ENV_PRIVATE_SUBNETS=$(terraform output -json aws_private_subnet_ids | jq -c '.[0:3]')
-      echo "First 3 private subnets for CDW (If Applicable): $ENV_PRIVATE_SUBNETS"
+      hol_info "First 3 private subnets (CDW/CDF): $ENV_PRIVATE_SUBNETS"
 
       export BUCKET_NAME=$(terraform output -raw log_storage_bucket_name)
 
@@ -895,14 +1109,13 @@ EOF
       ENV_PUBLIC_SUBNETS=$([ "$count_public" -ge 1 ] && echo "$ENV_PUBLIC_SUBNETS" || echo "$ENV_PRIVATE_SUBNETS")
       ENV_PRIVATE_SUBNETS=$([ "$count_private" -ge 1 ] && echo "$ENV_PRIVATE_SUBNETS" || echo "$ENV_PUBLIC_SUBNETS")
 
-      echo -e "\nFinal values after assignment:"
-      echo "ENV_PUBLIC_SUBNETS for CDW (If Applicable): $ENV_PUBLIC_SUBNETS"
-      echo "ENV_PRIVATE_SUBNETS for CDW (If Applicable): $ENV_PRIVATE_SUBNETS"
+      hol_kv "Final public subnets" "$ENV_PUBLIC_SUBNETS"
+      hol_kv "Final private subnets" "$ENV_PRIVATE_SUBNETS"
 
       aws_enhancements #calling aws_enahancements function
       aws_enhancements_status=$?
       if [ $aws_enhancements_status -ne 0 ]; then
-         echo "Warning: AWS enhancements failed to apply. Please check the logs for details."
+         hol_warn "AWS enhancements failed to apply — check logs for details"
       fi
 
       return 0
@@ -914,7 +1127,7 @@ EOF
 
 #Add enhancements
 aws_enhancements() {
-   echo -e "\n               ==============================Adding aws enhancements ========================================="
+   hol_subsection "Adding AWS enhancements" "✨"
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
 
@@ -923,15 +1136,45 @@ aws_enhancements() {
    fi
 
    cd /userconfig/.$USER_NAMESPACE/aws_enhancements/s3_enhancements
-     terraform init
-     terraform apply -auto-approve \
-         -var="log_bucket_name=$BUCKET_NAME" \
-         -var="aws_region=$aws_region"
+   terraform init
+   terraform apply -auto-approve \
+      -var="log_bucket_name=$BUCKET_NAME" \
+      -var="aws_region=$aws_region"
+
+   hol_subsection "Attaching log PutObject policy to datalake admin role" "🔐"
+   cd /userconfig/.$USER_NAMESPACE/aws_enhancements/dladmin_log_policy
+   terraform init
+   terraform apply -auto-approve \
+      -var="env_prefix=$workshop_name" \
+      -var="aws_region=$aws_region"
+}
+
+# Tear down HoL-owned IAM attachments before CDP quickstart Terraform destroys shared policies.
+destroy_aws_enhancements() {
+   hol_subsection "Removing AWS enhancements" "✨"
+   USER_NAMESPACE=$workshop_name
+   local dladmin_tf_dir="/userconfig/.$USER_NAMESPACE/aws_enhancements/dladmin_log_policy"
+   if [[ ! -d "$dladmin_tf_dir" || ! -f "$dladmin_tf_dir/main.tf" ]]; then
+      hol_skip "dladmin_log_policy Terraform not found — skipping enhancement destroy"
+      return 0
+   fi
+   cd "$dladmin_tf_dir" || return 1
+   terraform init -input=false
+   terraform destroy -auto-approve \
+      -var="env_prefix=$workshop_name" \
+      -var="aws_region=$aws_region"
+   local status=$?
+   if [[ $status -ne 0 ]]; then
+      hol_warn "dladmin_log_policy destroy failed — CDP Terraform may be unable to delete ${workshop_name}-logs-policy while still attached"
+      return 1
+   fi
+   hol_ok "Detached ${workshop_name}-logs-policy from datalake admin role"
+   return 0
 }
 
 #--------------------------------------------------------------------------------------------------#
 initialize_compute_cluster() {
-   echo -e "\n               ==============================Initializing Compute Cluster=========================================="
+   hol_subsection "Initializing compute cluster" "🖥️"
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
 
@@ -950,7 +1193,7 @@ initialize_compute_cluster() {
 }
 
 provision_compute_cluster() {
-echo -e "\n               ==============================Provisioning Compute Cluster=========================================="
+hol_subsection "Provisioning compute cluster" "🖥️"
    USER_NAMESPACE=$workshop_name
    mkdir -p /userconfig/.$USER_NAMESPACE
 
@@ -965,14 +1208,14 @@ echo -e "\n               ==============================Provisioning Compute Clu
    ./compute_cluster_deploy.sh $workshop_name
 }
 
-enable_model_registry() { 
-  echo -e "\n               =============================Deploying Model Registry ========================================="
+enable_ai_registry() { 
+  hol_subsection "Deploying AI Registry" "📦"
   USER_NAMESPACE=$workshop_name   
   cd /userconfig/.$USER_NAMESPACE/CAII
 
   environment_crn=$(cdp environments describe-environment --environment-name ${workshop_name}-cdp-env | jq -r .environment.crn)
 
-  # Check if ML Model Registry exists and is already installed
+  # Check if AI Registry exists and is already installed
   registry_status=$(cdp ml list-model-registries | jq -r --arg env_name "${workshop_name}-cdp-env" '
     .modelRegistries[]
     | select(.environmentName == $env_name)
@@ -980,17 +1223,17 @@ enable_model_registry() {
   ')
 
   if [[ "$registry_status" == "installation:finished" ]]; then
-    echo "✅ ML Model Registry for environment '${workshop_name}-cdp-env' is already installed. Skipping creation."
+    hol_skip "AI Registry for environment '${workshop_name}-cdp-env' is already installed"
     return
   else
-    echo "🚀 Proceeding with model registry deployment"
+    hol_step "Proceeding with AI Registry deployment"
     cdp ml create-model-registry \
       --environment-crn "$environment_crn" \
       --environment-name "${workshop_name}-cdp-env" \
       --use-public-load-balancer
   fi
 
-  echo "⏳ Waiting for ML Model Registry installation to finish..."
+  hol_step "Waiting for AI Registry installation to finish"
   for i in {1..75}; do
     registry_status=$(cdp ml list-model-registries | jq -r --arg env_name "${workshop_name}-cdp-env" '
       .modelRegistries[]
@@ -998,31 +1241,29 @@ enable_model_registry() {
       | .status
     ')
 
-    echo "   ➤ Attempt $i: Status = $registry_status"
+    hol_info "Attempt $i: Status = $registry_status"
 
     # Normalize to lowercase for matching
     status_lower=$(echo "$registry_status" | tr '[:upper:]' '[:lower:]')
 
     if [[ "$status_lower" == "installation:finished" ]]; then
-      echo "✅ ML Model Registry installation finished successfully."
+      hol_ok "AI Registry installation finished successfully"
       return
     elif [[ "$status_lower" == *"failed"* ]]; then
-      echo "❌ ML Model Registry installation FAILED with status: $registry_status"
-      exit 1
+      hol_fail "AI Registry installation failed with status: $registry_status"
     fi
 
     sleep 60
   done
 
-  echo "❌ Timeout Error: ML Model Registry did not reach 'installation:finished' state."
-  exit 1
+  hol_fail "AI Registry did not reach 'installation:finished' state (timeout)"
 }
 
 provision_caii_service_app() {
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/CAII
    
-   echo -e "\n               ==============================Provisioning AI Inference Service App ========================================="
+   hol_subsection "Provisioning AI Inference service app" "🧠"
    
    #Update template for serving app
    chmod +x ./create_serving_app_input.sh
@@ -1036,14 +1277,15 @@ provision_caii_service_app() {
    ')
 
    if [[ "$caii_service_status" == "installation:finished" ]]; then
-     echo "✅ CAII service for environment '${workshop_name}-cdp-env' is already installed. Skipping creation."
+     hol_skip "CAII service for environment '${workshop_name}-cdp-env' is already installed"
    else
-     echo "🚀 Proceeding with CAII service deployment"
+     hol_step "Proceeding with CAII service deployment"
       # Create model endpoint
       cdp ml create-ml-serving-app --cli-input-json file://updated-serving-app-input.json
       sleep 60
    fi
 
+   hol_step "Waiting for CAII service installation to finish"
    for i in {1..60}; do
      caii_service_status=$(cdp ml list-ml-serving-apps | jq -r --arg env_name "$env_name" '
       .apps[]
@@ -1051,15 +1293,14 @@ provision_caii_service_app() {
       | .status
      ')
 
-     echo "   ➤ Attempt $i: Status = $caii_service_status"
+     hol_info "Attempt $i: Status = $caii_service_status"
 
    # Keep looping until status is 'installation:finished'
      if [[ "$caii_service_status" == "installation:finished" ]]; then
-         echo "✅ Installation finished."
+         hol_ok "CAII service installation finished"
          break
      elif [[ "$caii_service_status" == "installation:failed" ]]; then
-         echo "❌ Installation failed."
-         exit 1
+         hol_fail "CAII service installation failed"
      fi
 
      sleep 45
@@ -1067,47 +1308,45 @@ provision_caii_service_app() {
 }
 
 provision_cai_inference() {
-   echo -e "\n   ========= Provisioning AI Inference with other dependencies e.g Compute cluster, workbench & Model registry ========="
+   hol_banner "Provisioning AI Inference (CAII)" "🧠"
 
-  local enable_data_services="cml"
   local env_name="${workshop_name}-cdp-env"
 
   # Step 1: Initialize compute cluster
   initialize_compute_cluster
 
-  # Step 2: Provision compute cluster, model registry and ai workbench in parallel
+  # Step 2: Provision compute cluster, AI registry and CAI workbench in parallel
   provision_compute_cluster &
   pid_compute=$!
   sleep 60
-  
-  enable_model_registry &
-  pid_model=$!
 
-  enable_data_services &
-  pid_cml=$!
+  enable_ai_registry &
+  pid_ai_registry=$!
 
-  # Step 4: Wait for all background tasks
+  deploy_single_data_service cai &
+  pid_cai=$!
+
   wait $pid_compute
   status_compute=$?
 
-  wait $pid_model
-  status_model=$?
+  wait $pid_ai_registry
+  status_ai_registry=$?
 
-  wait $pid_cml
-  status_cml=$?
+  wait $pid_cai
+  status_cai=$?
 
-  if [[ $status_compute -ne 0 || $status_model -ne 0 || $status_cml -ne 0 ]]; then
-    echo "❌ Error: One or more provisioning steps failed."
+  if [[ $status_compute -ne 0 || $status_ai_registry -ne 0 || $status_cai -ne 0 ]]; then
+    hol_warn "One or more CAII provisioning steps failed"
     return 1
   fi
 
-  # Step 5: Proceed to CAII service deployment
+  # Step 3: Proceed to CAII service deployment
   provision_caii_service_app
 }
 
 
 destroy_cai_inference() {
-   echo -e "\n               ==============================Destroying AI Inference ========================================="
+   hol_subsection "Destroying AI Inference" "🧠"
    
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/CAII
@@ -1118,15 +1357,14 @@ destroy_cai_inference() {
    ')
 
    if [[ -n "$serving_app_crn" ]]; then
-     echo "🗑️ Deleting ML Serving App: $serving_app_crn"
+     hol_step "Deleting ML Serving App: $serving_app_crn"
      cdp ml delete-ml-serving-app --app-crn "$serving_app_crn"
    else
-     echo "✅ No ML Serving App found"
+     hol_skip "No ML Serving App found"
    fi
    
    # Set the data service value for cleanup
-   local enable_data_services="cml"
-   disable_data_services &  # Call the function that disables CML
+   disable_single_data_service cai &
    pid_disable=$!
    sleep 30
    
@@ -1142,11 +1380,276 @@ destroy_cai_inference() {
 update_cdp_user_group() {
    cdp iam update-group --group-name $workshop_name-aw-cdp-user-group --sync-membership-on-user-login
 }
+
+# CDP environments sync-all-users can return 409 CONFLICT for USER_SYNC (e.g. after IAM user
+# creation or assignCdpEnvAdminRoles.sh). The body may name usersync:<uuid> as running while
+# get-environment-user-sync-state still shows UP_TO_DATE / COMPLETED for a different operation.
+# Poll the id from the conflict body. Tunables: HOL_CDP_USER_SYNC_MAX_ATTEMPTS (12),
+# HOL_CDP_USER_SYNC_RETRY_SLEEP_SEC (30), HOL_CDP_USER_SYNC_STALE_CONFLICT_SLEEP_SEC (5),
+# HOL_CDP_USER_SYNC_WAIT_SEC (600), HOL_CDP_USER_SYNC_POLL_SEC (15).
+# HOL_CDP_USER_SYNC_DEBUG=1 prints the full CDP error, HTTP request id, and status snapshot.
+hol_cdp_user_sync_conflict() {
+   local msg="$1"
+   grep -q '409' <<<"$msg" || return 1
+   grep -qi 'CONFLICT' <<<"$msg" || return 1
+   grep -qE 'syncAllUsers|USER_SYNC' <<<"$msg"
+}
+
+hol_cdp_user_sync_conflict_request_id() {
+   local msg="$1" id=""
+   id=$(grep -oEi '(request[_ ]?id|Request Id)[:= ]+[A-Za-z0-9-]+' <<<"$msg" | head -1 | sed -E 's/.*[:= ]+//') || true
+   [[ -n "$id" ]] && echo "$id"
+}
+
+hol_cdp_user_sync_error_summary() {
+   local msg="$1" line
+   while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      printf '%s' "$line"
+      return 0
+   done <<<"$msg"
+   printf '409 CONFLICT (sync-all-users)'
+}
+
+hol_cdp_user_sync_state_snapshot() {
+   local env_name="$1"
+   local sync_state_json state op_id sync_status last_status
+
+   sync_state_json=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null || true)
+   state=$(jq -r '.state // empty' <<<"$sync_state_json" 2>/dev/null)
+   [[ "$state" == "null" ]] && state=""
+   op_id=$(jq -r '.userSyncOperationId // empty' <<<"$sync_state_json" 2>/dev/null)
+   [[ "$op_id" == "null" ]] && op_id=""
+   sync_status=""
+   if [[ -n "$op_id" ]]; then
+      sync_status=$(cdp environments sync-status --operation-id "$op_id" 2>/dev/null | jq -r '.status // empty')
+      [[ "$sync_status" == "null" ]] && sync_status=""
+   fi
+   last_status=$(cdp environments last-sync-status --environment "$env_name" 2>/dev/null | jq -r '.status // empty')
+   [[ "$last_status" == "null" ]] && last_status=""
+
+   hol_kv "CDP user-sync state (get-environment-user-sync-state)" "${state:-unknown}"
+   [[ -n "$op_id" ]] && hol_kv "Latest user-sync operation id" "$op_id"
+   [[ -n "$sync_status" ]] && hol_kv "Latest operation status (sync-status)" "$sync_status"
+   [[ -n "$last_status" ]] && hol_kv "Last sync status (last-sync-status)" "$last_status"
+}
+
+# usersync:<uuid> from a 409 body (CRN or bare). Prefer the id nearest the word "running".
+hol_cdp_user_sync_conflict_operation_id() {
+   local msg="$1" flat="" line="" uuid="" off="" run_off="" best="" best_dist=999999 dist
+   flat=$(printf '%s' "$msg" | tr '\n' ' ')
+   run_off=$(printf '%s' "$flat" | grep -boEi 'running' | head -1 | cut -d: -f1 || true)
+   while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      off=${line%%:*}
+      uuid=$(printf '%s' "${line#*:}" | sed -E 's/^[Uu][Ss][Ee][Rr][Ss][Yy][Nn][Cc]://')
+      if [[ -z "$run_off" ]]; then
+         printf '%s\n' "$uuid"
+         return 0
+      fi
+      if [[ $off -gt $run_off ]]; then
+         dist=$((off - run_off))
+      else
+         dist=$((run_off - off))
+      fi
+      if [[ $dist -lt $best_dist ]]; then
+         best_dist=$dist
+         best=$uuid
+      fi
+   done < <(printf '%s' "$flat" | grep -boEi 'usersync:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' || true)
+   [[ -n "$best" ]] && printf '%s\n' "$best"
+}
+
+# sync-status often needs the CRN from get-environment-user-sync-state; 409 bodies may only include the uuid.
+hol_cdp_normalize_user_sync_operation_id() {
+   local op_id="$1" env_name="$2" sync_state_json state_op=""
+   [[ -n "$op_id" ]] || return 1
+   if [[ "$op_id" == crn:* ]]; then
+      printf '%s\n' "$op_id"
+      return 0
+   fi
+   sync_state_json=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null || true)
+   state_op=$(jq -r '.userSyncOperationId // empty' <<<"$sync_state_json" 2>/dev/null)
+   [[ "$state_op" == "null" ]] && state_op=""
+   if [[ -n "$state_op" ]] && [[ "$state_op" == *"$op_id" ]]; then
+      printf '%s\n' "$state_op"
+      return 0
+   fi
+   printf '%s\n' "$op_id"
+}
+
+hol_cdp_user_sync_debug_conflict() {
+   local output="$1" env_name="$2" req_id="" err_summary=""
+   [[ "${HOL_CDP_USER_SYNC_DEBUG:-0}" == "1" ]] || return 0
+   err_summary=$(hol_cdp_user_sync_error_summary "$output")
+   req_id=$(hol_cdp_user_sync_conflict_request_id "$output" || true)
+   hol_warn "cdp environments sync-all-users returned 409 CONFLICT: ${err_summary}"
+   [[ -n "$req_id" ]] && hol_info "CDP HTTP request id (not the user-sync operation id): ${req_id}"
+   hol_cdp_user_sync_state_snapshot "$env_name"
+}
+
+hol_cdp_environment_user_sync_in_progress() {
+   local env_name="$1"
+   local state status op_id sync_status sync_state_json
+
+   sync_state_json=$(cdp environments get-environment-user-sync-state --environment-name "$env_name" 2>/dev/null || true)
+   state=$(jq -r '.state // empty' <<<"$sync_state_json" 2>/dev/null)
+   [[ "$state" == "null" ]] && state=""
+
+   case "$state" in
+      SYNC_IN_PROGRESS) return 0 ;;
+      UP_TO_DATE|STALE|SYNC_FAILED) return 1 ;;
+   esac
+
+   if [[ -n "$state" ]] && grep -qiE 'RUNNING|IN_PROGRESS|SYNCING|SYNC_IN_PROGRESS' <<<"$state"; then
+      return 0
+   fi
+   if [[ -n "$state" ]] && grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|IDLE|READY|NOT_RUNNING|NONE' <<<"$state"; then
+      return 1
+   fi
+
+   op_id=$(jq -r '.userSyncOperationId // empty' <<<"$sync_state_json" 2>/dev/null)
+   [[ "$op_id" == "null" ]] && op_id=""
+   if [[ -n "$op_id" ]]; then
+      sync_status=$(cdp environments sync-status --operation-id "$op_id" 2>/dev/null | jq -r '.status // empty')
+      [[ "$sync_status" == "null" ]] && sync_status=""
+      if [[ -n "$sync_status" ]] && grep -qiE 'RUNNING|IN_PROGRESS|REQUESTED|PENDING' <<<"$sync_status"; then
+         return 0
+      fi
+      if [[ -n "$sync_status" ]] && grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|FAILED|ERROR|REJECTED|TIMEDOUT' <<<"$sync_status"; then
+         return 1
+      fi
+   fi
+
+   status=$(cdp environments last-sync-status --environment "$env_name" 2>/dev/null | jq -r '.status // empty')
+   [[ "$status" == "null" ]] && status=""
+   if [[ -n "$status" ]] && grep -qiE 'RUNNING|IN_PROGRESS|REQUESTED|PENDING' <<<"$status"; then
+      return 0
+   fi
+   return 1
+}
+
+hol_cdp_wait_for_environment_user_sync() {
+   local env_name="$1"
+   local max_wait_sec="${2:-${HOL_CDP_USER_SYNC_WAIT_SEC:-600}}"
+   local quiet="${3:-}"
+   local poll_sec="${HOL_CDP_USER_SYNC_POLL_SEC:-15}"
+   local elapsed=0
+
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      if ! hol_cdp_environment_user_sync_in_progress "$env_name"; then
+         return 0
+      fi
+      if [[ "$quiet" != "quiet" ]]; then
+         hol_step "User sync in progress for '${env_name}' — waiting ${poll_sec}s..."
+      fi
+      sleep "$poll_sec"
+      elapsed=$((elapsed + poll_sec))
+   done
+   hol_warn "Timed out after ${max_wait_sec}s waiting for user sync on '${env_name}'"
+   return 1
+}
+
+# 0 = still active, 1 = terminal, 2 = status unknown (do not treat as "no active sync").
+hol_cdp_user_sync_operation_liveness() {
+   local op_id="$1" status=""
+   status=$(cdp environments sync-status --operation-id "$op_id" 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)
+   [[ "$status" == "null" ]] && status=""
+   if [[ -z "$status" ]]; then
+      return 2
+   fi
+   if grep -qiE 'RUNNING|IN_PROGRESS|REQUESTED|PENDING|SYNCING' <<<"$status"; then
+      return 0
+   fi
+   if grep -qiE 'COMPLETED|SUCCEEDED|SUCCESS|FAILED|ERROR|REJECTED|TIMEDOUT|TIMED_OUT|CANCELLED|CANCELED' <<<"$status"; then
+      return 1
+   fi
+   return 2
+}
+
+# Poll the usersync id named by the 409. Quiet: the caller already printed one waiting line.
+# Unknown status keeps waiting — the 409 said this op is running, even if latest sync-status
+# is a different COMPLETED operation. Returns 0 when the operation is terminal, 1 on timeout.
+hol_cdp_wait_for_user_sync_operation() {
+   local op_id="$1"
+   local max_wait_sec="${2:-${HOL_CDP_USER_SYNC_WAIT_SEC:-600}}"
+   local env_name="${3:-}"
+   local poll_sec="${HOL_CDP_USER_SYNC_POLL_SEC:-15}"
+   local elapsed=0 live=0
+
+   if [[ -n "$env_name" ]]; then
+      op_id=$(hol_cdp_normalize_user_sync_operation_id "$op_id" "$env_name" || printf '%s' "$op_id")
+   fi
+
+   while [[ $elapsed -lt $max_wait_sec ]]; do
+      live=0
+      hol_cdp_user_sync_operation_liveness "$op_id" || live=$?
+      if [[ $live -eq 1 ]]; then
+         return 0
+      fi
+      sleep "$poll_sec"
+      elapsed=$((elapsed + poll_sec))
+   done
+   hol_info "User sync operation poll inconclusive after ${max_wait_sec}s for ${op_id} (sync-status did not reach a terminal state — checking environment user-sync state next)"
+   return 1
+}
+
+hol_cdp_sync_all_users_resilient() {
+   local env_name="$1"
+   local max_attempts="${HOL_CDP_USER_SYNC_MAX_ATTEMPTS:-12}"
+   local retry_sleep="${HOL_CDP_USER_SYNC_RETRY_SLEEP_SEC:-30}"
+   local wait_max_sec="${HOL_CDP_USER_SYNC_WAIT_SEC:-600}"
+   local attempt=1 output exit_status
+
+   while [[ $attempt -le $max_attempts ]]; do
+      output=$(cdp environments sync-all-users --environment-names "$env_name" 2>&1)
+      exit_status=$?
+      if [[ $exit_status -eq 0 ]]; then
+         hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" \
+            || hol_warn "User sync wait incomplete for '${env_name}' — continuing provision"
+         hol_ok "CDP user sync completed for environment '${env_name}'"
+         return 0
+      fi
+      if hol_cdp_user_sync_conflict "$output"; then
+         local running_op="" stale_sleep="${HOL_CDP_USER_SYNC_STALE_CONFLICT_SLEEP_SEC:-5}"
+         running_op=$(hol_cdp_user_sync_conflict_operation_id "$output" || true)
+         hol_cdp_user_sync_debug_conflict "$output" "$env_name"
+         if [[ -n "$running_op" ]]; then
+            # Do not consult latest sync-status here: it can be a different COMPLETED op.
+            hol_warn "User sync already running (${running_op}) — waiting"
+            hol_step "CDP user sync retry ${attempt}/${max_attempts}"
+            if ! hol_cdp_wait_for_user_sync_operation "$running_op" "$wait_max_sec" "$env_name"; then
+               hol_step "Operation poll timed out — waiting on environment user-sync state"
+               hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" quiet || true
+            fi
+            sleep "$retry_sleep"
+         elif hol_cdp_environment_user_sync_in_progress "$env_name"; then
+            hol_warn "User sync already running — waiting"
+            hol_step "CDP user sync retry ${attempt}/${max_attempts}"
+            hol_cdp_wait_for_environment_user_sync "$env_name" "$wait_max_sec" quiet || true
+            sleep "$retry_sleep"
+         else
+            hol_warn "User sync conflict — retrying"
+            hol_step "CDP user sync retry ${attempt}/${max_attempts}"
+            sleep "$stale_sleep"
+         fi
+         attempt=$((attempt + 1))
+         continue
+      fi
+      hol_fail "cdp environments sync-all-users failed for '${env_name}': $output"
+   done
+   hol_fail "cdp environments sync-all-users for '${env_name}' still conflicting after ${max_attempts} attempts: ${output}"
+}
+
 #--------------------------------------------------------------------------------------------------#
 # Function to destroy CDP Environment.
 destroy_cdp() {
    USER_NAMESPACE=$workshop_name
-   echo -e "\n               ==============================Destroying CDP Environment Infrastructure========================================"
+   hol_banner "Destroying CDP environment infrastructure" "🗑️"
+   if [[ ! -d "/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws" ]]; then
+      hol_skip "Terraform state not found — skipping CDP terraform destroy"
+      return 0
+   fi
    cd /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws
    # Convert comma-separated IPs into properly quoted Terraform list elements
    cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
@@ -1161,7 +1664,7 @@ destroy_cdp() {
       -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
       
    cdp_destroy_status=$?
-   if [ $cdp_destroy_status -eq 0 ]; then
+   if [ "${cdp_destroy_status:-1}" -eq 0 ]; then
       rm -rf /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/
       return 0
    else
@@ -1172,6 +1675,10 @@ destroy_cdp() {
 # Function to destroy Complete HOL Infrastructure.
 destroy_hol_infra() {
    USER_NAMESPACE=$workshop_name
+   keycloak_destroy_status=0
+   enhancements_destroy_status=0
+   destroy_aws_enhancements
+   enhancements_destroy_status=$?
    destroy_cdp
    cdp_destroy_status=$?
    if [[ "$provision_keycloak" == "yes" && "$cdp_destroy_status" -eq 0 ]]; then
@@ -1179,8 +1686,8 @@ destroy_hol_infra() {
       keycloak_destroy_status=$?
    fi
 
-   if [[ "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]] || [[ "$cdp_destroy_status" -eq 0 && "$provision_keycloak" == "no" ]]; then
-      if [[ -f /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag && "$(cat /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag)" == "true" ]]; then
+   if [[ "$enhancements_destroy_status" -eq 0 && "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]]; then
+      if [[ -f /userconfig/.$USER_NAMESPACE/keypair_gen/keypair_generated.flag && "$(cat /userconfig/.$USER_NAMESPACE/keypair_generated.flag)" == "true" ]]; then
          destroy_keypair
       fi
       rm -rf "/userconfig/.$USER_NAMESPACE"
@@ -1192,27 +1699,100 @@ destroy_hol_infra() {
 }
 
 #--------------------------------------------------------------------------------------------------#
+workshop_output_file() {
+   echo "/userconfig/${workshop_name}.txt"
+}
+
+workshop_services_include() {
+   local service="$1"
+   local csv
+   csv=$(hol_enabled_data_services_csv)
+   [[ ",${csv}," == *",${service},"* ]]
+}
+
+append_workshop_output_section() {
+   local title="$1"
+   local out
+   out="$(workshop_output_file)"
+   {
+      echo ""
+      echo "==============================================================="
+      echo "     ${title}"
+      echo "==============================================================="
+   } >>"$out"
+}
+
+write_workshop_cdp_outputs() {
+   local out
+   out="$(workshop_output_file)"
+   append_workshop_output_section "CDP / AWS Infrastructure: ${workshop_name}"
+   {
+      echo "Generated (UTC): $(date -u +"%Y-%m-%d %H:%M:%S")"
+      echo "CDP Environment: ${workshop_name}-cdp-env"
+      echo "AWS Region: ${aws_region:-n/a}"
+      echo "EC2 Key Pair: ${aws_key_pair:-n/a}"
+      echo "CDP Log S3 Bucket: ${BUCKET_NAME:-n/a}"
+      echo "Public Subnets (first 3): ${ENV_PUBLIC_SUBNETS:-n/a}"
+      echo "Private Subnets (first 3): ${ENV_PRIVATE_SUBNETS:-n/a}"
+      echo "CDP Console: https://console.cdp.cloudera.com/"
+   } >>"$out"
+   hol_ok "CDP outputs appended to ${out}"
+}
+
+write_workshop_data_service_outputs() {
+   local out
+   out="$(workshop_output_file)"
+   append_workshop_output_section "Data Services: ${workshop_name}"
+   {
+      echo "Enabled Data Services: ${HOL_ENABLE_DATA_SERVICES:-n/a}"
+      if workshop_services_include cdw; then
+         echo "CDW Virtual Warehouse Size: ${cdw_vrtl_warehouse_size:-n/a}"
+         echo "CDW DataViz Size: ${cdw_dataviz_size:-n/a}"
+      fi
+      if workshop_services_include cde; then
+         echo "CDE Service Name: ${workshop_name}-cde"
+         echo "CDE Instance Type: ${cde_instance_type:-n/a}"
+         echo "CDE Spark Version: ${cde_spark_version:-n/a}"
+      fi
+      if workshop_services_include cai || [[ "${provision_caii:-no}" == "yes" ]]; then
+         echo "CAI Workspace Name: ${workshop_name}-cai-ws"
+         echo "CAI WS Instance Type: ${cai_ws_instance_type:-n/a}"
+         echo "CAI GPU Enabled: ${cai_enable_gpu:-n/a}"
+      fi
+      if workshop_services_include cdf; then
+         echo "CDF Environment Service: ${workshop_name}-cdp-env"
+         echo "CDF Instance Type: ${cdf_instance_type:-n/a}"
+      fi
+   } >>"$out"
+   hol_ok "Data service outputs appended to ${out} (also emailed via Jenkins when run from CI)"
+}
+
+#--------------------------------------------------------------------------------------------------#
 # Function to configure IDP Client
 cdp_idp_setup_user() {
    # echo "keycloak__admin_password:$keycloak__admin_password"
-   KEYCLOAK_SERVER_IP=$(cat /userconfig/keycloak_ip)
+   KEYCLOAK_SERVER_IP=$(resolve_keycloak_server_ip optional || true)
+   if [[ -z "$KEYCLOAK_SERVER_IP" ]]; then
+      hol_fail "Cannot configure CDP IDP for '${workshop_name}': Keycloak server IP is empty after checking $(hol_keycloak_ip_path), legacy /userconfig/keycloak_ip, and Keycloak Terraform elastic_ip output. Re-provision Keycloak or restore the per-workshop IP file."
+   fi
+   hol_kv "Keycloak server IP" "$KEYCLOAK_SERVER_IP"
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
-   echo -e "\n               =========================Configuring IDP in CDP==============================================\n"
-   sleep 5
+   hol_subsection "Configuring IDP in CDP" "🔗"
+   wait_for_keycloak_ready "$KEYCLOAK_SERVER_IP" 30 || return 1
    cdp_region=$(cdp environments describe-environment --environment-name $workshop_name-cdp-env | jq -r .environment.crn | cut -d: -f4)
-   echo "cdp_region:$cdp_region"
-   ansible-playbook create_keycloak_client.yml --extra-vars \
+   hol_kv "CDP region" "$cdp_region"
+   hol_ansible_playbook create_keycloak_client.yml --extra-vars \
       "keycloak__admin_username=admin \
       keycloak__admin_password=$keycloak__admin_password \
       keycloak__domain=https://$KEYCLOAK_SERVER_IP \
       keycloak__cdp_idp_name=$workshop_name \
       keycloak__realm=master \
       keycloak__auth_realm=master \
-      cdp_region=$cdp_region"
-   echo -e "\n               =========================Creating Users & Groups==============================================\n"
+      cdp_region=$cdp_region" || hol_fail "create_keycloak_client playbook failed — Keycloak IDP client was not created"
+   hol_subsection "Creating Users & Groups" "👥"
    sleep 5
-   ansible-playbook keycloak_hol_user_setup.yml --extra-vars \
+   hol_ansible_playbook keycloak_hol_user_setup.yml --extra-vars \
       "keycloak__admin_username=admin \
       keycloak__admin_password=$keycloak__admin_password \
       keycloak__domain=https://$KEYCLOAK_SERVER_IP \
@@ -1221,9 +1801,9 @@ cdp_idp_setup_user() {
       number_user_to_create=$number_of_workshop_users \
       username_prefix=$workshop_user_prefix \
       default_user_password=$workshop_user_default_password \
-      reset_password_on_first_login=True"
+      reset_password_on_first_login=True" || hol_fail "keycloak_hol_user_setup playbook failed — workshop users were not created in Keycloak"
    sleep 10
-   echo -e "\n               ==========================Synchronising Keycloak Users In CDP=================================="
+   hol_subsection "Synchronising Keycloak users in CDP" "🔄"
    for i in $(seq -f "%02g" 1 1 $number_of_workshop_users); do
       output=$(cdp iam create-user \
          --identity-provider-user-id $workshop_user_prefix$i \
@@ -1232,51 +1812,44 @@ cdp_idp_setup_user() {
          --groups "$workshop_name-aw-cdp-user-group" \
          --first-name User-$workshop_user_prefix$i \
          --last-name User-$workshop_user_prefix$i 2>&1)
-      if echo "$output" | grep -q "ALREADY_EXISTS"; then
-         echo "User '$workshop_user_prefix$i' already exists. Skipping..."
+      exit_status=$?
+      if [[ $exit_status -eq 0 ]]; then
+         hol_ok "CDP user '$workshop_user_prefix$i' created"
+      elif echo "$output" | grep -q "ALREADY_EXISTS"; then
+         hol_skip "User '$workshop_user_prefix$i' already exists"
+      else
+         hol_fail "cdp iam create-user failed for '$workshop_user_prefix$i': $output"
       fi
    done
 
-   cdp environments sync-all-users --environment-names $workshop_name-cdp-env
+   hol_cdp_sync_all_users_resilient "$workshop_name-cdp-env" || return 1
    sleep 5
-   echo -e "\n               ==========================Please Wait: Generating Report======================================="
+   hol_subsection "Generating workshop report" "📄"
    cd /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
-   ansible-playbook keycloak_hol_user_fetch.yml --extra-vars \
+   hol_ansible_playbook keycloak_hol_user_fetch.yml --extra-vars \
       "keycloak__admin_username=admin \
       keycloak__admin_password=$keycloak__admin_password \
       keycloak__domain=https://$KEYCLOAK_SERVER_IP \
       hol_keycloak_realm=master \
-      hol_session_name=$workshop_name-aw-cdp-user-group"
+      hol_session_name=$workshop_name-aw-cdp-user-group" || hol_fail "keycloak_hol_user_fetch playbook failed"
    sleep 5
-   echo -e "\n               =============================Fetching Details: Please Wait=========================="
-   sample_keycloak_user1=$(cat /tmp/$workshop_name-aw-cdp-user-group.json | jq -r '.[0].username')
-   sample_keycloak_user2=$(cat /tmp/$workshop_name-aw-cdp-user-group.json | jq -r '.[1].username')
+   hol_step "Fetching workshop user details for report..."
+   hol_load_keycloak_report_users "$workshop_name-aw-cdp-user-group"
    sleep 5
-   echo "===============================================================" >>"/userconfig/$workshop_name.txt"
-   echo "            Keycloak Details For $workshop_name HOL:           " >>"/userconfig/$workshop_name.txt"
-   echo "===============================================================" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak Server IP: $KEYCLOAK_SERVER_IP" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak Admin HTTPS URL: https://$workshop_name.$domain" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak Admin User: admin" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak Admin Password: $keycloak__admin_password" >>"/userconfig/$workshop_name.txt"
-   echo "Keycloak SSO HTTPS URL: https://$workshop_name.$domain/realms/master/protocol/saml/clients/cdp-sso" >>"/userconfig/$workshop_name.txt"
-   echo "Numbers Of Users Created: $number_of_workshop_users" >>"/userconfig/$workshop_name.txt"
-   echo "Sample Usernames: User1: $sample_keycloak_user1, User2: $sample_keycloak_user2" >>"/userconfig/$workshop_name.txt"
-   echo "Default Password for HOL Users: $workshop_user_default_password " >>"/userconfig/$workshop_name.txt"
-   echo "UserAssignment App Admin URL: http://$KEYCLOAK_SERVER_IP:5000/admin" >>"/userconfig/$workshop_name.txt"
-   echo "UserAssignment App Participant URL: http://$KEYCLOAK_SERVER_IP:5000/participant" >>"/userconfig/$workshop_name.txt"
-   echo "===============================================================" >>"/userconfig/$workshop_name.txt"
+   hol_write_keycloak_workshop_report
+   hol_ok "Workshop report saved to /userconfig/$workshop_name.txt"
 }
 #--------------------------------------------------------------------------------------------------#
 cdp_idp_user_teardown() {
    USER_NAMESPACE=$workshop_name
-   echo -e "\n               ====================Deleting IDP Users & Group==============================================="
+   hol_subsection "Deleting IDP users & group" "👥"
    
-   if [[ -f /userconfig/keycloak_ip ]]; then
-      KEYCLOAK_SERVER_IP=$(cat /userconfig/keycloak_ip)
-      echo $KEYCLOAK_SERVER_IP
-      cd /userconfig/.$USER_NAMESPACE/keycloak_ansible_config
-      ansible-playbook keycloak_hol_user_teardown.yml --extra-vars \
+   local kc_ansible_dir="/userconfig/.$USER_NAMESPACE/keycloak_ansible_config"
+   KEYCLOAK_SERVER_IP=$(resolve_keycloak_server_ip optional || true)
+   if [[ -n "$KEYCLOAK_SERVER_IP" && -d "$kc_ansible_dir" && -f "$kc_ansible_dir/keycloak_hol_user_teardown.yml" ]]; then
+      hol_info "Keycloak server IP: $KEYCLOAK_SERVER_IP"
+      cd "$kc_ansible_dir"
+      hol_ansible_playbook keycloak_hol_user_teardown.yml --extra-vars \
          "keycloak__admin_username=admin \
          keycloak__admin_password=$keycloak__admin_password \
          keycloak__domain=https://$KEYCLOAK_SERVER_IP \
@@ -1284,11 +1857,15 @@ cdp_idp_user_teardown() {
          hol_session_name=$workshop_name-aw-cdp-user-group"
       sleep 10
    else
-      echo "Keycloak IP file not found. Assuming Keycloak is already destroyed. Skipping ansible playbook execution."
+      hol_skip "Keycloak IDP not configured for this workshop — skipping user teardown playbook"
    fi
 
-   echo "               ====================Removing IDP From CDP Tenant============================================="
-   cdp iam delete-saml-provider --saml-provider-name $workshop_name
+   hol_subsection "Removing IDP from CDP tenant" "🔗"
+   if cdp iam delete-saml-provider --saml-provider-name "$workshop_name" >/dev/null 2>&1; then
+      hol_ok "Removed SAML provider $workshop_name"
+   else
+      hol_skip "SAML provider $workshop_name not found (already removed)"
+   fi
 }
 #--------------------------------------------------------------------------------------------------#
 # Function to count elements in a JSON array variable
@@ -1305,83 +1882,222 @@ count_elements() {
 }
 #--------------------------------------------------------------------------------------------------#
 deploy_cdw() {
-   echo -e "\n               ==========================Deploying CDW======================================\n"
    number_vw_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
 
-   ansible-playbook $DS_CONFIG_DIR/enable-cdw.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cdw.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       env_lb_public_subnet=$ENV_PUBLIC_SUBNETS \
       env_wrkr_private_subnet=$ENV_PRIVATE_SUBNETS \
       workshop_name=$workshop_name \
       vw_size=$cdw_vrtl_warehouse_size \
       cdvc_size=$cdw_dataviz_size \
-      number_vw_to_create=$number_vw_to_create"
+      number_vw_to_create=$number_vw_to_create" || return $?
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cdw() {
-   echo "               ==========================Disabling CDW======================================"
-   ansible-playbook $DS_CONFIG_DIR/disable-cdw.yml --extra-vars \
+   hol_disable_service "cdw"
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cdw.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env"
 }
 #--------------------------------------------------------------------------------------------------#
 #--------------------------------------------------------------------------------------------------#
+hol_datalake_requires_spark354() {
+   local dl="${1:-}"
+   if [[ -z "$dl" || "$dl" == "latest" ]]; then
+      return 0
+   fi
+   if [[ ! "$dl" =~ ^[0-9]+\.[0-9]+ ]]; then
+      return 0
+   fi
+   local major minor _rest
+   IFS=. read -r major minor _rest <<< "$dl"
+   if (( major > 7 )) || (( major == 7 && minor >= 3 )); then
+      return 0
+   fi
+   return 1
+}
+
+hol_resolve_cde_spark_version() {
+   local req="${1:-AUTO}"
+   local dl="${2:-}"
+   req="${req^^}"
+   case "$req" in
+   AUTO | '' | SPARK3)
+      req="SPARK3_5"
+      ;;
+   esac
+   if [[ "$req" == "SPARK3_5" ]] && hol_datalake_requires_spark354 "$dl"; then
+      req="SPARK3_5_4"
+   fi
+   echo "$req"
+}
+
 deploy_cde() {
-   echo -e "\n               ==========================Deploying CDE======================================\n"
    number_vc_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
    DEFAULT_CDE_INSTANCE_TYPE="m5.2xlarge"
+   DEFAULT_CDE_MIN_INSTANCES=0
+   DEFAULT_CDE_MAX_INSTANCES=25
    if [ -z "${CDE_INSTANCE_TYPE+x}" ] || [ -z "$CDE_INSTANCE_TYPE" ]; then
       cde_instance_type=$DEFAULT_CDE_INSTANCE_TYPE
    else
       cde_instance_type=$CDE_INSTANCE_TYPE
    fi
+   DEFAULT_CDE_INITIAL_INSTANCES=1
+   cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
+   cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
+   cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
 
-   ansible-playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
+   local cde_spark_requested="${cde_spark_version:-AUTO}"
+   local cde_spark_resolved
+   cde_spark_resolved="$(hol_resolve_cde_spark_version "$cde_spark_requested" "${datalake_version:-}")"
+   cde_vc_tier="${cde_vc_tier:-CORE}"
+
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cde.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
       instance_type=$cde_instance_type \
       initial_instances=$cde_initial_instances \
       minimum_instances=$cde_min_instances \
       maximum_instances=$cde_max_instances \
-      spark_version=$cde_spark_version \
+      spark_version_requested=$cde_spark_requested \
+      spark_version=$cde_spark_resolved \
+      datalake_version=${datalake_version:-} \
       vc_tier=$cde_vc_tier \
-      number_vc_to_create=$number_vc_to_create"
+      number_vc_to_create=$number_vc_to_create" || return $?
 
 }
 #--------------------------------------------------------------------------------------------------#
 disable_cde() {
-   echo "               ==========================Disabling CDE======================================"
-   ansible-playbook $DS_CONFIG_DIR/disable-cde.yml --extra-vars \
+   hol_disable_service "cde"
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cde.yml --extra-vars \
       "workshop_name=$workshop_name"
 }
 #--------------------------------------------------------------------------------------------------#
 #--------------------------------------------------------------------------------------------------#
-deploy_cml() {
-   echo -e "\n               ==========================Deploying CML======================================\n"
+deploy_cai() {
    #number_vws_to_create=$(( ($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0) ))
-   ansible-playbook $DS_CONFIG_DIR/enable-cml.yml --extra-vars \
+   hol_run_ansible_playbook $DS_CONFIG_DIR/enable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name \
-      ws_instance_type=$cml_ws_instance_type \
-      minimum_instances=$cml_min_instances \
-      maximum_instances=$cml_max_instances \
+      ws_instance_type=$cai_ws_instance_type \
+      minimum_instances=$cai_min_instances \
+      maximum_instances=$cai_max_instances \
       root_volume_size=256 \
-      enable_gpu=$cml_enable_gpu \
-      gpu_instance_type=$cml_gpu_instance_type \
-      minimum_gpu_instances=$cml_min_gpu_instances \
-      maximum_gpu_instances=$cml_max_gpu_instances"
+      enable_gpu=$cai_enable_gpu \
+      gpu_instance_type=$cai_gpu_instance_type \
+      minimum_gpu_instances=$cai_min_gpu_instances \
+      maximum_gpu_instances=$cai_max_gpu_instances" || return $?
    #number_vws_to_create=$number_vws_to_create"
 }
 #--------------------------------------------------------------------------------------------------#
-disable_cml() {
-   echo "               ==========================Disabling CML======================================"
-   ansible-playbook $DS_CONFIG_DIR/disable-cml.yml --extra-vars \
+disable_cai() {
+   hol_disable_service "cai"
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
       workshop_name=$workshop_name"
 }
 #--------------------------------------------------------------------------------------------------#
+deploy_cdf() {
+   if [[ -z "${ENV_PUBLIC_SUBNETS}" || -z "${ENV_PRIVATE_SUBNETS}" ]]; then
+      hol_warn "ENV_PUBLIC_SUBNETS/ENV_PRIVATE_SUBNETS are not set — cannot deploy CDF"
+      return 1
+   fi
+
+   local extra_vars_file="/tmp/cdf_extra_vars_${workshop_name}.json"
+
+   if [[ -n "${cdf_instance_type}" ]]; then
+      jq -n \
+         --arg cdp_env_name "${workshop_name}-cdp-env" \
+         --arg workshop_name "$workshop_name" \
+         --arg instance_type "${cdf_instance_type}" \
+         --argjson minimum_nodes "${cdf_min_nodes}" \
+         --argjson maximum_nodes "${cdf_max_nodes}" \
+         --arg use_public_load_balancer "${cdf_use_public_lb}" \
+         --argjson env_lb_public_subnet "${ENV_PUBLIC_SUBNETS}" \
+         --argjson env_wrkr_private_subnet "${ENV_PRIVATE_SUBNETS}" \
+         '{
+           cdp_env_name: $cdp_env_name,
+           workshop_name: $workshop_name,
+           instance_type: $instance_type,
+           minimum_nodes: $minimum_nodes,
+           maximum_nodes: $maximum_nodes,
+           use_public_load_balancer: ($use_public_load_balancer == "true" or $use_public_load_balancer == "yes"),
+           env_lb_public_subnet: $env_lb_public_subnet,
+           env_wrkr_private_subnet: $env_wrkr_private_subnet
+         }' > "$extra_vars_file"
+   else
+      jq -n \
+         --arg cdp_env_name "${workshop_name}-cdp-env" \
+         --arg workshop_name "$workshop_name" \
+         --argjson minimum_nodes "${cdf_min_nodes}" \
+         --argjson maximum_nodes "${cdf_max_nodes}" \
+         --arg use_public_load_balancer "${cdf_use_public_lb}" \
+         --argjson env_lb_public_subnet "${ENV_PUBLIC_SUBNETS}" \
+         --argjson env_wrkr_private_subnet "${ENV_PRIVATE_SUBNETS}" \
+         '{
+           cdp_env_name: $cdp_env_name,
+           workshop_name: $workshop_name,
+           minimum_nodes: $minimum_nodes,
+           maximum_nodes: $maximum_nodes,
+           use_public_load_balancer: ($use_public_load_balancer == "true" or $use_public_load_balancer == "yes"),
+           env_lb_public_subnet: $env_lb_public_subnet,
+           env_wrkr_private_subnet: $env_wrkr_private_subnet
+         }' > "$extra_vars_file"
+   fi
+
+   hol_run_ansible_playbook "$DS_CONFIG_DIR/enable-cdf.yml" -e "@${extra_vars_file}" || return $?
+}
+#--------------------------------------------------------------------------------------------------#
+disable_cdf() {
+   hol_disable_service "cdf"
+   hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cdf.yml --extra-vars \
+      "cdp_env_name=$workshop_name-cdp-env \
+      workshop_name=$workshop_name"
+}
 #--------------------------------------------------------------------------------------------------#
 
 #---------------------------Start of functions for required roles to access data services-----------------------#
+hol_assign_pipeline_cdp_env_admin_roles() {
+   hol_subsection "Assigning CDP env admin roles (psejenkins, CDP caller, BUILD_USER_ID)" "🔐"
+   local env_name="${workshop_name}-cdp-env"
+   local script="" candidate
+   local candidates=(
+      "/usr/local/bin/assignCdpEnvAdminRoles.sh"
+      "/repo/OnCloud/AWS/build/jenkins/assignCdpEnvAdminRoles.sh"
+      "/repo/OnCloud/Azure/build/jenkins/assignCdpEnvAdminRoles.sh"
+   )
+
+   for candidate in "${candidates[@]}"; do
+      if [[ -f "$candidate" ]]; then
+         script="$candidate"
+         break
+      fi
+   done
+
+   if [[ -z "$script" ]]; then
+      hol_fail "assignCdpEnvAdminRoles.sh not found — cannot grant DFAdmin before data services"
+   fi
+
+   chmod +x "$script"
+   if ! CDP_ENV_NAME="$env_name" \
+      WORKSHOP_NAME="$workshop_name" \
+      BUILD_USER_ID="${BUILD_USER_ID:-}" \
+      CDP_MACHINE_USERNAME="${CDP_MACHINE_USERNAME:-psejenkins}" \
+      ASSIGN_BUILD_USER=true \
+      ASSIGN_MACHINE_USER=true \
+      ASSIGN_CALLER=true \
+      "$script"; then
+      hol_fail "CDP env admin role assignment failed for '${env_name}' (DFAdmin required for CDF enable)"
+   fi
+   hol_ok "Env admin roles assigned on ${env_name} (psejenkins, CDP ~/.cdp caller, BUILD_USER_ID when set)"
+}
+
+assign_environment_base_roles() {
+   hol_subsection "Assigning EnvironmentUser resource role" "🔐"
+   local resource_roles=("EnvironmentUser")
+   set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+}
+
 set_account_roles() {
    CDP_GROUP_NAME=${1}
    shift
@@ -1403,11 +2119,11 @@ set_account_roles() {
       exit_status=$?
 
       if [ $exit_status -eq 0 ]; then
-         echo "Role '$role_name' assigned successfully to CDP Group '$CDP_GROUP_NAME'."
+         hol_role_ok "$role_name" "$CDP_GROUP_NAME"
       elif echo "$output" | grep -q "ALREADY_EXISTS"; then
-         echo "Role '$role_name' is already assigned to CDP Group '$CDP_GROUP_NAME'. Skipping..."
+         hol_role_skip "$role_name" "$CDP_GROUP_NAME"
       else
-         echo "Error assigning role '$role_name':"
+         hol_role_error "$role_name" "$CDP_GROUP_NAME"
          echo "$output"
       fi
    done
@@ -1443,11 +2159,11 @@ set_resource_roles() {
       exit_status=$?
 
       if [ $exit_status -eq 0 ]; then
-         echo "Role '$role_name' assigned successfully to CDP Group '$CDP_GROUP_NAME'."
+         hol_role_ok "$role_name" "$CDP_GROUP_NAME"
       elif echo "$output" | grep -q "ALREADY_EXISTS"; then
-         echo "Role '$role_name' is already assigned to CDP Group '$CDP_GROUP_NAME'. Skipping..."
+         hol_role_skip "$role_name" "$CDP_GROUP_NAME"
       else
-         echo "Error assigning role '$role_name':"
+         hol_role_error "$role_name" "$CDP_GROUP_NAME"
          echo "$output"
       fi
    done
@@ -1457,138 +2173,252 @@ set_resource_roles() {
 }
 #-----------------------------------End of functions for required roles to access data services-----------------------------#
 
-enable_data_services() {
-   # Remove the brackets.
-   enable_data_services="${enable_data_services//[/}"
-   enable_data_services="${enable_data_services//]/}"
-   # Convert to lower case.
-   enable_data_services=$(echo "$enable_data_services" | tr '[:upper:]' '[:lower:]')
-   # Split into array.
-   IFS=',' read -ra data_services <<<"$enable_data_services"
-
-   # Deploy selected data services
-   for service in "${data_services[@]}"; do
-      resource_roles=("EnvironmentUser")
-      set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-      if [[ "$service" == "cdw" ]]; then
-         echo -e "\n               ==========================Initializing Parameter Values for CDW======================================\n"
-         # Default Values
-         DEFAULT_CDW_VRTL_WAREHOUSE_SIZE="xsmall"
-         DEFAULT_CDW_DATAVIZ_SIZE="viz-default"
-
-         # CDW (Cloudera Data Warehouse) Variables
-         cdw_vrtl_warehouse_size="${cdw_vrtl_warehouse_size:-$DEFAULT_CDW_VRTL_WAREHOUSE_SIZE}"
-         cdw_dataviz_size="${cdw_dataviz_size:-$DEFAULT_CDW_DATAVIZ_SIZE}"
-
-         # Print Assigned Values for CDW
-         echo "CDW (Cloudera Data Warehouse) Variables:"
-         echo "  Virtual Warehouse Size: $cdw_vrtl_warehouse_size"
-         echo "  DataViz Size: $cdw_dataviz_size"
-
-         deploy_cdw
-         resource_roles=("DWAdmin" "DWUser")
-         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-      elif [[ "$service" == "cde" ]]; then
-         echo -e "\n               ==========================Initializing Parameter Values for CDE======================================\n"
-         # Default Values
-         DEFAULT_CDE_INSTANCE_TYPE="m5.2xlarge"
-         DEFAULT_CDE_INITIAL_INSTANCES=10
-         DEFAULT_CDE_MIN_INSTANCES=10
-         DEFAULT_CDE_MAX_INSTANCES=40
-         DEFAULT_CDE_SPARK_VERSION="SPARK3"
-         DEFAULT_CDE_VC_TIER="CORE"
-
-         # CDE (Cloudera Data Engineering) Variables
-         cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
-         cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
-         cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
-         cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
-         cde_spark_version="${cde_spark_version:-$DEFAULT_CDE_SPARK_VERSION}"
-         cde_vc_tier="${cde_vc_tier:-$DEFAULT_CDE_VC_TIER}"
-
-         # Print Assigned Values for CDE
-         echo "CDE (Cloudera Data Engineering) Variables:"
-         echo "  Instance Type: $cde_instance_type"
-         echo "  Initial Instances: $cde_initial_instances"
-         echo "  Min Instances: $cde_min_instances"
-         echo "  Max Instances: $cde_max_instances"
-         echo "  Spark Version: $cde_spark_version"
-         echo "  Virtual Cluster Tier: $cde_vc_tier"
-
-         deploy_cde
-         resource_roles=("DEUser")
-         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-      elif [[ "$service" == "cml" ]]; then
-         echo -e "\n               ==========================Initializing Parameter Values for CML======================================\n"
-         # Default Values
-         DEFAULT_CML_WS_INSTANCE_TYPE="m5.2xlarge"
-         DEFAULT_CML_MIN_INSTANCES=1
-         DEFAULT_CML_MAX_INSTANCES=10
-         DEFAULT_CML_ENABLE_GPU="false"
-         DEFAULT_CML_GPU_INSTANCE_TYPE="g4dn.xlarge"
-         DEFAULT_CML_MIN_GPU_INSTANCES=0
-         DEFAULT_CML_MAX_GPU_INSTANCES=10
-
-         # CML (Cloudera Machine Learning) Variables
-         cml_ws_instance_type="${cml_ws_instance_type:-$DEFAULT_CML_WS_INSTANCE_TYPE}"
-         cml_min_instances="${cml_min_instances:-$DEFAULT_CML_MIN_INSTANCES}"
-         cml_max_instances="${cml_max_instances:-$DEFAULT_CML_MAX_INSTANCES}"
-         cml_enable_gpu="${cml_enable_gpu:-$DEFAULT_CML_ENABLE_GPU}"
-         cml_gpu_instance_type="${cml_gpu_instance_type:-$DEFAULT_CML_GPU_INSTANCE_TYPE}"
-         cml_min_gpu_instances="${cml_min_gpu_instances:-$DEFAULT_CML_MIN_GPU_INSTANCES}"
-         cml_max_gpu_instances="${cml_max_gpu_instances:-$DEFAULT_CML_MAX_GPU_INSTANCES}"
-
-         # Print Assigned Values for CML
-         echo "CML (Cloudera Machine Learning) Variables:"
-         echo "  WS Instance Type: $cml_ws_instance_type"
-         echo "  Min Instances: $cml_min_instances"
-         echo "  Max Instances: $cml_max_instances"
-         echo "  Enable GPU: $cml_enable_gpu"
-         echo "  GPU Instance Type: $cml_gpu_instance_type"
-         echo "  Min GPU Instances: $cml_min_gpu_instances"
-         echo "  Max GPU Instances: $cml_max_gpu_instances"
-
-         deploy_cml
-         resource_roles=("MLUser")
-         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-
-      elif [[ "$service" == "cdf" ]]; then
-         echo "CDF deployment is not supported at the moment"
-         #resource_roles=("DFAdmin" "DFFlowAdmin")
-         #account_role=("DFCatalogAdmin")
-         #set_account_roles $workshop_name-aw-cdp-user-group "${account_role[@]}"
-         #set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
-      else
-         echo "No Data Services Selected"
+wait_for_pids() {
+   local failed=0
+   local pid
+   for pid in "$@"; do
+      if ! wait "$pid"; then
+         failed=1
       fi
    done
+   return $failed
+}
+
+deploy_single_data_service() {
+   local service="$1"
+   local status=0
+
+   export HOL_SERVICE_TAG="$(hol_service_short "$service")"
+
+   case "$service" in
+   cdw)
+      hol_init_service "cdw"
+      DEFAULT_CDW_VRTL_WAREHOUSE_SIZE="xsmall"
+      DEFAULT_CDW_DATAVIZ_SIZE="viz-default"
+      cdw_vrtl_warehouse_size="${cdw_vrtl_warehouse_size:-$DEFAULT_CDW_VRTL_WAREHOUSE_SIZE}"
+      cdw_dataviz_size="${cdw_dataviz_size:-$DEFAULT_CDW_DATAVIZ_SIZE}"
+      hol_service_vars \
+         "Virtual Warehouse Size" "$cdw_vrtl_warehouse_size" \
+         "DataViz Size" "$cdw_dataviz_size"
+      hol_deploy_service "cdw"
+      deploy_cdw || status=1
+      if [[ $status -eq 0 ]]; then
+         resource_roles=("DWAdmin" "DWUser")
+         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      fi
+      ;;
+   cde)
+      hol_init_service "cde"
+      DEFAULT_CDE_INSTANCE_TYPE="m5.2xlarge"
+      DEFAULT_CDE_MIN_INSTANCES=0
+      DEFAULT_CDE_MAX_INSTANCES=25
+      DEFAULT_CDE_SPARK_VERSION="AUTO"
+      DEFAULT_CDE_VC_TIER="CORE"
+      DEFAULT_CDE_INITIAL_INSTANCES=1
+      cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
+      cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
+      cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
+      cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
+      cde_spark_version="${cde_spark_version:-$DEFAULT_CDE_SPARK_VERSION}"
+      cde_spark_version_resolved="$(hol_resolve_cde_spark_version "$cde_spark_version" "${datalake_version:-}")"
+      cde_vc_tier="${cde_vc_tier:-$DEFAULT_CDE_VC_TIER}"
+      hol_service_vars \
+         "Instance Type" "$cde_instance_type" \
+         "Initial Instances" "$cde_initial_instances" \
+         "Min Instances" "$cde_min_instances" \
+         "Max Instances" "$cde_max_instances" \
+         "Spark Version" "$cde_spark_version_resolved" \
+         "Virtual Cluster Tier" "$cde_vc_tier"
+      hol_deploy_service "cde"
+      deploy_cde || status=1
+      if [[ $status -eq 0 ]]; then
+         resource_roles=("DEUser")
+         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      fi
+      ;;
+   cai)
+      hol_init_service "cai"
+      DEFAULT_CAI_WS_INSTANCE_TYPE="m5.2xlarge"
+      DEFAULT_CAI_MIN_INSTANCES=1
+      DEFAULT_CAI_MAX_INSTANCES=10
+      DEFAULT_CAI_ENABLE_GPU="false"
+      DEFAULT_CAI_GPU_INSTANCE_TYPE="g4dn.xlarge"
+      DEFAULT_CAI_MIN_GPU_INSTANCES=0
+      DEFAULT_CAI_MAX_GPU_INSTANCES=10
+      cai_ws_instance_type="${cai_ws_instance_type:-$DEFAULT_CAI_WS_INSTANCE_TYPE}"
+      cai_min_instances="${cai_min_instances:-$DEFAULT_CAI_MIN_INSTANCES}"
+      cai_max_instances="${cai_max_instances:-$DEFAULT_CAI_MAX_INSTANCES}"
+      cai_enable_gpu="${cai_enable_gpu:-$DEFAULT_CAI_ENABLE_GPU}"
+      cai_gpu_instance_type="${cai_gpu_instance_type:-$DEFAULT_CAI_GPU_INSTANCE_TYPE}"
+      cai_min_gpu_instances="${cai_min_gpu_instances:-$DEFAULT_CAI_MIN_GPU_INSTANCES}"
+      cai_max_gpu_instances="${cai_max_gpu_instances:-$DEFAULT_CAI_MAX_GPU_INSTANCES}"
+      hol_service_vars \
+         "WS Instance Type" "$cai_ws_instance_type" \
+         "Min Instances" "$cai_min_instances" \
+         "Max Instances" "$cai_max_instances" \
+         "Enable GPU" "$cai_enable_gpu" \
+         "GPU Instance Type" "$cai_gpu_instance_type" \
+         "Min GPU Instances" "$cai_min_gpu_instances" \
+         "Max GPU Instances" "$cai_max_gpu_instances"
+      hol_deploy_service "cai"
+      deploy_cai || status=1
+      if [[ $status -eq 0 ]]; then
+         resource_roles=("MLUser")
+         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      fi
+      ;;
+   cdf)
+      hol_init_service "cdf"
+      DEFAULT_CDF_INSTANCE_TYPE=""
+      DEFAULT_CDF_MIN_NODES=3
+      DEFAULT_CDF_MAX_NODES=10
+      DEFAULT_CDF_USE_PUBLIC_LB="true"
+      cdf_instance_type="${cdf_instance_type:-$DEFAULT_CDF_INSTANCE_TYPE}"
+      cdf_min_nodes="${cdf_min_nodes:-$DEFAULT_CDF_MIN_NODES}"
+      cdf_max_nodes="${cdf_max_nodes:-$DEFAULT_CDF_MAX_NODES}"
+      cdf_use_public_lb="${cdf_use_public_lb:-$DEFAULT_CDF_USE_PUBLIC_LB}"
+      hol_service_vars \
+         "Instance Type" "${cdf_instance_type:-CDP default}" \
+         "Min Nodes" "$cdf_min_nodes" \
+         "Max Nodes" "$cdf_max_nodes" \
+         "Use Public Load Balancer" "$cdf_use_public_lb"
+      hol_deploy_service "cdf"
+      deploy_cdf || status=1
+      if [[ $status -eq 0 ]]; then
+         resource_roles=("DFFlowUser" "DFFlowDeveloper")
+         set_resource_roles $workshop_name-aw-cdp-user-group $workshop_name-cdp-env "${resource_roles[@]}"
+      fi
+      ;;
+   *)
+      hol_warn "Unknown data service: $service"
+      status=1
+      ;;
+   esac
+
+   unset HOL_SERVICE_TAG
+   return $status
+}
+
+disable_single_data_service() {
+   local service="$1"
+   local status=0
+
+   export HOL_SERVICE_TAG="$(hol_service_short "$service")"
+
+   case "$service" in
+   cdw) disable_cdw || status=1 ;;
+   cde) disable_cde || status=1 ;;
+   cai) disable_cai || status=1 ;;
+   cdf) disable_cdf || status=1 ;;
+   *)
+      hol_warn "Unknown data service: $service"
+      status=1
+      ;;
+   esac
+
+   unset HOL_SERVICE_TAG
+   return $status
+}
+
+hol_enable_data_services() {
+   hol_fixup_cloudera_cloud_python
+
+   local selected_services csv
+   selected_services=$(hol_enabled_data_services_csv)
+
+   IFS=',' read -ra data_services <<<"$selected_services"
+   local services_to_deploy=()
+   local service token
+
+   hol_info "ENABLE_DATA_SERVICES config: ${HOL_ENABLE_DATA_SERVICES:-n/a}"
+
+   for service in "${data_services[@]}"; do
+      token=$(hol_normalize_data_service_token "$service")
+      [[ -z "$token" ]] && continue
+      if [[ "$token" == "cai" && "$provision_caii" == "yes" ]]; then
+         hol_skip "CAI skipped in data services list — provisioned by CAII"
+         continue
+      fi
+      services_to_deploy+=("$token")
+   done
+
+   if [ "${#services_to_deploy[@]}" -eq 0 ]; then
+      hol_info "No data services selected"
+      return 0
+   fi
+
+   hol_assign_pipeline_cdp_env_admin_roles || return 1
+
+   local failed=0
+   local pids=()
+   local service
+
+   hol_stop_service_log_tailers
+   for service in "${services_to_deploy[@]}"; do
+      hol_start_service_log_tailer "$(hol_service_short "$service")"
+   done
+
+   hol_parallel_start
+   hol_info "Services: ${services_to_deploy[*]} (live logs: /userconfig/.${workshop_name}/logs/)"
+
+   for service in "${services_to_deploy[@]}"; do
+      deploy_single_data_service "$service" &
+      pids+=($!)
+   done
+
+   hol_wait_parallel_data_services pids services_to_deploy || failed=1
+   hol_stop_service_log_tailers
+
+   hol_subsection "Deploy playbook logs" "📋"
+   for service in "${services_to_deploy[@]}"; do
+      hol_kv "$(hol_service_short "$service")" "/userconfig/.${workshop_name}/logs/$(hol_service_short "$service").log"
+   done
+   return $failed
 }
 #--------------------------------------------------------------------------------------------------#
 disable_data_services() {
-   # Remove the brackets.
-   enabled_data_services="${enable_data_services//[/}"
-   enabled_data_services="${enabled_data_services//]/}"
-   # converting to lower case.
-   enabled_data_services=$(echo "$enabled_data_services" | tr '[:upper:]' '[:lower:]')
-   # Spliting into array.
-   IFS=',' read -ra data_services <<<"$enabled_data_services"
+   local selected_services token
+   selected_services=$(hol_enabled_data_services_csv)
 
-   # Deploying selected data services
+   IFS=',' read -ra data_services <<<"$selected_services"
+   local services_to_disable=()
+   local service
+
    for service in "${data_services[@]}"; do
-      if [[ "$service" == "cdw" ]]; then
-         disable_cdw
-      elif [[ "$service" == "cde" ]]; then
-         disable_cde
-      elif [[ "$service" == "cml" ]]; then
-         disable_cml
-      elif [[ "$service" == "cdf" ]]; then
-         echo "CDF"
-      else
-         echo "No Data Services were deployed"
-      fi
+      token=$(hol_normalize_data_service_token "$service")
+      [[ -z "$token" ]] && continue
+      services_to_disable+=("$token")
    done
+
+   if [ "${#services_to_disable[@]}" -eq 0 ]; then
+      hol_info "No data services to disable"
+      return 0
+   fi
+
+   hol_subsection "Disabling data services in parallel" "🗑️"
+   hol_info "Services: ${services_to_disable[*]}"
+
+   local failed=0
+   local pids=()
+   local service
+
+   hol_stop_service_log_tailers
+   for service in "${services_to_disable[@]}"; do
+      hol_start_service_log_tailer "$(hol_service_short "$service")"
+   done
+
+   for service in "${services_to_disable[@]}"; do
+      disable_single_data_service "$service" &
+      pids+=($!)
+   done
+
+   hol_wait_parallel_data_services pids services_to_disable || failed=1
+   hol_stop_service_log_tailers
+
+   hol_subsection "Disable playbook logs" "📋"
+   for service in "${services_to_disable[@]}"; do
+      hol_kv "$(hol_service_short "$service")" "/userconfig/.${workshop_name}/logs/$(hol_service_short "$service").log"
+   done
+   return $failed
 }
 #--------------------------------------------------------------------------------------------------#

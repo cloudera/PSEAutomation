@@ -1,0 +1,523 @@
+---
+- name: Enable CDF data service
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    # instance_type is optional. Leave it unset so df_service omits it and CDP
+    # chooses the default node type. A non-empty extra-var requires permission
+    # to set custom DataFlow instance types.
+    minimum_nodes: 3
+    maximum_nodes: 10
+    use_public_load_balancer: true
+    # Enable only when the service is absent. NOT_ENABLED and unhealthy states
+    # are reset first, then enabled. Every other present state skips enable-service.
+    cdf_absent_states:
+      - NOT_FOUND
+      - DISABLED
+    cdf_recovery_states:
+      - CONCERNING_HEALTH
+      - BAD_HEALTH
+      - UNKNOWN
+    cdf_healthy_states:
+      - GOOD_HEALTH
+    cdf_in_progress_states:
+      - ENABLING
+      - DISABLING
+    cdf_in_progress_detailed_states:
+      - PROVISIONING_INFRASTRUCTURE
+      - PROVISIONING
+    cdf_skip_enable_states:
+      - GOOD_HEALTH
+      - ENABLING
+      - DISABLING
+      - PROVISIONING
+      - PROVISIONING_INFRASTRUCTURE
+    cdf_poll_retries: 80
+    cdf_poll_delay: 60
+    cdf_enable_api_retries: 8
+    cdf_enable_retry_delay: 90
+    cdf_enable_initial_delay: 90
+
+  tasks:
+    - name: Sanitize instance type value
+      ansible.builtin.set_fact:
+        instance_type: >-
+          {{
+            (instance_type | regex_search('Standard_[A-Za-z0-9_]+'))
+            | default(instance_type, true)
+          }}
+      when: instance_type is defined and (instance_type | string | trim | length) > 0
+
+    - name: Check and print variable status
+      ansible.builtin.debug:
+        msg:
+          - "cdp_env_name: {{ cdp_env_name }}"
+          - "workshop_name: {{ workshop_name }}"
+          - "instance_type: {{ (instance_type | default('') | trim) if (instance_type | default('') | trim | length > 0) else 'omitted' }}"
+          - "minimum_nodes: {{ minimum_nodes }}"
+          - "maximum_nodes: {{ maximum_nodes }}"
+          - "use_public_load_balancer: {{ use_public_load_balancer }}"
+          - "env_lb_public_subnet: {{ env_lb_public_subnet }}"
+          - "env_wrkr_private_subnet: {{ env_wrkr_private_subnet }}"
+
+    - name: Validate CDF minimum node count
+      ansible.builtin.assert:
+        that:
+          - minimum_nodes | int >= 3
+          - maximum_nodes | int >= minimum_nodes | int
+        fail_msg: "CDF requires at least 3 nodes and maximum_nodes must be >= minimum_nodes."
+
+    - name: Normalize load balancer subnet list
+      ansible.builtin.set_fact:
+        cdf_lb_subnets: >-
+          {{
+            env_lb_public_subnet
+            if env_lb_public_subnet is iterable and env_lb_public_subnet is not string
+            else env_lb_public_subnet | from_json
+          }}
+      when: env_lb_public_subnet is defined and env_lb_public_subnet | length > 0
+
+    - name: Normalize cluster subnet list
+      ansible.builtin.set_fact:
+        cdf_cluster_subnets: >-
+          {{
+            env_wrkr_private_subnet
+            if env_wrkr_private_subnet is iterable and env_wrkr_private_subnet is not string
+            else env_wrkr_private_subnet | from_json
+          }}
+      when: env_wrkr_private_subnet is defined and env_wrkr_private_subnet | length > 0
+
+    - name: List CDF services for environment
+      ansible.builtin.command: cdp df list-services --no-paginate
+      register: cdf_list_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Set CDF list-service facts
+      ansible.builtin.set_fact:
+        cdf_list_service: >-
+          {{
+            (
+              (cdf_list_raw.stdout | default('{"services": []}') | from_json).services
+              | default([])
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            )
+          }}
+        cdf_list_detailed_state: >-
+          {{
+            (
+              (cdf_list_raw.stdout | default('{"services": []}') | from_json).services
+              | default([])
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            ).status.detailedState | default('')
+          }}
+        cdf_list_state: >-
+          {{
+            (
+              (cdf_list_raw.stdout | default('{"services": []}') | from_json).services
+              | default([])
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            ).status.state | default('NOT_FOUND')
+          }}
+
+    - name: Check if CDF service is already enabled
+      cloudera.cloud.df_service_info:
+        name: "{{ cdp_env_name }}"
+      register: df_service_info
+      failed_when: false
+
+    - name: Set CDF service state facts
+      ansible.builtin.set_fact:
+        cdf_info_state: >-
+          {{
+            df_service_info.services[0].status.state | default('NOT_FOUND')
+            if (df_service_info.services | default([], true) | length > 0)
+            else 'NOT_FOUND'
+          }}
+        cdf_info_detailed_state: >-
+          {{
+            df_service_info.services[0].status.detailedState | default('')
+            if (df_service_info.services | default([], true) | length > 0)
+            else ''
+          }}
+        cdf_service_exists: >-
+          {{
+            (df_service_info.services | default([], true) | length > 0) or
+            (cdf_list_state not in ['NOT_FOUND', 'NOT_ENABLED'])
+          }}
+        cdf_current_state: >-
+          {{
+            cdf_list_state
+            if (cdf_list_state | default('NOT_FOUND')) not in ['NOT_FOUND', '']
+            else (
+              df_service_info.services[0].status.state | default('NOT_FOUND')
+              if (df_service_info.services | default([], true) | length > 0)
+              else 'NOT_FOUND'
+            )
+          }}
+        cdf_current_detailed_state: >-
+          {{
+            cdf_list_detailed_state | default('')
+            if (cdf_list_detailed_state | default('') | length) > 0
+            else (
+              df_service_info.services[0].status.detailedState | default('')
+              if (df_service_info.services | default([], true) | length > 0)
+              else ''
+            )
+          }}
+
+    - name: Set CDF derived state flags
+      ansible.builtin.set_fact:
+        cdf_service_healthy: >-
+          {{
+            (
+              (cdf_current_state in cdf_healthy_states) or
+              (cdf_current_detailed_state | default('') in cdf_healthy_states) or
+              (cdf_info_state | default('NOT_FOUND') in cdf_healthy_states) or
+              (cdf_info_detailed_state | default('') in cdf_healthy_states) or
+              (cdf_list_state | default('NOT_FOUND') in cdf_healthy_states) or
+              (cdf_list_detailed_state | default('') in cdf_healthy_states)
+            ) | bool
+          }}
+        cdf_service_in_progress: >-
+          {{
+            (
+              (cdf_current_state in cdf_in_progress_states) or
+              (cdf_current_detailed_state | default('') in cdf_in_progress_detailed_states) or
+              (cdf_current_detailed_state | default('') in cdf_in_progress_states) or
+              (cdf_info_state | default('NOT_FOUND') in cdf_in_progress_states) or
+              (cdf_info_detailed_state | default('') in cdf_in_progress_detailed_states) or
+              (cdf_info_detailed_state | default('') in cdf_in_progress_states) or
+              (cdf_list_state | default('NOT_FOUND') in cdf_in_progress_states) or
+              (cdf_list_detailed_state | default('') in cdf_in_progress_detailed_states) or
+              (cdf_list_detailed_state | default('') in cdf_in_progress_states)
+            ) | bool
+          }}
+        cdf_service_needs_recovery: >-
+          {{
+            (
+              (cdf_current_state in cdf_recovery_states) or
+              (cdf_list_state | default('NOT_FOUND') in cdf_recovery_states) or
+              (cdf_info_state | default('NOT_FOUND') in cdf_recovery_states)
+            ) | bool
+          }}
+        cdf_skip_enable: >-
+          {{
+            (
+              (
+                (cdf_current_state | default('NOT_FOUND')) not in (cdf_absent_states + cdf_recovery_states + ['NOT_ENABLED'])
+                and (cdf_current_state | default('') | length) > 0
+              )
+              or (cdf_current_state | default('NOT_FOUND') in cdf_skip_enable_states)
+              or (cdf_current_detailed_state | default('') in cdf_skip_enable_states)
+              or (cdf_list_state | default('NOT_FOUND') in cdf_skip_enable_states)
+              or (cdf_list_detailed_state | default('') in cdf_skip_enable_states)
+              or (cdf_info_state | default('NOT_FOUND') in cdf_skip_enable_states)
+              or (cdf_info_detailed_state | default('') in cdf_skip_enable_states)
+            ) | bool
+          }}
+
+    - name: Print current CDF service state
+      ansible.builtin.debug:
+        msg: >-
+          CDF state for {{ cdp_env_name }}:
+          state={{ cdf_current_state }},
+          detailedState={{ cdf_current_detailed_state | default('n/a') }},
+          healthy={{ cdf_service_healthy }},
+          in_progress={{ cdf_service_in_progress }},
+          needs_recovery={{ cdf_service_needs_recovery }},
+          skip_enable={{ cdf_skip_enable }}
+
+    - name: Skip enable when CDF service already exists
+      ansible.builtin.debug:
+        msg: >-
+          CDF for environment {{ cdp_env_name }} already exists
+          (state: {{ cdf_current_state }}, detailedState: {{ cdf_current_detailed_state | default('n/a') }},
+          list_state: {{ cdf_list_state }}) — skipping enable-service.
+      when: cdf_skip_enable | default(false)
+
+    - name: Print success message when CDF is already healthy
+      ansible.builtin.debug:
+        msg: "Successfully provisioned CDF for environment {{ cdp_env_name }}."
+      when:
+        - cdf_skip_enable | default(false)
+        - cdf_service_healthy | default(false)
+
+    - name: Skip enable API while CDF provisioning is in progress
+      ansible.builtin.debug:
+        msg: >-
+          CDF enable already in progress for {{ cdp_env_name }}
+          (state: {{ cdf_current_state }}, detailedState: {{ cdf_current_detailed_state | default('n/a') }})
+          — skipping enable-service; waiting for GOOD_HEALTH.
+      when:
+        - cdf_skip_enable | default(false)
+        - cdf_service_in_progress | default(false)
+        - not cdf_service_healthy | default(false)
+
+    - name: End play when CDF is already healthy
+      ansible.builtin.meta: end_play
+      when:
+        - cdf_skip_enable | default(false)
+        - cdf_service_healthy | default(false)
+
+    - name: Reset stale NOT_ENABLED CDF service record
+      cloudera.cloud.df_service:
+        name: "{{ cdp_env_name }}"
+        state: absent
+        force: true
+        wait: true
+        timeout: 3600
+      when: cdf_list_state == 'NOT_ENABLED'
+      register: cdf_reset_result
+      failed_when: false
+
+    - name: Recover unhealthy CDF service before enable
+      cloudera.cloud.df_service:
+        name: "{{ cdp_env_name }}"
+        state: absent
+        terminate: true
+        persist: false
+        wait: true
+        timeout: 3600
+      when: cdf_service_needs_recovery
+      register: cdf_recover_result
+      failed_when: false
+
+    - name: Get CDP environment CRN for enable-service
+      ansible.builtin.command: cdp environments describe-environment --environment-name "{{ cdp_env_name }}"
+      register: cdp_env_desc_enable
+      changed_when: false
+      failed_when: cdp_env_desc_enable.rc != 0
+      when: not cdf_skip_enable | default(false)
+
+    - name: Set CDP environment CRN for CDF enable
+      ansible.builtin.set_fact:
+        cdp_env_crn: "{{ (cdp_env_desc_enable.stdout | from_json).environment.crn }}"
+      when:
+        - not cdf_skip_enable | default(false)
+        - cdp_env_desc_enable.rc == 0
+
+    - name: Pause for IAM sync after env admin role assignment
+      ansible.builtin.pause:
+        seconds: "{{ cdf_enable_initial_delay | int }}"
+      when: not cdf_skip_enable | default(false)
+
+    - name: Refresh CDF list state immediately before enable-service
+      ansible.builtin.command: cdp df list-services --no-paginate
+      register: cdf_pre_enable_list_raw
+      changed_when: false
+      failed_when: false
+      when: not cdf_skip_enable | default(false)
+
+    - name: Apply pre-enable list-services state
+      ansible.builtin.set_fact:
+        cdf_pre_enable_list_state: >-
+          {{
+            (
+              (cdf_pre_enable_list_raw.stdout | default('{"services": []}') | from_json).services
+              | default([])
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            ).status.state | default('NOT_FOUND')
+          }}
+        cdf_pre_enable_list_detailed_state: >-
+          {{
+            (
+              (cdf_pre_enable_list_raw.stdout | default('{"services": []}') | from_json).services
+              | default([])
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            ).status.detailedState | default('')
+          }}
+      when:
+        - not cdf_skip_enable | default(false)
+        - cdf_pre_enable_list_raw is defined
+
+    - name: Skip enable-service when pre-enable refresh shows in-progress provisioning
+      ansible.builtin.set_fact:
+        cdf_current_state: "{{ cdf_pre_enable_list_state }}"
+        cdf_current_detailed_state: "{{ cdf_pre_enable_list_detailed_state }}"
+        cdf_list_state: "{{ cdf_pre_enable_list_state }}"
+        cdf_list_detailed_state: "{{ cdf_pre_enable_list_detailed_state }}"
+        cdf_service_in_progress: true
+        cdf_skip_enable: true
+      when:
+        - not cdf_skip_enable | default(false)
+        - cdf_pre_enable_list_state is defined
+        - >-
+          (
+            (cdf_pre_enable_list_state in cdf_in_progress_states) or
+            (cdf_pre_enable_list_detailed_state in cdf_in_progress_detailed_states) or
+            (cdf_pre_enable_list_detailed_state in cdf_in_progress_states) or
+            (cdf_pre_enable_list_state in cdf_skip_enable_states and cdf_pre_enable_list_state not in cdf_absent_states)
+          )
+
+    - name: Log pre-enable refresh override
+      ansible.builtin.debug:
+        msg: >-
+          Pre-enable list-services shows CDF {{ cdp_env_name }} in progress
+          (state={{ cdf_pre_enable_list_state }}, detailedState={{ cdf_pre_enable_list_detailed_state | default('n/a') }})
+          — skipping enable-service; waiting for GOOD_HEALTH.
+      when:
+        - cdf_pre_enable_list_state is defined
+        - cdf_service_in_progress | default(false)
+        - cdf_skip_enable | default(false)
+        - not cdf_service_healthy | default(false)
+
+    - name: Initialize CDF enable retry loop
+      ansible.builtin.set_fact:
+        cdf_enable_retry_done: false
+      when:
+        - not cdf_skip_enable | default(false)
+
+    - name: Run CDF enable CLI attempts
+      ansible.builtin.include_tasks: cdf-enable-api-attempt.yml
+      loop: "{{ range(1, cdf_enable_api_retries | int + 1) | list }}"
+      loop_control:
+        loop_var: cdf_enable_attempt
+        label: "attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }}"
+      when:
+        - not cdf_skip_enable | default(false)
+        - not cdf_enable_retry_done | default(false)
+
+    - name: Set CDF enable CLI outcome flags
+      ansible.builtin.set_fact:
+        cdf_enable_api_failed: >-
+          {{
+            (
+              (
+                (cdf_enable_result.rc | default(0) | int) != 0 or
+                cdf_enable_result.failed | default(false) or
+                (
+                  (cdf_enable_result.msg | default('') | string) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out|access denied|not authorized)')
+                )
+              ) and not (cdf_enable_poll_only | default(false) | bool)
+            ) | bool
+          }}
+        cdf_enable_authorizing_error: >-
+          {{
+            (cdf_enable_result.msg | default('') | string) is search('(?i)(authorizing|\\[500\\]|error occurred while authorizing)')
+          }}
+        cdf_enable_stuck_precondition: >-
+          {{
+            (
+              (cdf_enable_poll_only | default(false) | bool) and
+              (
+                (cdf_enable_result.msg | default('') | string) is search('(?i)(412|CANCEL_ENABLE|FAILED_PRECONDITION|stuck or in-flight enable)')
+              )
+            ) | bool
+          }}
+      when: cdf_enable_result is defined
+
+    - name: Print CDF enable CLI result
+      ansible.builtin.debug:
+        msg: >-
+          CDF enable CLI result:
+          rc={{ cdf_enable_result.rc | default('n/a') }},
+          changed={{ cdf_enable_result.changed | default(false) }},
+          failed={{ cdf_enable_result.failed | default(false) }},
+          api_error={{ cdf_enable_api_failed | default(false) }},
+          msg={{ cdf_enable_result.msg | default('n/a') }}
+      when: cdf_enable_result is defined
+
+    - name: Fail fast when CDF enable CLI returned an error
+      ansible.builtin.fail:
+        msg: >-
+          cdp df enable-service failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
+          (transient INTERNAL/authorizing/[500] responses are retried with {{ cdf_enable_retry_delay }}s delay;
+          412 FAILED_PRECONDITION / CANCEL_ENABLE is not retried — the playbook polls for GOOD_HEALTH instead):
+          {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}.
+          Verify the CDP caller (~/.cdp credentials used in the container) has environment-scoped DFAdmin
+          (assignCdpEnvAdminRoles.sh / hol_assign_pipeline_cdp_env_admin_roles assigns DFAdmin and syncs users).
+          Manual `cdp df enable-service` succeeding while Ansible failed often means IAM propagation lag right
+          after role assignment. Persistent authorizing/[500] after retries usually means missing
+          DFAdmin on the active caller, not a subnet sizing issue.
+      when:
+        - cdf_enable_result is defined
+        - cdf_enable_api_failed | default(false)
+
+    - name: Wait for CDF creation
+      cloudera.cloud.df_service_info:
+        name: "{{ cdp_env_name }}"
+      register: df_service_status
+      until: >-
+        df_service_status is succeeded and
+        (df_service_status.services | default([], true) | length > 0) and
+        (
+          (df_service_status.services[0].status.state | default('')) in cdf_healthy_states or
+          (df_service_status.services[0].status.detailedState | default('')) in cdf_healthy_states
+        )
+      retries: "{{ cdf_poll_retries }}"
+      delay: "{{ cdf_poll_delay }}"
+      failed_when: false
+      when: not cdf_enable_api_failed | default(false)
+
+    - name: Set final CDF health flag
+      ansible.builtin.set_fact:
+        cdf_final_healthy: >-
+          {{
+            cdf_service_healthy or (
+              df_service_status is defined and
+              (df_service_status.services | default([], true) | length > 0) and
+              (
+                (df_service_status.services[0].status.state | default('')) in cdf_healthy_states or
+                (df_service_status.services[0].status.detailedState | default('')) in cdf_healthy_states
+              )
+            )
+          }}
+        cdf_final_state: >-
+          {{
+            df_service_status.services[0].status.state | default(cdf_current_state)
+            if (
+              df_service_status is defined and
+              (df_service_status.services | default([], true) | length > 0)
+            )
+            else cdf_current_state
+          }}
+        cdf_final_detailed_state: >-
+          {{
+            df_service_status.services[0].status.detailedState | default(cdf_current_detailed_state)
+            if (
+              df_service_status is defined and
+              (df_service_status.services | default([], true) | length > 0)
+            )
+            else cdf_current_detailed_state
+          }}
+
+    - name: Fail when CDF did not reach healthy state
+      ansible.builtin.fail:
+        msg: >-
+          CDF did not reach a healthy state for {{ cdp_env_name }}
+          (state: {{ cdf_final_state | default('unknown') }},
+          detailedState: {{ cdf_final_detailed_state | default('unknown') }}).
+          {{
+            (
+              'CDP reported enable already in progress (412/CANCEL_ENABLE) but the service never reached GOOD_HEALTH. '
+              ~ 'A prior failed run may have left a stuck enable — run disable-cdf.yml (or cancel enable in the CDP DataFlow UI) '
+              ~ 'then re-run enable, or wait and retry the Jenkins job.'
+            )
+            if (cdf_enable_stuck_precondition | default(false) or cdf_service_in_progress | default(false))
+            else (
+              'The enable request may not have started — check CDP DF service events and subnet configuration.'
+            )
+          }}
+      when: not cdf_final_healthy | default(false)
+
+    - name: Print success message on successful CDF service enable
+      ansible.builtin.debug:
+        msg: "Successfully provisioned CDF for environment {{ cdp_env_name }}."
+      when: cdf_final_healthy | default(false)

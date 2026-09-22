@@ -138,7 +138,7 @@ def main():
 
     for filename in os.listdir(LOG_FOLDER):
         if filename.startswith(BASE_LOG_NAME) and filename.endswith(LOG_EXT):
-            query_runNum = re.findall("\\d+\\.\\d+", filename)
+            query_runNum = re.findall(r"\d+\.\d+", filename)
             if len(query_runNum) == 1:
                 query_num = query_runNum[0]
                 filepath = LOG_FOLDER + filename
