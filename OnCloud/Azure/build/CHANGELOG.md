@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed
+- CAI teardown (Azure): if the repaired workbench remains in `deprovision:failed` after the transition grace window, recheck/recreate its managed identity and federated credential and resubmit normal deletion before failing closed.
 - CAI teardown (Azure): after repairing an orphaned identity and resubmitting deletion, allow a six-check grace window for the stale `deprovision:failed` status to transition before treating it as a new terminal failure.
 - CAI teardown (Azure): repair a prematurely removed `adminIdentity` and archiver federated credential so CDP can complete normal cloud cleanup, then verify all Azure resources tagged with the workspace CRN are gone. Force deletion is allowed only when Azure already reports zero workspace resources, preventing silent cloud-resource orphaning.
 - CAII teardown (Azure): delete the CAI workspace before its registry and compute cluster so concurrent cleanup cannot race while removing federated credentials from the same managed identity; propagate failures from every CAII cleanup stage.

@@ -210,6 +210,86 @@
         - workspace_exists
         - (ml_delete_workspace.rc | default(1)) == 0
 
+    - name: Repair identity and retry failed CAI workspace deletion
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if ! az identity show \
+          --subscription "$CAI_SUBSCRIPTION_ID" \
+          --resource-group "$CAI_RESOURCE_GROUP" \
+          --name "$CAI_IDENTITY_NAME" \
+          --only-show-errors >/dev/null 2>&1; then
+          az identity create \
+            --subscription "$CAI_SUBSCRIPTION_ID" \
+            --resource-group "$CAI_RESOURCE_GROUP" \
+            --name "$CAI_IDENTITY_NAME" \
+            --only-show-errors >/dev/null
+          echo "IDENTITY_RECREATED=true"
+        fi
+
+        issuer=$(az aks show \
+          --subscription "$CAI_SUBSCRIPTION_ID" \
+          --resource-group "$CAI_RESOURCE_GROUP" \
+          --name "$CAI_CLUSTER_NAME" \
+          --query oidcIssuerProfile.issuerUrl \
+          --output tsv \
+          --only-show-errors)
+
+        if ! az identity federated-credential show \
+          --subscription "$CAI_SUBSCRIPTION_ID" \
+          --resource-group "$CAI_RESOURCE_GROUP" \
+          --identity-name "$CAI_IDENTITY_NAME" \
+          --name "$CAI_CREDENTIAL_NAME" \
+          --only-show-errors >/dev/null 2>&1; then
+          az identity federated-credential create \
+            --subscription "$CAI_SUBSCRIPTION_ID" \
+            --resource-group "$CAI_RESOURCE_GROUP" \
+            --identity-name "$CAI_IDENTITY_NAME" \
+            --name "$CAI_CREDENTIAL_NAME" \
+            --issuer "$issuer" \
+            --subject system:serviceaccount:mlx:mlx-sa-cdsw-archiver \
+            --audiences api://AzureADTokenExchange \
+            --only-show-errors >/dev/null
+          echo "FEDERATED_CREDENTIAL_RECREATED=true"
+        fi
+
+        cdp ml delete-workspace \
+          --environment-name "$CAI_ENVIRONMENT_NAME" \
+          --workspace-name "$CAI_WORKSPACE_NAME" \
+          --no-force \
+          --remove-storage
+        echo "Normal CAI workspace deletion resubmitted after deprovision failure."
+      args:
+        executable: /bin/bash
+      environment:
+        CAI_SUBSCRIPTION_ID: "{{ cai_azure_subscription_id }}"
+        CAI_RESOURCE_GROUP: "{{ cai_azure_resource_group }}"
+        CAI_IDENTITY_NAME: "{{ cai_admin_identity_name }}"
+        CAI_CLUSTER_NAME: "{{ cai_k8s_cluster_name }}"
+        CAI_CREDENTIAL_NAME: "{{ cai_archiver_credential_name }}"
+        CAI_ENVIRONMENT_NAME: "{{ cdp_env_name }}"
+        CAI_WORKSPACE_NAME: "{{ workshop_name }}-cai-ws"
+      register: cai_redelete_workspace
+      when: >
+        (cai_normal_delete_grace_status.stdout | default('') | trim) in
+          ['installation:failed', 'modify:failed', 'deprovision:failed']
+
+    - name: Allow retried CAI deletion to transition
+      ansible.builtin.shell: |
+        set -o pipefail
+        cdp ml list-workspaces 2>/dev/null | jq -r --arg ws "{{ workshop_name }}-cai-ws" --arg env "{{ cdp_env_name }}" '
+          [.workspaces[]? | select(.instanceName == $ws and .environmentName == $env)][0].instanceStatus // "ABSENT"'
+      args:
+        executable: /bin/bash
+      register: cai_redelete_grace_status
+      changed_when: false
+      failed_when: false
+      until: >
+        (cai_redelete_grace_status.stdout | default('') | trim) not in
+          ['installation:failed', 'modify:failed', 'deprovision:failed']
+      retries: 6
+      delay: "{{ ds_disable_wait_delay }}"
+      when: cai_redelete_workspace is not skipped
+
     - name: Poll normal CAI workspace deletion
       ansible.builtin.shell: |
         set -o pipefail
@@ -345,7 +425,9 @@
           - "{{ cai_admin_identity_name }}"
           - --only-show-errors
       when:
-        - cai_admin_identity_repair is not skipped
+        - >
+          (cai_admin_identity_repair is not skipped) or
+          ('IDENTITY_RECREATED=true' in (cai_redelete_workspace.stdout | default('')))
         - (cai_azure_resource_final_count.stdout | default('1') | trim | int) == 0
 
     - name: Fail when CAI workspace deletion did not complete
