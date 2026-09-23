@@ -2242,20 +2242,7 @@ destroy_cdp() {
    cdp_cidr="\"${cdp_cidr}\""
 
    # Data service teardown is enforced by disable_data_services (playbooks + entrypoint exit on failure).
-   # Do not re-poll CDP list APIs here — stale control-plane rows block Terraform after manual AWS cleanup.
-
-   if [[ "${HOL_CDP_DELETE_ENV_BEFORE_TF:-1}" == "1" ]]; then
-      if [[ "${HOL_CDP_DESTROY_STRICT:-0}" == "1" ]]; then
-         hol_cdp_delete_workshop_environment_if_present || return 1
-      else
-         hol_cdp_delete_workshop_environment_if_present || hol_warn "Continuing CDP Terraform destroy after delete-environment failure — expect VPC dependency errors"
-      fi
-   fi
-   if [[ "${HOL_CDP_DESTROY_STRICT:-0}" == "1" ]]; then
-      hol_cdp_wait_for_environment_teardown_idle || return 1
-   else
-      hol_cdp_wait_for_environment_teardown_idle || true
-   fi
+   # CDP environment deletion is not invoked here — use CDP console/CLI separately if needed; HoL destroys the quickstart VPC via Terraform.
 
    hol_terraform init
    if [[ "${HOL_AWS_VPC_DESTROY_PREP:-1}" == "1" ]]; then

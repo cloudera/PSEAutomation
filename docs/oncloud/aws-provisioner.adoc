@@ -109,10 +109,9 @@ The container `destroy` action runs, in order:
 
 The CDP environment and VPC are removed by **CDP quickstart Terraform destroy**, not by a separate `cdp environments delete` CLI call. Before Terraform runs, the automation:
 
-* Disable playbooks poll until data services leave CDP list APIs; **`destroy_cdp` does not re-check list APIs** after a successful disable step (avoids stale CDP rows blocking Terraform). Teardown failures still fail the pipeline at `disable_data_services`. Optional extra poll: `HOL_CDP_DS_DESTROY_WAIT_SEC` (default **0**, used only if `hol_cdp_assert_data_services_absent_before_destroy` is invoked elsewhere)
-* When `HOL_CDP_DELETE_ENV_BEFORE_TF=1` (default), calls **`cdp environments delete-environment`** for `{workshop}-cdp-env` and waits — this tears down CDP-managed CloudFormation, EKS, and ELB dependencies that block VPC/subnet/IGW deletion (fixing the case where NAT/ENI leaf scans are empty but Terraform still hangs)
-* If the environment is already in a deleting state, waits until it is gone or idle (`HOL_CDP_ENV_DESTROY_WAIT_SEC`, default 3600)
-* Optionally prepares the **workshop VPC only** (from Terraform state/output or EC2 Name tag `{workshop}-net`): delete NAT gateways, disassociate Elastic IPs on non-NAT ENIs in that VPC, release unassociated workshop-tagged EIPs, delete `available` ENIs, poll until no ENIs have mapped public IPs (`HOL_AWS_VPC_DESTROY_PREP=1`, default on)
+* Disable playbooks poll until data services leave CDP list APIs; teardown failures fail the pipeline at `disable_data_services`
+* **`destroy_cdp` does not call `cdp environments delete-environment`** (delete the environment in CDP separately when you need full datalake/env teardown)
+* Optionally prepares the **workshop VPC only** delete NAT gateways, disassociate Elastic IPs on non-NAT ENIs in that VPC, release unassociated workshop-tagged EIPs, delete `available` ENIs, poll until no ENIs have mapped public IPs (`HOL_AWS_VPC_DESTROY_PREP=1`, default on)
 * If mapped public IPs remain after prep, **fail fast** with a *Leaf blockers for Internet Gateway detach* trace (NAT gateways, ENIs with public IPs) instead of running Terraform for long periods with no AWS progress
 * Caps each Terraform destroy attempt at `HOL_CDP_TERRAFORM_DESTROY_ATTEMPT_SEC` (default 900s); on timeout or *Still destroying…* on IGW/subnets, prints the leaf trace and retries after prep
 * Retries CDP Terraform destroy when AWS returns `DependencyViolation`, `DetachInternetGateway`, or *mapped public address* errors (`HOL_CDP_TERRAFORM_DESTROY_MAX_ATTEMPTS`, default 12)
@@ -144,7 +143,7 @@ aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=$VPC \
 
 Disassociate Elastic IPs on **non-NAT** ENIs in this VPC (`aws ec2 disassociate-address --association-id …`). **Do not** disassociate Elastic IPs on ENIs whose description is *Interface for NAT Gateway* — delete the NAT gateway (`aws ec2 delete-nat-gateway --nat-gateway-id …`) and wait until it is `deleted`. Then retry HoL **destroy**. Do not release or delete resources outside the workshop VPC.
 
-Opt out of automated VPC cleanup with `HOL_AWS_VPC_DESTROY_PREP=0` on the destroy container. Opt out of `delete-environment` with `HOL_CDP_DELETE_ENV_BEFORE_TF=0` (not recommended — Terraform-only destroy often leaves CDP stacks in the VPC).
+Opt out of automated VPC cleanup with `HOL_AWS_VPC_DESTROY_PREP=0` on the destroy container.
 
 ==== Dependency graph (when leaf NAT/ENI scans are empty)
 
