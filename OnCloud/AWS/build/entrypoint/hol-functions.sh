@@ -2183,13 +2183,6 @@ run_cdp_terraform_destroy() {
 
    while [[ $attempt -lt $max_attempts ]]; do
       attempt=$((attempt + 1))
-      if [[ "${HOL_AWS_VPC_DESTROY_PREP:-1}" == "1" && -n "$vpc_id" ]]; then
-         if hol_aws_vpc_igw_detach_blockers_remain "$vpc_id"; then
-            hol_warn "Mapped public IPs still present before Terraform destroy attempt ${attempt}/${max_attempts} — running VPC prep"
-            hol_aws_prepare_vpc_for_terraform_destroy "$vpc_id" || true
-         fi
-         hol_aws_fail_if_vpc_igw_blockers_after_prep "$vpc_id"
-      fi
       log=$(mktemp)
       hol_step "Running CDP Terraform destroy (${attempt}/${max_attempts}, max ${attempt_sec}s per attempt)..."
       if command -v timeout >/dev/null 2>&1; then
@@ -2213,10 +2206,7 @@ run_cdp_terraform_destroy() {
          hol_warn_terraform_igw_subnet_stuck
       fi
       if terraform_output_vpc_destroy_blocker "$output" || grep -qiE 'Still destroying.*(aws_internet_gateway|subnet)' <<<"$output"; then
-         hol_warn "VPC dependency blocked CDP Terraform destroy — running workshop VPC cleanup and retrying"
-         if [[ "${HOL_AWS_VPC_DESTROY_PREP:-1}" == "1" ]]; then
-            hol_aws_prepare_vpc_for_terraform_destroy "$vpc_id" || true
-         fi
+         hol_warn "VPC dependency blocked CDP Terraform destroy — retrying"
          continue
       fi
       return $status
@@ -2245,10 +2235,6 @@ destroy_cdp() {
    # CDP environment deletion is not invoked here — use CDP console/CLI separately if needed; HoL destroys the quickstart VPC via Terraform.
 
    hol_terraform init
-   if [[ "${HOL_AWS_VPC_DESTROY_PREP:-1}" == "1" ]]; then
-      hol_aws_prepare_vpc_for_terraform_destroy || hol_warn "Workshop VPC pre-destroy cleanup incomplete — CDP Terraform may fail on Internet Gateway detach"
-   fi
-
    local cdp_tf_destroy_args=(
       -var "env_prefix=${workshop_name}"
       -var "aws_region=${aws_region}"
@@ -2257,7 +2243,7 @@ destroy_cdp() {
       -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
    )
    export TF_INPUT=0
-   hol_info "Destroying CDP Terraform stack (workshop VPC cleanup retries on DependencyViolation / mapped public addresses)"
+   hol_info "Destroying CDP Terraform stack"
    run_cdp_terraform_destroy cdp_tf_destroy_args
    cdp_destroy_status=$?
    if [ "${cdp_destroy_status:-1}" -eq 0 ]; then

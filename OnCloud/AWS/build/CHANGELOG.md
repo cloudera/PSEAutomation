@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed
-- AWS destroy: default pipeline no longer calls `cdp environments delete-environment` before CDP Terraform (avoids datalake-attached 400 failures); delete env manually in CDP when required.
+- AWS destroy: remove automated workshop VPC prep (EIP disassociate, NAT delete, ENI poll) from `destroy_cdp` and Terraform destroy retries; HoL runs disable playbooks then CDP Terraform only.
 - AWS/Azure destroy: remove duplicate CDP list-API gate in `destroy_cdp` after successful disable playbooks (stale control-plane rows no longer block Terraform); keep teardown enforcement in disable playbooks and `disable_data_services || hol_destroy_failed`.
 - AWS destroy (IGW detach): `hol_aws_trace_vpc_destroy_blockers` lists NAT gateways and ENIs with public IPs; skip EIP disassociate on NAT ENIs; fail fast before CDP Terraform when blockers remain after prep; cap each destroy attempt with `HOL_CDP_TERRAFORM_DESTROY_ATTEMPT_SEC` (default 900) instead of indefinite *Still destroying…* with no AWS progress.
 - AWS destroy: `hol_terraform_timed` runs CDP Terraform destroy under `timeout` via a sourced bash subshell (fixes `timeout: hol_terraform: No such file or directory`). Pass source path as `$1` with `_` as `$0` so `shift` does not drop the `destroy` subcommand (fixes `Terraform has no command named env_prefix=…`). AWS `destroy_keycloak` skips when Terraform dir/state is missing (manual Keycloak cleanup).
