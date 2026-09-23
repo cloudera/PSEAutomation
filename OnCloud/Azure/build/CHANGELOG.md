@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Azure data services now start concurrently without the previous cumulative 25-second stagger. Built-in CAI/CDE instance defaults bypass slow Azure SKU discovery; explicit instance overrides still receive availability validation and fallback.
 - CDW playbook waits use single live retry checks for cluster deletion, activation, and database-catalog startup, avoiding pre-expanded/stale attempt output.
 - Ansible waits now show retry attempts, retries remaining, current resource status/output, and async poll progress at normal verbosity so long-running playbooks do not appear stuck.
 - `REFRESH_JENKINSFILE` is now the first parameter in every AWS/Azure Jenkinsfile; PollSCM jobs also support the same refresh-and-exit behavior.

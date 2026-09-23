@@ -3205,20 +3205,6 @@ hol_resolve_cde_spark_version() {
 
 deploy_cde() {
    number_vc_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
-   DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
-   DEFAULT_CDE_MIN_INSTANCES=0
-   DEFAULT_CDE_MAX_INSTANCES=25
-   if [ -z "${CDE_INSTANCE_TYPE+x}" ] || [ -z "$CDE_INSTANCE_TYPE" ]; then
-      cde_instance_type=$DEFAULT_CDE_INSTANCE_TYPE
-   else
-      cde_instance_type=$CDE_INSTANCE_TYPE
-   fi
-   DEFAULT_CDE_INITIAL_INSTANCES=1
-   cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
-   cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
-   cde_max_instances="${cde_max_instances:-$DEFAULT_CDE_MAX_INSTANCES}"
-   cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
-      Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
 
    if [[ -z "${CDE_CLUSTER_MANAGED_IDENTITY_ID:-}" && -d "/userconfig/.$workshop_name/azure_enhancements/cde_custom_identity" ]]; then
       cd "/userconfig/.$workshop_name/azure_enhancements/cde_custom_identity"
@@ -3513,9 +3499,12 @@ deploy_single_data_service() {
       DEFAULT_CDE_MAX_INSTANCES=25
       DEFAULT_CDE_SPARK_VERSION="AUTO"
       DEFAULT_CDE_VC_TIER="CORE"
-      cde_instance_type="${cde_instance_type:-$DEFAULT_CDE_INSTANCE_TYPE}"
-      cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
-         Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
+      if [[ -n "${cde_instance_type:-}" ]]; then
+         cde_instance_type=$(resolve_azure_instance_type "$cde_instance_type" \
+            Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
+      else
+         cde_instance_type="$DEFAULT_CDE_INSTANCE_TYPE"
+      fi
       DEFAULT_CDE_INITIAL_INSTANCES=1
       cde_initial_instances="${cde_initial_instances:-$DEFAULT_CDE_INITIAL_INSTANCES}"
       cde_min_instances="${cde_min_instances:-$DEFAULT_CDE_MIN_INSTANCES}"
@@ -3546,9 +3535,12 @@ deploy_single_data_service() {
       DEFAULT_CAI_GPU_INSTANCE_TYPE="Standard_NC4as_T4_v3"
       DEFAULT_CAI_MIN_GPU_INSTANCES=0
       DEFAULT_CAI_MAX_GPU_INSTANCES=10
-      cai_ws_instance_type="${cai_ws_instance_type:-$DEFAULT_CAI_WS_INSTANCE_TYPE}"
-      cai_ws_instance_type=$(resolve_azure_instance_type "$cai_ws_instance_type" \
-         Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
+      if [[ -n "${cai_ws_instance_type:-}" ]]; then
+         cai_ws_instance_type=$(resolve_azure_instance_type "$cai_ws_instance_type" \
+            Standard_D8s_v5 Standard_D8as_v5 Standard_D8ds_v5 Standard_D16s_v5)
+      else
+         cai_ws_instance_type="$DEFAULT_CAI_WS_INSTANCE_TYPE"
+      fi
       cai_min_instances="${cai_min_instances:-$DEFAULT_CAI_MIN_INSTANCES}"
       cai_max_instances="${cai_max_instances:-$DEFAULT_CAI_MAX_INSTANCES}"
       cai_enable_gpu="${cai_enable_gpu:-$DEFAULT_CAI_ENABLE_GPU}"
@@ -3658,7 +3650,6 @@ hol_enable_data_services() {
 
    local failed=0
    local pids=()
-   local delay=0
    local service
 
    hol_stop_service_log_tailers
@@ -3670,14 +3661,8 @@ hol_enable_data_services() {
    hol_info "Services: ${services_to_deploy[*]} (live logs: /userconfig/.${workshop_name}/logs/)"
 
    for service in "${services_to_deploy[@]}"; do
-      (
-         if (( delay > 0 )); then
-            sleep "$delay"
-         fi
-         deploy_single_data_service "$service"
-      ) &
+      deploy_single_data_service "$service" &
       pids+=($!)
-      delay=$((delay + 25))
    done
 
    hol_wait_parallel_data_services pids services_to_deploy || failed=1
