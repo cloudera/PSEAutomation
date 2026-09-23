@@ -191,6 +191,25 @@
       failed_when: false
       when: workspace_exists
 
+    - name: Allow stale CAI deletion failure to transition
+      ansible.builtin.shell: |
+        set -o pipefail
+        cdp ml list-workspaces 2>/dev/null | jq -r --arg ws "{{ workshop_name }}-cai-ws" --arg env "{{ cdp_env_name }}" '
+          [.workspaces[]? | select(.instanceName == $ws and .environmentName == $env)][0].instanceStatus // "ABSENT"'
+      args:
+        executable: /bin/bash
+      register: cai_normal_delete_grace_status
+      changed_when: false
+      failed_when: false
+      until: >
+        (cai_normal_delete_grace_status.stdout | default('') | trim) not in
+          ['installation:failed', 'modify:failed', 'deprovision:failed']
+      retries: 6
+      delay: "{{ ds_disable_wait_delay }}"
+      when:
+        - workspace_exists
+        - (ml_delete_workspace.rc | default(1)) == 0
+
     - name: Poll normal CAI workspace deletion
       ansible.builtin.shell: |
         set -o pipefail
