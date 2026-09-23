@@ -38,58 +38,91 @@
         --workspace-name "{{ workshop_name }}-cai-ws" \
         --no-force
       register: ml_delete_workspace
-      when: workspace_exists
-
-    - name: Pause for 30 seconds after triggering deprovisioning workspace
-      pause:
-        seconds: 30
-      when: workspace_exists
-
-    - name: Poll until CAI workspace absent from list-workspaces
-      ansible.builtin.shell: |
-        cdp ml list-workspaces 2>/dev/null | jq -r --arg ws "{{ workshop_name }}-cai-ws" --arg env "{{ cdp_env_name }}" '
-          [.workspaces[]? | select(.instanceName == $ws and .environmentName == $env)] | length'
-      register: cai_ws_list_count
-      changed_when: false
-      until: >
-        (cai_ws_list_count.stdout | default('1') | trim | int) == 0 or
-        'resourceCrn should not be empty or nil' in (cai_ws_list_count.stderr | default(''))
-      retries: "{{ ds_disable_wait_retries }}"
-      delay: "{{ ds_disable_wait_delay }}"
-      when: workspace_exists
-
-    - name: Capture CAI workspace status while teardown runs
-      ansible.builtin.shell: >
-        cdp ml list-workspaces 2>/dev/null | jq -r '.workspaces[] |
-        select(.instanceName == "{{ workshop_name }}-cai-ws" and .environmentName == "{{ cdp_env_name }}") |
-        .instanceStatus'
-      register: ml_ws_status
-      changed_when: false
       failed_when: false
       when: workspace_exists
 
-    - name: Fail when CAI workspace deletion failed
-      ansible.builtin.fail:
-        msg: "CAI workspace {{ workshop_name }}-cai-ws deletion failed (status: {{ ml_ws_status.stdout | default('unknown') }})."
-      when: >
-        workspace_exists and
-        ml_ws_status.stdout is defined and
-        ml_ws_status.stdout in ["installation:failed", "modify:failed", "deprovision:failed"]
+    - name: Poll normal CAI workspace deletion
+      ansible.builtin.shell: |
+        set -o pipefail
+        cdp ml list-workspaces 2>/dev/null | jq -r --arg ws "{{ workshop_name }}-cai-ws" --arg env "{{ cdp_env_name }}" '
+          [.workspaces[]? | select(.instanceName == $ws and .environmentName == $env)][0].instanceStatus // "ABSENT"'
+      args:
+        executable: /bin/bash
+      register: cai_normal_delete_status
+      changed_when: false
+      failed_when: false
+      until: >
+        (cai_normal_delete_status.stdout | default('') | trim) == 'ABSENT' or
+        (cai_normal_delete_status.stdout | default('') | trim) in
+          ['installation:failed', 'modify:failed', 'deprovision:failed']
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
+      when:
+        - workspace_exists
+        - (ml_delete_workspace.rc | default(1)) == 0
 
-    - name: Fail when CAI workspace still listed after teardown wait
+    - name: Force delete CAI workspace after normal deletion failure
+      ansible.builtin.command: >
+        cdp ml delete-workspace
+        --environment-name "{{ cdp_env_name }}"
+        --workspace-name "{{ workshop_name }}-cai-ws"
+        --force
+      register: cai_force_delete
+      failed_when: false
+      when:
+        - workspace_exists
+        - >
+          ((ml_delete_workspace.rc | default(1)) != 0) or
+          (cai_normal_delete_status.stdout | default('') | trim) != 'ABSENT'
+
+    - name: Report CAI force-delete recovery
+      ansible.builtin.debug:
+        msg: >-
+          Normal deletion did not remove CAI workspace {{ workshop_name }}-cai-ws
+          (status: {{ cai_normal_delete_status.stdout | default('unknown') | trim }}).
+          Requested force deletion to reconcile the orphaned CDP resource.
+      when: cai_force_delete is not skipped
+
+    - name: Poll forced CAI workspace deletion
+      ansible.builtin.shell: |
+        set -o pipefail
+        cdp ml list-workspaces 2>/dev/null | jq -r --arg ws "{{ workshop_name }}-cai-ws" --arg env "{{ cdp_env_name }}" '
+          [.workspaces[]? | select(.instanceName == $ws and .environmentName == $env)] | length'
+      args:
+        executable: /bin/bash
+      register: cai_force_delete_count
+      changed_when: false
+      failed_when: false
+      until: (cai_force_delete_count.stdout | default('1') | trim | int) == 0
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
+      when: cai_force_delete is not skipped
+
+    - name: Verify CAI workspace is absent
+      ansible.builtin.shell: |
+        set -o pipefail
+        cdp ml list-workspaces 2>/dev/null | jq -r --arg ws "{{ workshop_name }}-cai-ws" --arg env "{{ cdp_env_name }}" '
+          [.workspaces[]? | select(.instanceName == $ws and .environmentName == $env)] | length'
+      args:
+        executable: /bin/bash
+      register: cai_ws_final_count
+      changed_when: false
+      when: workspace_exists
+
+    - name: Fail when CAI workspace deletion did not complete
       ansible.builtin.fail:
         msg: >-
-          CAI workspace {{ workshop_name }}-cai-ws still appears in list-workspaces for {{ cdp_env_name }}
-          after {{ ds_disable_wait_retries * ds_disable_wait_delay }}s.
+          CAI workspace {{ workshop_name }}-cai-ws still appears in list-workspaces for
+          {{ cdp_env_name }} after normal and force deletion attempts
+          (normal status: {{ cai_normal_delete_status.stdout | default('unknown') | trim }},
+          force request rc: {{ cai_force_delete.rc | default('not-run') }}).
       when: >
         workspace_exists and
-        (cai_ws_list_count.stdout | default('1') | trim | int) > 0 and
-        'resourceCrn should not be empty or nil' not in (cai_ws_list_count.stderr | default(''))
+        (cai_ws_final_count.stdout | default('1') | trim | int) > 0
 
     - name: Print success message on workspace deletion
       ansible.builtin.debug:
         msg: "Successfully deleted workspace {{ workshop_name }}-cai-ws in environment {{ cdp_env_name }}."
       when: >
         not workspace_exists or
-        (cai_ws_list_count.stdout | default('1') | trim | int) == 0 or
-        'resourceCrn should not be empty or nil' in (cai_ws_list_count.stderr | default(''))
+        (cai_ws_final_count.stdout | default('0') | trim | int) == 0
