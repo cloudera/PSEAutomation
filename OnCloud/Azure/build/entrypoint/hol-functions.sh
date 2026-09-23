@@ -2593,7 +2593,7 @@ hol_cdp_data_services_still_listed() {
    ml_count=$(cdp ml list-workspaces 2>/dev/null \
       | jq -r --arg env "$env_name" '[.workspaces[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
    df_count=$(cdp df list-services --no-paginate 2>/dev/null \
-      | jq -r --arg env "$env_name" '[.services[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+      | jq -r --arg env "$env_name" '[.services[]? | select(.name == $env)] | length' 2>/dev/null || echo 0)
    compute_count=$(cdp compute list-clusters 2>/dev/null \
       | jq -r --arg env "$env_name" '[.clusters[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
    cdw_count=$(cdp dw list-clusters 2>/dev/null \
@@ -2617,7 +2617,7 @@ hol_cdp_log_data_services_list_summary() {
    ml_count=$(cdp ml list-workspaces 2>/dev/null \
       | jq -r --arg env "$env_name" '[.workspaces[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
    df_count=$(cdp df list-services --no-paginate 2>/dev/null \
-      | jq -r --arg env "$env_name" '[.services[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
+      | jq -r --arg env "$env_name" '[.services[]? | select(.name == $env)] | length' 2>/dev/null || echo 0)
    compute_count=$(cdp compute list-clusters 2>/dev/null \
       | jq -r --arg env "$env_name" '[.clusters[]? | select(.environmentName == $env)] | length' 2>/dev/null || echo 0)
    cdw_count=$(cdp dw list-clusters 2>/dev/null \

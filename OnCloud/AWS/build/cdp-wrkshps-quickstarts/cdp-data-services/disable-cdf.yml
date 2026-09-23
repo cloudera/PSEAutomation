@@ -424,7 +424,7 @@
         (
           (cdf_list_verify.stdout | default('{"services": []}', true) | from_json).services
           | default([], true)
-          | selectattr('environmentName', 'equalto', cdp_env_name)
+          | selectattr('name', 'equalto', cdp_env_name)
           | list
           | length
         ) == 0
@@ -438,7 +438,7 @@
         (
           (cdf_list_verify.stdout | default('{"services": []}', true) | from_json).services
           | default([], true)
-          | selectattr('environmentName', 'equalto', cdp_env_name)
+          | selectattr('name', 'equalto', cdp_env_name)
           | list
           | length
         ) > 0
@@ -453,7 +453,7 @@
         (
           (cdf_list_verify.stdout | default('{"services": []}', true) | from_json).services
           | default([], true)
-          | selectattr('environmentName', 'equalto', cdp_env_name)
+          | selectattr('name', 'equalto', cdp_env_name)
           | list
           | length > 0
         )
@@ -469,7 +469,7 @@
           (
             (cdf_list_verify.stdout | default('{"services": []}', true) | from_json).services
             | default([], true)
-            | selectattr('environmentName', 'equalto', cdp_env_name)
+            | selectattr('name', 'equalto', cdp_env_name)
             | list
             | length
           ) == 0
