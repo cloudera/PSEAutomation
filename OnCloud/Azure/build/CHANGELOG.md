@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed
+- CAII teardown (Azure): delete the CAI workspace before its registry and compute cluster so concurrent cleanup cannot race while removing federated credentials from the same managed identity; propagate failures from every CAII cleanup stage.
 - CAII reruns (Azure): preserve pre-existing CDP infrastructure when a Terraform update fails; refresh CAII scripts without nesting stale copies; reuse/wait for healthy or in-progress resources; and recover terminally failed resources by retrying default-cluster initialization or recreating only the failed named compute cluster, AI Registry, or serving app.
 - CDW enable (Azure): activate through the Azure-specific `cdp dw create-azure-cluster` operation using the resolved environment CRN, subnet, and managed identity. The collection module cannot be used with this image because `cdpy@main` routes it through legacy `createCluster` and emits the incompatible `computeInstanceTypes` payload.
 - CDW failed activation recovery (Azure): delete the failed cluster with the explicit CDP CLI operation instead of accepting the collection module's false `Cluster None already absent` result.

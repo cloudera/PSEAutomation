@@ -2254,23 +2254,21 @@ destroy_cai_inference() {
 
    if [[ -n "$serving_app_crn" ]]; then
      echo "🗑️ Deleting ML Serving App: $serving_app_crn"
-     cdp ml delete-ml-serving-app --app-crn "$serving_app_crn"
+     cdp ml delete-ml-serving-app --app-crn "$serving_app_crn" || return 1
    else
      echo "✅ No ML Serving App found"
    fi
    
-   # Set the data service value for cleanup
-   disable_single_data_service cai &
-   pid_disable=$!
-   sleep 30
-   
-   chmod +x ./destroy_caii_resources.sh
-   ./destroy_caii_resources.sh $workshop_name
-   
-   wait $pid_disable
-   local status_disable=$?
-   if [[ $status_disable -ne 0 ]]; then
+   # Delete the CAI workspace before compute resources. Running these concurrently
+   # can make both operations remove credentials from the same Azure identity.
+   if ! disable_single_data_service cai; then
       hol_warn "CAI disable playbook failed during CAII teardown"
+      return 1
+   fi
+
+   chmod +x ./destroy_caii_resources.sh
+   if ! ./destroy_caii_resources.sh "$workshop_name"; then
+      hol_warn "CAII registry or compute-cluster cleanup failed"
       return 1
    fi
    return 0
