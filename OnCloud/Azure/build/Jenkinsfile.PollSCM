@@ -3,17 +3,29 @@ pipeline {
 
     environment {
         GIT_REPO_URL = 'https://github.com/cloudera-labs/cdp-tf-quickstarts.git'
-        REMOTE_JOB_AWS = 'hol-automation'  // Replace with your AWS deploy job name
-        REMOTE_JOB_AZURE = 'hol-automation-azure'  // Replace with your Azure deploy job name
+        REMOTE_JOB_AWS = 'hol-automation-deploy-aws'
+        REMOTE_JOB_AZURE = 'hol-automation-deploy-azure'
+        BUILD_JOB_AWS = 'hol-automation-build-aws'
+        BUILD_JOB_AZURE = 'hol-automation-build-azure'
         EMAIL_RECIPIENTS = 'pse-apac@cloudera.com,aktiwari@cloudera.com,ksahu@cloudera.com'  // Email recipient(s)
         HOL_AUTO_EXEC_DIR = "/home/holautosa/HOL_AUTO_EXEC_DIR"
         REPO_DIR = "${HOL_AUTO_EXEC_DIR}/cdp-tf-quickstarts"
     }
 
     parameters {
+        booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
+        choice(
+            name: 'CLOUD_TARGET',
+            choices: ['BOTH', 'AWS', 'AZURE'],
+            description: 'Run integration deploy/destroy on AWS, Azure, or both in parallel'
+        )
         string(name: 'AWS_BUILD_BRANCH', defaultValue: 'main', description: 'Git branch for AWS local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
-        string(name: 'AZURE_BUILD_BRANCH', defaultValue: 'azure-automation', description: 'Git branch for Azure local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
+        string(name: 'AZURE_BUILD_BRANCH', defaultValue: 'main', description: 'Git branch for Azure local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
         string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testbuildimage', description: 'Local Docker image tag passed to deploy/destroy when BUILD_LOCAL_IMAGE=true')
+        string(name: 'DOMAIN', defaultValue: 'clouderapartners.click', description: 'Route53 domain for Keycloak/DNS (passed to deploy/destroy jobs)')
+        string(name: 'HOSTEDZONEID', defaultValue: '', description: 'Route53 hosted zone ID for DOMAIN (set on Jenkins job; not stored in repo)')
+        string(name: 'DATALAKE_VERSION', defaultValue: '7.3.2', description: 'CDP datalake runtime passed to deploy/destroy (e.g. 7.3.2)')
+        booleanParam(name: 'BUILD_LOCAL_IMAGE', defaultValue: false, description: 'Build image on deploy agents; when false, pull IMAGE_TAG from registry')
     }
     
     triggers {
@@ -21,6 +33,15 @@ pipeline {
     }
     
     stages {
+        stage('DRY RUN: Reload Jenkinsfile') {
+            when { expression { return params.REFRESH_JENKINSFILE ==~ /(?i)(Y|YES|T|TRUE|ON|RUN)/ } }
+            steps {
+                script {
+                    currentBuild.result = 'ABORTED'
+                    error('DRY RUN COMPLETED. JOB PARAMETERIZED.')
+                }
+            }
+        }
         stage('Checkout') {
             steps {
                 // Checkout the repository
@@ -32,27 +53,36 @@ pipeline {
         stage('Build Test Images') {
             steps {
                 script {
-                    echo 'Skipping registry image build — deploy/destroy jobs build locally (BUILD_LOCAL_IMAGE=true).'
+                    def runAws = params.CLOUD_TARGET in ['BOTH', 'AWS']
+                    def runAzure = params.CLOUD_TARGET in ['BOTH', 'AZURE']
+                    echo "CLOUD_TARGET=${params.CLOUD_TARGET} (AWS=${runAws}, Azure=${runAzure})"
+                    echo 'Deploy/destroy use registry image by default (BUILD_LOCAL_IMAGE=false). Enable BUILD_LOCAL_IMAGE or uncomment registry build below.'
                     // Registry image build (re-enable to push to Docker Hub before deploy):
                     /*
-                    parallel(
-                        'AWS': {
-                            echo 'Triggering hol-automation-build-aws job...'
-                            build job: 'hol-automation-build-aws',
+                    def buildBranches = [:]
+                    if (runAws) {
+                        buildBranches['AWS'] = {
+                            echo "Triggering ${BUILD_JOB_AWS}..."
+                            build job: BUILD_JOB_AWS,
                                 parameters: [
                                     string(name: 'BUILD_BRANCH', value: "${params.AWS_BUILD_BRANCH}")
                                 ],
                                 propagate: true
-                        },
-                        'Azure': {
-                            echo 'Triggering hol-automation-build-azure job...'
-                            build job: 'hol-automation-build-azure',
+                        }
+                    }
+                    if (runAzure) {
+                        buildBranches['Azure'] = {
+                            echo "Triggering ${BUILD_JOB_AZURE}..."
+                            build job: BUILD_JOB_AZURE,
                                 parameters: [
                                     string(name: 'BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}")
                                 ],
                                 propagate: true
                         }
-                    )
+                    }
+                    if (!buildBranches.isEmpty()) {
+                        parallel buildBranches
+                    }
                     */
                 }
             }
@@ -71,6 +101,8 @@ pipeline {
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
+                        string(name: 'DOMAIN', value: "${params.DOMAIN}"),
+                        string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
                         string(name: 'AWS_REGION', value: 'ap-southeast-1'),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
@@ -98,9 +130,10 @@ pipeline {
                         string(name: 'CDF_MIN_NODES', value: '3'),
                         string(name: 'CDF_MAX_NODES', value: '3'),
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
+                        string(name: 'DATALAKE_VERSION', value: "${params.DATALAKE_VERSION}"),
                         string(name: 'ACTION', value: 'provision'),  // Set action for deploy
                         string(name: 'IMAGE_TAG', value: 'testmain'),
-                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: params.BUILD_LOCAL_IMAGE),
                         string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AWS_BUILD_BRANCH}"),
                         string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
@@ -111,7 +144,9 @@ pipeline {
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
-                        string(name: 'AZURE_REGION', value: 'eastus'),
+                        string(name: 'DOMAIN', value: "${params.DOMAIN}"),
+                        string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
+                        string(name: 'AZURE_REGION', value: 'westus2'),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
                         string(name: 'WORKSHOP_NAME', value: azureWorkshopName),
@@ -138,24 +173,34 @@ pipeline {
                         string(name: 'CDF_MIN_NODES', value: '3'),
                         string(name: 'CDF_MAX_NODES', value: '3'),
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
+                        string(name: 'DATALAKE_VERSION', value: "${params.DATALAKE_VERSION}"),
                         string(name: 'ACTION', value: 'provision'),  // Set action for deploy
                         string(name: 'IMAGE_TAG', value: 'testmain'),
-                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: params.BUILD_LOCAL_IMAGE),
                         string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
                         string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
 
-                    parallel(
-                        'AWS': {
+                    def runAws = params.CLOUD_TARGET in ['BOTH', 'AWS']
+                    def runAzure = params.CLOUD_TARGET in ['BOTH', 'AZURE']
+                    def deployBranches = [:]
+                    if (runAws) {
+                        deployBranches['AWS'] = {
                             echo 'Triggering AWS deploy job...'
                             build job: REMOTE_JOB_AWS, parameters: awsDeployParams
-                        },
-                        'Azure': {
+                        }
+                    }
+                    if (runAzure) {
+                        deployBranches['Azure'] = {
                             echo 'Triggering Azure deploy job...'
                             build job: REMOTE_JOB_AZURE, parameters: azureDeployParams
                         }
-                    )
+                    }
+                    if (deployBranches.isEmpty()) {
+                        error("CLOUD_TARGET '${params.CLOUD_TARGET}' did not select any cloud")
+                    }
+                    parallel deployBranches
                 }
             }
             post {
@@ -210,6 +255,8 @@ pipeline {
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
+                        string(name: 'DOMAIN', value: "${params.DOMAIN}"),
+                        string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
                         string(name: 'AWS_REGION', value: 'ap-southeast-1'),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
@@ -237,9 +284,10 @@ pipeline {
                         string(name: 'CDF_MIN_NODES', value: '3'),
                         string(name: 'CDF_MAX_NODES', value: '3'),
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
+                        string(name: 'DATALAKE_VERSION', value: "${params.DATALAKE_VERSION}"),
                         string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
                         string(name: 'IMAGE_TAG', value: 'testmain'),
-                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: params.BUILD_LOCAL_IMAGE),
                         string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AWS_BUILD_BRANCH}"),
                         string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
@@ -250,7 +298,9 @@ pipeline {
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
-                        string(name: 'AZURE_REGION', value: 'eastus'),
+                        string(name: 'DOMAIN', value: "${params.DOMAIN}"),
+                        string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
+                        string(name: 'AZURE_REGION', value: 'westus2'),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
                         string(name: 'WORKSHOP_NAME', value: azureWorkshopName),
@@ -277,24 +327,34 @@ pipeline {
                         string(name: 'CDF_MIN_NODES', value: '3'),
                         string(name: 'CDF_MAX_NODES', value: '3'),
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
+                        string(name: 'DATALAKE_VERSION', value: "${params.DATALAKE_VERSION}"),
                         string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
                         string(name: 'IMAGE_TAG', value: 'testmain'),
-                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: true),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: params.BUILD_LOCAL_IMAGE),
                         string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
                         string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
 
-                    parallel(
-                        'AWS': {
+                    def runAws = params.CLOUD_TARGET in ['BOTH', 'AWS']
+                    def runAzure = params.CLOUD_TARGET in ['BOTH', 'AZURE']
+                    def destroyBranches = [:]
+                    if (runAws) {
+                        destroyBranches['AWS'] = {
                             echo 'Triggering AWS destroy job...'
                             build job: REMOTE_JOB_AWS, parameters: awsDestroyParams
-                        },
-                        'Azure': {
+                        }
+                    }
+                    if (runAzure) {
+                        destroyBranches['Azure'] = {
                             echo 'Triggering Azure destroy job...'
                             build job: REMOTE_JOB_AZURE, parameters: azureDestroyParams
                         }
-                    )
+                    }
+                    if (destroyBranches.isEmpty()) {
+                        error("CLOUD_TARGET '${params.CLOUD_TARGET}' did not select any cloud")
+                    }
+                    parallel destroyBranches
                 }
             }
             post {

@@ -1,6 +1,7 @@
 #!/bin/bash
 # ***************************************************************************************************#
 source /usr/local/bin/hol-functions.sh
+hol_apply_terraform_env
 hol_fixup_cloudera_cloud_python
 configure_git_for_userconfig
 # Setting required path and variables.
@@ -88,7 +89,7 @@ destroy)
     validating_variables
     if [ "$provision_caii" == "yes" ]; then
         hol_subsection "CAII teardown" "🧠"
-        destroy_cai_inference
+        destroy_cai_inference || hol_destroy_failed "$workshop_name"
     fi
     disable_data_services || hol_destroy_failed "$workshop_name"
     if [ "$provision_keycloak" == "yes" ]; then

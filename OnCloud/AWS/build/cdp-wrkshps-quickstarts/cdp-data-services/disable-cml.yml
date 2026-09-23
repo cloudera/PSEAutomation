@@ -3,6 +3,9 @@
   hosts: localhost
   connection: local
   gather_facts: yes
+  vars:
+    ds_disable_wait_retries: 120
+    ds_disable_wait_delay: 30
   tasks:
     - name: Check and print variable status
       debug:
@@ -36,32 +39,52 @@
         seconds: 30
       when: workspace_exists
 
-    - name: Refresh the status until workspace deletion completes
-      ansible.builtin.shell: >
-        cdp ml list-workspaces | jq -r '.workspaces[] | select(.instanceName == "{{ workshop_name }}-cml-ws")  | .instanceStatus'
-      register: ml_ws_status
+    - name: Poll until CML workspace absent from list-workspaces
+      ansible.builtin.shell: |
+        cdp ml list-workspaces 2>/dev/null | jq -r --arg ws "{{ workshop_name }}-cml-ws" --arg env "{{ cdp_env_name }}" '
+          [.workspaces[]? | select(.instanceName == $ws and .environmentName == $env)] | length'
+      register: cml_ws_list_count
+      changed_when: false
       until: >
         not workspace_exists or
-        'resourceCrn should not be empty or nil' in ml_ws_status.stderr or
-        (ml_ws_status.rc == 0 and (ml_ws_status.stdout in [
-          "", "modify:finished", "modify:failed", "installation:finished", "installation:failed",
-          "provision:finished", "provision:failed", "deprovision:finished", "deprovision:failed"
-        ]))
-      retries: 150
-      delay: 30
+        (cml_ws_list_count.stdout | default('1') | trim | int) == 0 or
+        'resourceCrn should not be empty or nil' in (cml_ws_list_count.stderr | default(''))
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
+      when: workspace_exists
+
+    - name: Capture CML workspace status while teardown runs
+      ansible.builtin.shell: >
+        cdp ml list-workspaces 2>/dev/null | jq -r '.workspaces[] |
+        select(.instanceName == "{{ workshop_name }}-cml-ws" and .environmentName == "{{ cdp_env_name }}") |
+        .instanceStatus'
+      register: ml_ws_status
+      changed_when: false
+      failed_when: false
+      when: workspace_exists
+
+    - name: Fail when CML workspace still listed after teardown wait
+      ansible.builtin.fail:
+        msg: >-
+          CML workspace {{ workshop_name }}-cml-ws still appears in list-workspaces for {{ cdp_env_name }}
+          after {{ ds_disable_wait_retries * ds_disable_wait_delay }}s.
+      when: >
+        workspace_exists and
+        (cml_ws_list_count.stdout | default('1') | trim | int) > 0 and
+        'resourceCrn should not be empty or nil' not in (cml_ws_list_count.stderr | default(''))
 
     - name: Print success message on workspace deletion
       debug:
         msg: "Successfully deleted workspace {{ workshop_name }}-cml-ws in environment {{ cdp_env_name }}."
       when: >
         not workspace_exists or
-        ml_ws_status.stdout in [""] or
-        'resourceCrn should not be empty or nil' in [ml_ws_status.stderr, ml_ws_status.stdout]
+        (cml_ws_list_count.stdout | default('1') | trim | int) == 0 or
+        'resourceCrn should not be empty or nil' in (cml_ws_list_count.stderr | default(''))
 
     - name: Fail task on Workspace Deletion Failed
       fail:
         msg: "Workspace Deletion Got Failed."
       when: >
         workspace_exists and
-        ('resourceCrn should not be empty or nil' in [ml_ws_status.stderr, ml_ws_status.stdout] or
-         ml_ws_status.stdout in ["installation:failed", "modify:failed", "deprovision:failed"])
+        ml_ws_status.stdout is defined and
+        ml_ws_status.stdout in ["installation:failed", "modify:failed", "deprovision:failed"]

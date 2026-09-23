@@ -1,7 +1,7 @@
 #!/bin/bash
 # Shared colorful / emoji logging helpers for HoL automation scripts.
 
-# Default-on ANSI for shell helpers and Ansible (Jenkins docker logs are often non-TTY).
+# Default-on ANSI for shell helpers, Ansible, and Terraform (Jenkins docker logs are often non-TTY).
 # Opt out with NO_COLOR=1, ANSIBLE_NOCOLOR=1, or HOL_ANSIBLE_COLOR=false.
 hol_color_enabled() {
    if [[ -n "${NO_COLOR:-}" ]]; then
@@ -301,7 +301,7 @@ hol_wait_parallel_data_services() {
    local i pid short token elapsed_str
    local -a reaped=()
    local heartbeat_sec wait_start last_heartbeat
-   local pending=() ok_done=() parts
+   local pending=() ok_done=()
 
    HOL_FAILED_DATA_SERVICES=""
    workshop="${workshop_name:-hol}"
@@ -375,16 +375,14 @@ hol_wait_parallel_data_services() {
          return 0
       fi
 
-      parts=()
-      parts+=("still running: $(IFS=', '; echo "${pending[*]}")")
-      if ((${#ok_done[@]} > 0)); then
-         parts+=("completed OK: $(IFS=', '; echo "${ok_done[*]}")")
-      fi
-      if ((${#failed_short[@]} > 0)); then
-         parts+=("failed: $(IFS=', '; echo "${failed_short[*]}")")
-      fi
       elapsed_str="$(_hol_format_elapsed $(( SECONDS - wait_start )) )"
-      hol_info "Data services wait — $(IFS='; '; echo "${parts[*]}") (${elapsed_str} elapsed)"
+      hol_info "Data service status (${elapsed_str} elapsed)"
+      printf "   ${HOL_CYAN}⏳ IN PROGRESS (%d):${HOL_RESET} %s\n" \
+         "${#pending[@]}" "$(IFS=', '; echo "${pending[*]}")"
+      printf "   ${HOL_GREEN}✅ SUCCEEDED   (%d):${HOL_RESET} %s\n" \
+         "${#ok_done[@]}" "$(if ((${#ok_done[@]} > 0)); then IFS=', '; echo "${ok_done[*]}"; else echo "None"; fi)"
+      printf "   ${HOL_RED}❌ FAILED      (%d):${HOL_RESET} %s\n" \
+         "${#failed_short[@]}" "$(if ((${#failed_short[@]} > 0)); then IFS=', '; echo "${failed_short[*]}"; else echo "None"; fi)"
    }
 
    wait_start=$SECONDS
@@ -424,6 +422,59 @@ hol_wait_parallel_data_services() {
    return 1
 }
 
+# Terraform: same default-on color policy as Ansible/shell helpers.
+hol_apply_terraform_env() {
+   if [[ "$(hol_color_enabled)" == 1 ]]; then
+      unset TF_CLI_ARGS
+      export TF_IN_AUTOMATION=false
+   else
+      export TF_CLI_ARGS=-no-color
+      unset TF_IN_AUTOMATION
+   fi
+}
+
+hol_terraform() {
+   hol_apply_terraform_env
+   local sub="${1:-}" arg has_color_flag=0
+   for arg in "$@"; do
+      case "$arg" in
+      -color|-color=*|-no-color) has_color_flag=1; break ;;
+      esac
+   done
+   if (( has_color_flag )); then
+      terraform "$@"
+      return $?
+   fi
+   case "$sub" in
+   apply|destroy|plan|refresh|init)
+      shift
+      if [[ "$(hol_color_enabled)" != 1 ]]; then
+         terraform "$sub" "$@" -no-color
+      else
+         terraform "$sub" "$@"
+      fi
+      ;;
+   *)
+      terraform "$@"
+      ;;
+   esac
+}
+
+# GNU timeout runs external commands only — invoke hol_terraform in a sourced bash subshell.
+hol_terraform_timed() {
+   local attempt_sec="$1"
+   shift
+   local hol_lib
+   hol_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+   if [[ -z "$attempt_sec" || "$attempt_sec" -le 0 ]] || ! command -v timeout >/dev/null 2>&1; then
+      hol_terraform "$@"
+      return $?
+   fi
+   timeout --preserve-status "$attempt_sec" \
+      bash -c 'source "$1"; shift; hol_terraform "$@"' _ "${hol_lib}/hol-output.sh" "$@"
+}
+
 # Ansible writes to per-service log files; tailers stream to the console.
 hol_ansible_force_color() {
    hol_color_enabled
@@ -435,8 +486,11 @@ _hol_strip_ansi_from_stream() {
 
 # Console/streaming Ansible (Keycloak IDP, etc.) — same color env as hol_run_ansible_playbook.
 hol_ansible_playbook() {
-   local force_color
+   local force_color stream_cmd=()
    force_color="$(hol_ansible_force_color)"
+   if command -v stdbuf >/dev/null 2>&1; then
+      stream_cmd=(stdbuf -oL -eL)
+   fi
    env \
       HOL_SERVICE_TAG= \
       ANSIBLE_STDOUT_CALLBACK=default \
@@ -445,11 +499,11 @@ hol_ansible_playbook() {
       PY_COLORS="${force_color}" \
       PYTHONUNBUFFERED=1 \
       PYTHONWARNINGS="${HOL_ANSIBLE_PYTHONWARNINGS:-ignore::SyntaxWarning}" \
-      ansible-playbook "$@"
+      "${stream_cmd[@]}" ansible-playbook "$@"
 }
 
 hol_run_ansible_playbook() {
-   local log_file tag rc stream_cmd
+   local log_file tag rc
    tag="${HOL_SERVICE_TAG:-ansible}"
    log_file="$(hol_ansible_log_file)"
    : >"$log_file"
@@ -458,13 +512,7 @@ hol_run_ansible_playbook() {
 
    hol_info "${tag} playbook log: ${log_file}"
 
-   if command -v stdbuf >/dev/null 2>&1; then
-      stream_cmd=(stdbuf -oL -eL)
-   else
-      stream_cmd=()
-   fi
-
-   "${stream_cmd[@]}" hol_ansible_playbook "$@" >>"$log_file" 2>&1
+   hol_ansible_playbook "$@" >>"$log_file" 2>&1
    rc=$?
 
    if (( rc != 0 )); then
@@ -498,7 +546,7 @@ hol_provision_failed() {
 
 hol_destroy_failed() {
    local workshop="${1:-workshop}"
-   hol_fail "Infrastructure destroy for '${workshop}' did not complete. Review Terraform errors above, then retry destroy or clean up remaining AWS resources manually."
+   hol_fail "Infrastructure destroy for '${workshop}' did not complete. If disable playbooks failed or CDP data services are still listed, fix teardown and retry destroy before running Terraform (deleting the CDP environment first can orphan cloud resources). Review logs under /userconfig/.${workshop}/logs/ and Terraform output above."
 }
 
 _hol_startup_hbar() {

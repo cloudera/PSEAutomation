@@ -52,8 +52,8 @@ docker images   # verify
 [source,bash]
 ----
 docker login
-docker tag hol:latest clouderapartners/cdp-public-cloud-hol-provisioner:latest
-docker push clouderapartners/cdp-public-cloud-hol-provisioner:latest
+docker tag hol:latest clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest
+docker push clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest
 ----
 
 NOTE: Images built on one platform may not run on another. For multi-platform builds, see link:https://docs.docker.com/build/building/multi-platform/[Docker multi-platform documentation].
@@ -97,6 +97,104 @@ a) *Access key* — `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (via `~/.aws
 b) *AWS SSO* — via Okta/SAML profile in `~/.aws`
 
 c) *Instance role* — role assignment to the deployer EC2 instance via `sts:AssumeRole`
+
+== Destroy pipeline and troubleshooting
+
+The container `destroy` action runs, in order:
+
+1. CAII teardown (when `PROVISION_CAII=YES`)
+2. Disable data services (Ansible; CDW, CDE, CAI, CDF as configured)
+3. Keycloak IDP user teardown (when Keycloak is enabled)
+4. `destroy_hol_infra`: Keycloak Terraform (optional) → detach HoL `dladmin_log_policy` → CDP quickstart Terraform
+
+The CDP environment and VPC are removed by **CDP quickstart Terraform destroy**, not by a separate `cdp environments delete` CLI call. Before Terraform runs, the automation:
+
+* Disable playbooks enforce data service teardown; failures fail the pipeline at `disable_data_services`
+* **`destroy_cdp` runs CDP quickstart Terraform destroy only** (no `delete-environment`, no automated EIP/NAT/ENI VPC prep)
+* Retries CDP Terraform destroy on dependency errors (`HOL_CDP_TERRAFORM_DESTROY_MAX_ATTEMPTS`, default 12); optional per-attempt timeout `HOL_CDP_TERRAFORM_DESTROY_ATTEMPT_SEC` (default 900s)
+
+If Terraform logs *Still destroying...* on `aws_internet_gateway` or subnets for many minutes while the AWS console shows no IGW delete in progress, AWS is usually blocking Internet Gateway detach because ENIs or Elastic IPs in the workshop VPC still have public addresses (often left behind after CDP data service teardown).
+
+=== Manual cleanup (workshop VPC only)
+
+Replace `{workshop}` and set the AWS region (for example `us-west-1`). Resolve the VPC id from the `{workshop}-net` Name tag or your Terraform state.
+
+[source,bash]
+----
+export AWS_REGION=us-west-1
+WORKSHOP=cicd148
+VPC=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${WORKSHOP}-net" \
+  --query 'Vpcs[0].VpcId' --output text)
+
+aws ec2 describe-network-interfaces --filters Name=vpc-id,Values=$VPC \
+  --query 'NetworkInterfaces[].[NetworkInterfaceId,Status,Description,Association.PublicIp,Attachment.InstanceId]' \
+  --output table
+
+aws ec2 describe-addresses --filters Name=domain,Values=vpc \
+  --query 'Addresses[?NetworkInterfaceId!=`null`].[AllocationId,PublicIp,NetworkInterfaceId,AssociationId]' \
+  --output table
+
+aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=$VPC \
+  --query 'NatGateways[?State!=`deleted`].[NatGatewayId,State]' --output table
+----
+
+Disassociate Elastic IPs on **non-NAT** ENIs in this VPC only when Terraform destroy fails on mapped public addresses — see manual steps below. Then retry HoL **destroy**.
+
+==== Dependency graph (when leaf NAT/ENI scans are empty)
+
+Mapped public addresses and subnet dependencies often come from **parent** resources, not a lone Elastic IP:
+
+[source,bash]
+----
+export AWS_REGION=us-west-1
+WORKSHOP=cicd148
+VPC=vpc-096c8991b47a2fbdb
+
+cdp environments describe-environment --environment-name ${WORKSHOP}-cdp-env 2>/dev/null | jq -r '.environment.status // "absent"'
+
+aws elbv2 describe-load-balancers --region "$AWS_REGION" --output json \
+  | jq -r --arg vpc "$VPC" '.LoadBalancers[]? | select(.VpcId==$vpc) | [.LoadBalancerName,.Type,.Scheme,.State.Code] | @tsv'
+
+aws cloudformation list-stacks --region "$AWS_REGION" --output json \
+  | jq -r --arg p "$WORKSHOP" '.StackSummaries[]? | select(.StackStatus!="DELETE_COMPLETE") | select(.StackName|test($p;"i")) | [.StackName,.StackStatus] | @tsv'
+
+aws ec2 describe-network-interfaces --region "$AWS_REGION" --filters Name=vpc-id,Values=$VPC \
+  --query 'NetworkInterfaces[].[NetworkInterfaceId,Status,InterfaceType,Description,Association.PublicIp]' --output table
+----
+
+Delete the **CDP environment** and any remaining **data services** in the CDP UI first; then delete CloudFormation stacks or load balancers that reference the workshop name; only then retry quickstart Terraform destroy.
+
+==== Example: cicd148 VPC blocked on IGW detach
+
+Console error: *Network has some mapped public address(es). Please unmap before detaching gateway* on IGW `igw-0a16ec2302a93401a` / VPC `vpc-096c8991b47a2fbdb` (`cicd148-net`). After CDP data services and the environment are gone, list dependencies:
+
+[source,bash]
+----
+export AWS_REGION=us-west-1
+export VPC_ID=vpc-096c8991b47a2fbdb
+
+aws ec2 describe-network-interfaces \
+  --region "$AWS_REGION" \
+  --filters "Name=vpc-id,Values=${VPC_ID}" \
+  --query 'NetworkInterfaces[].{Eni:NetworkInterfaceId,Status:Status,PublicIp:Association.PublicIp,AssociationId:Association.AssociationId,Description:Description,Subnet:SubnetId}' \
+  --output table
+
+aws ec2 describe-network-interfaces \
+  --region "$AWS_REGION" \
+  --filters "Name=vpc-id,Values=${VPC_ID}" \
+  --output json \
+  | jq -r '.NetworkInterfaces[] | select(.Association.PublicIp != null) | [.NetworkInterfaceId,.Status,.Association.PublicIp,.Association.AssociationId,.Description] | @tsv'
+
+aws ec2 describe-addresses --region "$AWS_REGION" --output json \
+  | jq -r '.Addresses[] | [.PublicIp, .AllocationId, (.AssociationId // "none"), (.NetworkInterfaceId // "none")] | @tsv'
+
+aws ec2 describe-nat-gateways --region "$AWS_REGION" \
+  --filter "Name=vpc-id,Values=${VPC_ID}" \
+  --query 'NatGateways[].{NatGatewayId:NatGatewayId,State:State,SubnetId:SubnetId,PublicIp:NatGatewayAddresses[0].PublicIp}' \
+  --output table
+----
+
+Then disassociate (`aws ec2 disassociate-address --association-id …`), delete **available** ENIs, delete NAT gateways and release their allocation IDs, and retry destroy only when the ENI list shows no `PublicIp`.
 
 == Changelog
 

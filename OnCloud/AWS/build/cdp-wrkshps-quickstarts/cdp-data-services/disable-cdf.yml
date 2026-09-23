@@ -5,8 +5,10 @@
   gather_facts: yes
   vars:
     cdf_async_timeout: 3600
-    cdf_verify_retries: 40
+    cdf_verify_retries: 120
     cdf_verify_delay: 30
+    ds_disable_wait_retries: 120
+    ds_disable_wait_delay: 30
     cdf_absent_states:
       - NOT_FOUND
       - NOT_ENABLED
@@ -149,17 +151,20 @@
         cdf_disable_already_absent: >-
           {{
             (
-              (cdf_list_state | default('NOT_FOUND') in cdf_absent_states) or
-              (cdf_info_state | default('NOT_FOUND') in cdf_absent_states) or
+              (cdf_list_state | default('NOT_FOUND') in cdf_absent_states) and
+              (cdf_info_state | default('NOT_FOUND') in cdf_absent_states) and
               (cdf_current_state | default('NOT_FOUND') in cdf_absent_states)
             ) | bool
           }}
+        cdf_info_service_count: >-
+          {{ df_service_info.services | default([], true) | length }}
 
     - name: Set CDF disable in-progress flag
       ansible.builtin.set_fact:
         cdf_disable_in_progress: >-
           {{
             (
+              cdf_list_absent_info_still_present | default(false) or
               (cdf_list_state | default('NOT_FOUND') in cdf_disable_in_progress_states) or
               (cdf_list_detailed_state | default('') in cdf_disable_in_progress_detailed_states) or
               (cdf_list_detailed_state | default('') in cdf_disable_in_progress_states) or
@@ -179,7 +184,15 @@
             (
               (cdf_deployments | default([], true) | length) == 0 and
               cdf_disable_already_absent and
-              (cdf_service_crn | default('') | length) == 0
+              (cdf_service_crn | default('') | length) == 0 and
+              (cdf_info_service_count | default(0) | int) == 0
+            ) | bool
+          }}
+        cdf_list_absent_info_still_present: >-
+          {{
+            (
+              (cdf_list_state | default('NOT_FOUND') in cdf_absent_states) and
+              (cdf_info_service_count | default(0) | int) > 0
             ) | bool
           }}
         cdf_service_requires_disable: >-
@@ -225,6 +238,7 @@
           state={{ cdf_current_state }},
           detailedState={{ cdf_current_detailed_state | default('n/a') }},
           list_state={{ cdf_list_state }},
+          info_services={{ cdf_info_service_count | default(0) }},
           service_crn={{ cdf_service_crn | default('n/a') }},
           deployments={{ cdf_deployments | default([], true) | length }},
           disable_in_progress={{ cdf_disable_in_progress }},
@@ -235,7 +249,9 @@
 
     - name: Handle non-existing or disabled CDF service
       ansible.builtin.debug:
-        msg: "CDF for environment {{ cdp_env_name }} does not exist or is already disabled."
+        msg: >-
+          CDF for {{ cdp_env_name }} is absent from list-services and df_service_info
+          (no deployments, no service CRN). Skipping disable-service; verifying with list poll.
       when: cdf_fully_absent | default(false)
 
     - name: Print success message when CDF is already absent
@@ -243,9 +259,13 @@
         msg: "Successfully disabled CDF for environment {{ cdp_env_name }}."
       when: cdf_fully_absent | default(false)
 
-    - name: End play when CDF is already absent
-      ansible.builtin.meta: end_play
-      when: cdf_fully_absent | default(false)
+    - name: CDF still in df_service_info while absent from list (UI disable or API lag)
+      ansible.builtin.debug:
+        msg: >-
+          list-services shows no CDF for {{ cdp_env_name }} but df_service_info still returns
+          {{ cdf_info_service_count }} record(s) (state {{ cdf_info_state | default('unknown') }}).
+          Waiting for teardown — do not treat as fully disabled until both APIs are clear.
+      when: cdf_list_absent_info_still_present | default(false)
 
     - name: Skip disable-service while CDF teardown is already in progress
       ansible.builtin.debug:
@@ -386,20 +406,27 @@
           | default([], true)
           | length
         ) == 0
-      retries: "{{ cdf_verify_retries }}"
-      delay: "{{ cdf_verify_delay }}"
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
       changed_when: false
-      failed_when: false
-      when: (cdf_deployments | default([], true) | length) > 0
+      failed_when: >
+        (
+          (cdf_deployments_check.stdout | default('{"deployments": []}', true) | from_json).deployments
+          | default([], true)
+          | json_query("[?service.name=='" ~ cdp_env_name ~ "']")
+          | default([], true)
+          | length
+        ) > 0
+      when: cdf_disable_in_progress | default(false) or cdf_needs_teardown | default(false) or (cdf_deployments | default([], true) | length) > 0
 
-    - name: Warn when CDF deployments could not be fully removed
-      ansible.builtin.debug:
+    - name: Fail when CDF deployments still listed after teardown wait
+      ansible.builtin.fail:
         msg: >-
-          Some CDF deployments may still exist for {{ cdp_env_name }}.
+          CDF deployments still listed for {{ cdp_env_name }} after delete wait.
           Manual cleanup may be required in the CDP DataFlow UI.
       when: >-
-        (cdf_deployments | default([], true) | length) > 0 and
         (cdf_deployments_check is defined) and
+        not cdf_deployments_check.skipped | default(false) and
         (
           ((cdf_deployments_check.stdout | default('{"deployments": []}', true) | from_json).deployments | default([], true))
           | json_query("[?service.name=='" ~ cdp_env_name ~ "']")
@@ -407,27 +434,82 @@
           | length > 0
         )
 
-    - name: Verify CDF service is disabled
-      cloudera.cloud.df_service_info:
-        name: "{{ cdp_env_name }}"
-      register: df_service_verify
+    - name: Poll until CDF service absent from list-services
+      ansible.builtin.command: cdp df list-services --no-paginate
+      register: cdf_list_verify
+      changed_when: false
       until: >
-        df_service_verify is failed or
-        (df_service_verify.services | default([], true) | length == 0) or
-        (df_service_verify.services[0].status.state | default('NOT_ENABLED')) in ['NOT_ENABLED', 'DISABLED']
-      retries: "{{ cdf_verify_retries }}"
-      delay: "{{ cdf_verify_delay }}"
-      failed_when: false
+        (
+          (cdf_list_verify.stdout | default('{"services": []}', true) | from_json).services
+          | default([], true)
+          | selectattr('name', 'equalto', cdp_env_name)
+          | list
+          | length
+        ) == 0
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
       when: >-
+        cdf_fully_absent | default(false) or
         cdf_disable_in_progress | default(false) or
         cdf_needs_teardown | default(false) or
+        cdf_list_absent_info_still_present | default(false) or
         not cdf_fully_absent | default(true)
+      failed_when: >
+        (
+          (cdf_list_verify.stdout | default('{"services": []}', true) | from_json).services
+          | default([], true)
+          | selectattr('name', 'equalto', cdp_env_name)
+          | list
+          | length
+        ) > 0
+
+    - name: Poll until CDF absent from df_service_info
+      cloudera.cloud.df_service_info:
+        name: "{{ cdp_env_name }}"
+      register: cdf_info_verify
+      until: (cdf_info_verify.services | default([], true) | length) == 0
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
+      failed_when: (cdf_info_verify.services | default([], true) | length) > 0
+      when: >-
+        cdf_fully_absent | default(false) or
+        cdf_disable_in_progress | default(false) or
+        cdf_needs_teardown | default(false) or
+        cdf_list_absent_info_still_present | default(false) or
+        not cdf_fully_absent | default(true)
+
+    - name: Fail when CDF service still listed after teardown wait
+      ansible.builtin.fail:
+        msg: >-
+          CDF service for {{ cdp_env_name }} still appears in list-services after delete wait.
+      when: >-
+        (cdf_list_verify is defined) and
+        not cdf_list_verify.skipped | default(false) and
+        (
+          (cdf_list_verify.stdout | default('{"services": []}', true) | from_json).services
+          | default([], true)
+          | selectattr('name', 'equalto', cdp_env_name)
+          | list
+          | length > 0
+        )
 
     - name: Print success message on CDF service disable
       ansible.builtin.debug:
-        msg: "Successfully disabled CDF for environment {{ cdp_env_name }}."
+        msg: "Successfully disabled CDF for environment {{ cdp_env_name }} (absent from list-services and df_service_info)."
       when: >
-        df_service_verify is failed or
-        (df_service_verify.services | default([], true) | length == 0) or
-        (df_service_verify.services[0].status.state | default('NOT_ENABLED')) in ['NOT_ENABLED', 'DISABLED'] or
-        cdf_list_state in ['NOT_ENABLED', 'DISABLED', 'NOT_FOUND']
+        (
+          (cdf_list_verify is defined) and
+          not cdf_list_verify.skipped | default(false) and
+          (
+            (cdf_list_verify.stdout | default('{"services": []}', true) | from_json).services
+            | default([], true)
+            | selectattr('name', 'equalto', cdp_env_name)
+            | list
+            | length
+          ) == 0
+        ) and
+        (
+          (cdf_info_verify is defined) and
+          not cdf_info_verify.skipped | default(false) and
+          (cdf_info_verify.services | default([], true) | length) == 0
+        )

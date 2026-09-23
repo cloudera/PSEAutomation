@@ -2,6 +2,7 @@
     agent any
 
     parameters {
+        booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         choice(name: 'ACTION', choices: ['provision', 'destroy'], description: 'Choose whether to provision or destroy the stack')
         choice(name: 'PROVISION_KEYCLOAK', choices: ['YES', 'NO'], description: 'Choose whether to provision Keycloak Instance (YES/NO)')
         choice(name: 'PROVISION_CAII', choices: ['NO', 'YES'], description: 'Provision CAII (YES/NO). When YES, LOCAL_MACHINE_IP cannot be 0.0.0.0/0 — use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
@@ -48,7 +49,6 @@
         string(name: 'HOSTEDZONEID', defaultValue: 'Example: ZCLOUDERAPSEAPACTEAM1', description: '❗❗❗(MANDATORY) Route53 Hosted Zone Id for the above domain')
         string(name: 'DATALAKE_VERSION', defaultValue: '7.3.2', description: 'The Datalake runtime version to be used (e.g., 7.2.18)')
         choice(name: 'DELETE_WORKDIR', choices: ['false', 'true'], description: 'Choose whether to delete the work directory after the job completes')
-        booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag to pull from registry when BUILD_LOCAL_IMAGE is false')
         booleanParam(name: 'BUILD_LOCAL_IMAGE', defaultValue: false, description: 'Build image in this job from IMAGE_BUILD_BRANCH, tag with BUILD_IMAGE_TAG, and use it for provision/destroy (skips docker pull)')
         string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testmain', description: 'Docker image tag for locally built image when BUILD_LOCAL_IMAGE is true (ignored when BUILD_LOCAL_IMAGE is false)')
@@ -204,7 +204,7 @@
         stage('Resolve Docker Image') {
             steps {
                 script {
-                    def imageRepo = 'clouderapartners/cdp-public-cloud-hol-provisioner'
+                    def imageRepo = 'clouderapartners/cdp-public-cloud-hol-provisioner-aws'
                     if (params.BUILD_LOCAL_IMAGE) {
                         def tag = params.BUILD_IMAGE_TAG?.trim() ?: 'testmain'
                         env.DOCKER_IMAGE = "${imageRepo}:${tag}"

@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
-        IMAGE_NAME = 'clouderapartners/cdp-public-cloud-hol-provisioner'
+        IMAGE_NAME = 'clouderapartners/cdp-public-cloud-hol-provisioner-aws'
         DOCKER_CREDENTIALS_ID = 'dockerhub-cloudera-partners'
         DOCKERFILE_DIR = 'OnCloud/AWS/build'
         BUILDER_NAME = 'mybuilder'
@@ -11,11 +11,11 @@ pipeline {
     }
 
     parameters {
+        booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         string(name: 'PRIMARY_TAG', defaultValue: 'testmain', description: 'Primary tag (e.g. 2.4.1 or latest) for the Docker image')
         booleanParam(name: 'PUSH_SECONDARY_TAG', defaultValue: true, description: 'Push secondary tag for this Docker Image?')
         string(name: 'SECONDARY_TAG', defaultValue: new Date().format('yyyyMMdd') + '-${BUILD_NUMBER}', description: 'Secondary tag for the Docker image')
         choice(name: 'DELETE_WORKDIR', choices: ['false', 'true'], description: 'Delete the Work directory at the end of the job.')
-        booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         booleanParam(name: 'MULTI_PLATFORM_BUILD', defaultValue: false, description: 'Enable multi-platform build and push?')
         string(name: 'TF_QS_VER', defaultValue: 'main', description: 'CDP-TF-QUICKSTART tag version (e.g. v0.8.5 or main) to use for building Docker image')
         string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Branch to checkout')       

@@ -7,14 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CDW playbook waits use single live retry checks for cluster deletion, activation, and database-catalog startup, avoiding pre-expanded/stale attempt output.
+- Ansible waits now show retry attempts, retries remaining, current resource status/output, and async poll progress at normal verbosity so long-running playbooks do not appear stuck.
+- `REFRESH_JENKINSFILE` is now the first parameter in every AWS/Azure Jenkinsfile; PollSCM jobs also support the same refresh-and-exit behavior.
+- Parallel data-service heartbeat output now displays separate, counted `IN PROGRESS`, `SUCCEEDED`, and `FAILED` rows for easier Jenkins log scanning.
+- Default `AZURE_REGION` for Jenkins deploy/test/PollSCM and `configuration/configfile.example` is `westus2` (subscription must support PostgreSQL Flexible Server; `eastus` may return empty SKU lists).
+- Jenkins `DATALAKE_VERSION` parameter descriptions and `configfile.example` / `JENKINS-PIPELINES.adoc` clarify region (PostgreSQL SKU preflight) vs runtime version selection.
+
 ### Added
+- `provision_cdp`: preflight `az postgres flexible-server list-skus` for `AZURE_REGION` before CDP Terraform with a clear fail message when SKU list is empty.
 - Shell logging colors (AWS/Azure): `hol_color_enabled` default-on for `hol_ok` / `hol_warn` / `hol_step` and related helpers in non-TTY Jenkins docker logs (same opt-outs as Ansible); `assignCdpEnvAdminRoles.sh` sources `hol-output.sh` when available for green/red role lines.
 - Parallel data-service wait (AWS/Azure): `hol_wait_parallel_data_services` logs each service as it finishes and periodic heartbeats while others run (`HOL_DS_WAIT_HEARTBEAT_SEC`, default 45s) so Jenkins console does not look hung after one playbook’s PLAY RECAP.
+- Terraform console colors (AWS/Azure): `hol_terraform` / `hol_apply_terraform_env` mirror `hol_color_enabled` (`TF_IN_AUTOMATION=false`, `-color=true`; opt-out via `NO_COLOR`, `HOL_ANSIBLE_COLOR=false`, or `TF_CLI_ARGS=-no-color`); Keycloak, CDP, and enhancement apply/destroy in `hol-functions.sh` use the wrapper.
 - Parallel Ansible playbook logs (AWS/Azure): `hol_run_ansible_playbook` sets `ANSIBLE_FORCE_COLOR=1` when stdout is a TTY, `HOL_ANSIBLE_COLOR=true`, or Jenkins/CI env (`BUILD_URL`, `JENKINS_URL`, `CI=true`); DeployHoL `docker run` passes `-e BUILD_URL`; tailers pass ANSI through unchanged; playbook failure excerpts strip escape codes before `fatal:` / `PLAY RECAP` grep.
 - CDE/CDW/CDF disable playbooks (AWS/Azure): user-visible success `debug` messages on teardown completion (and when CDF is already absent), aligned with CAI `Successfully deleted/disabled … in environment …` wording.
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed
+- CAII reruns (Azure): preserve pre-existing CDP infrastructure when a Terraform update fails; refresh CAII scripts without nesting stale copies; reuse/wait for healthy or in-progress resources; and recover terminally failed resources by retrying default-cluster initialization or recreating only the failed named compute cluster, AI Registry, or serving app.
+- CDW enable (Azure): activate through the Azure-specific `cdp dw create-azure-cluster` operation using the resolved environment CRN, subnet, and managed identity. The collection module cannot be used with this image because `cdpy@main` routes it through legacy `createCluster` and emits the incompatible `computeInstanceTypes` payload.
+- CDW failed activation recovery (Azure): delete the failed cluster with the explicit CDP CLI operation instead of accepting the collection module's false `Cluster None already absent` result.
+- CDW activation networking (Azure): stop forcing Azure CNI Overlay. The working reference flow uses the default networking mode; overlay clusters repeatedly lost API-server/CoreDNS connectivity to Istio webhook pods and failed chart installation with 504 errors.
+- CDW enable (Azure): run `cloudera.cloud.dw_cluster` with strict SDK errors so rejected activation requests fail instead of appearing as green `ok`, and fail explicitly when no cluster reaches a terminal state before the poll timeout.
+- CDF enable (Azure): `cdf-enable-api-attempt.yml` only appends `--load-balancer-subnets` when `use_public_load_balancer` is false; passing load-balancer subnets alongside the public load balancer flag returned `400 INVALID_ARGUMENT: No subnet should be specified when using public load balancer`.
+- CDW `disable-cdw.yml` (AWS/Azure): list-clusters verify uses `workshop_name` from extra-vars or derives prefix from `cdp_env_name` so destroy no longer fails after cluster poll succeeds.
+- Terraform console colors (AWS/Azure): `hol_terraform` no longer passes `-color=true` (unsupported on HoL Terraform); colors-on uses `hol_apply_terraform_env` only (`TF_IN_AUTOMATION=false`), colors-off uses `-no-color` on init/apply/destroy/plan/refresh or `TF_CLI_ARGS=-no-color`; `output`/`state` unchanged.
+- Ansible playbook streaming (AWS/Azure): `hol_run_ansible_playbook` calls the `hol_ansible_playbook` shell function directly; `stdbuf` wraps `ansible-playbook` inside the function so Jenkins destroy/provision no longer fails with `hol_ansible_playbook: No such file or directory`.
 - Keycloak/IDP Ansible (AWS/Azure): `cdp_idp_setup_user` and `cdp_idp_user_teardown` call `hol_ansible_playbook` so Jenkins console gets the same `hol_ansible_force_color` / `ANSIBLE_FORCE_COLOR` / `PY_COLORS` as data-service playbooks.
 - CDF `disable-cdf.yml` (AWS/Azure): set `cdf_service_requires_disable` before `cdf_skip_disable_service` (separate `set_fact` + play default) so Ansible does not reference an undefined sibling fact during derived-flag evaluation.
 - CDF enable (AWS/Azure): treat CDP `412 FAILED_PRECONDITION` / `CANCEL_ENABLE` (stale in-flight enable) as poll-only — no repeated enable-service retries; refresh list-services before enable when state was absent; wait for GOOD_HEALTH when list shows ENABLING/DISABLING instead of exiting early; clearer fail text when a stuck enable never becomes healthy (suggest `disable-cdf.yml` or UI cancel).
@@ -22,7 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDF enable (AWS/Azure): build `cdp df enable-service` argv in Ansible (`cdf-enable-api-attempt.yml`) and run via `command` — avoids `{% if %}` Jinja inside multiline `shell` that broke Ansible task parsing on the enable retry loop.
 - CDF enable (AWS/Azure): call `cdp df enable-service` via shell (CAI-style CLI) instead of async `cloudera.cloud.df_service`; resolve environment CRN from `describe-environment`; 90s pause after role assignment before enable; retry transient authorizing/[500] every 90s (8 attempts); treat CONFLICT/already-enabling as success. Fail message documents DFAdmin vs IAM propagation. Docker image uses stable `cdpcli` (not beta).
 - CDF `disable-cdf.yml` (AWS/Azure): resolve service CRN from list-services; skip `disable-service` only when all list/info/current states are absent/disabled or DISABLING is already in progress.
-- CDF `disable-cdf.yml` (AWS/Azure): set `cdf_disable_in_progress` and related flags in separate `set_fact` tasks so Ansible does not reference undefined sibling facts during derived-flag evaluation.
+- CDF `disable-cdf.yml` (AWS/Azure): require both list-services and df_service_info clear before success; treat list-empty/info-present as in-progress (UI disable); remove early end_play that skipped verify polls.
+- CDF `enable-cdf.yml` (AWS/Azure): fail fast when DISABLING while Jenkins enable runs (manual UI disable during provision).
 - CDF enable/disable playbooks (AWS/Azure): list service state first and skip `enable-service` when the service is healthy or in progress (e.g. ENABLING, GOOD_HEALTH) and skip `disable-service` when absent/disabled or already DISABLING—no second API call on re-run.
 - CDF `cdp df enable-service` omits `instance_type` unless `CDF_INSTANCE_TYPE` is set, so CDP chooses the default Kubernetes node type. A custom type requires permission to set custom DataFlow instance types; the previous `m5.2xlarge` / `Standard_D8s_v5` defaults returned `INVALID_ARGUMENT` (and could surface as an authorizing 500) for actors without that entitlement.
 - Reverted Ansible playbook IAM pre-checks from `enable-cdf.yml` (`cdp iam get-user`, caller DFAdmin diagnostics). CDE/CDW/CAI playbooks unchanged at `faf0412` baseline. Environment admin roles are assigned only via `assignCdpEnvAdminRoles.sh` / `hol_assign_pipeline_cdp_env_admin_roles` (shell), not Ansible.
@@ -55,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Jenkins pipelines guide: `OnCloud/JENKINS-PIPELINES.adoc` (shared with AWS; Azure-specific defaults documented).
-- Optional in-job Docker image build on deploy jobs: `BUILD_LOCAL_IMAGE`, `BUILD_IMAGE_TAG` (default `testbuildimage`), `IMAGE_BUILD_BRANCH` (default `azure-automation`), `IMAGE_BUILD_TF_QS_VER`.
+- Optional in-job Docker image build on deploy jobs: `BUILD_LOCAL_IMAGE`, `BUILD_IMAGE_TAG` (default `testbuildimage`), `IMAGE_BUILD_BRANCH` (default `main`), `IMAGE_BUILD_TF_QS_VER`.
 - `jenkins/assignCdpEnvAdminRoles.sh` — assigns environment admin roles to `psejenkins` and CDP caller before provision/destroy.
 
 ### Changed

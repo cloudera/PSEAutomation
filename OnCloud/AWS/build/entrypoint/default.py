@@ -470,19 +470,63 @@ class CallbackModule(CallbackBase):
             self._display.banner("DRY RUN")
 
     def v2_runner_retry(self, result):
-        if self._display.verbosity < 2:
-            return
         task_name = result.task_name or result._task
         host_label = self.host_label(result)
-        retries_left = result._result['retries'] - result._result['attempts']
-        msg = "WAIT [%s]: %s (%d retries left)" % (host_label, task_name, retries_left)
+        attempts = result._result.get('attempts', 0)
+        retries = result._result.get('retries', 0)
+        retries_left = max(retries - attempts, 0)
+        msg = "WAIT [%s]: %s (attempt %d, %d retries left)" % (
+            host_label,
+            task_name,
+            attempts,
+            retries_left,
+        )
+        detail = self._hol_retry_detail(result._result)
+        if detail:
+            msg += " — %s" % detail
         if self._run_is_verbose(result, verbosity=2):
             msg += " => %s" % self._dump_results(result._result)
         self._display.display(self._hol_tag_prefix(msg), color=C.COLOR_DEBUG)
 
+    def _hol_retry_detail(self, data):
+        if not isinstance(data, dict):
+            return None
+
+        for collection_key in (
+            'clusters',
+            'database_catalogs',
+            'services',
+            'workspaces',
+            'vcs',
+        ):
+            resources = data.get(collection_key)
+            if not isinstance(resources, list) or not resources:
+                continue
+            resource = resources[0]
+            if not isinstance(resource, dict):
+                continue
+            status = resource.get('status')
+            if isinstance(status, dict):
+                status = status.get('detailedState') or status.get('state')
+            if status:
+                return "status=%s" % status
+
+        status = data.get('status')
+        if status:
+            return "status=%s" % status
+
+        stdout = data.get('stdout')
+        if isinstance(stdout, str) and stdout.strip():
+            compact = " ".join(stdout.strip().split())
+            if len(compact) > 180:
+                compact = compact[:177] + "..."
+            return "output=%s" % compact
+
+        if 'finished' in data:
+            return "finished=%s" % data.get('finished')
+        return None
+
     def v2_runner_on_async_poll(self, result):
-        if self._display.verbosity < 2:
-            return
         host = result._host.get_name()
         jid = result._result.get('ansible_job_id')
         started = result._result.get('started')

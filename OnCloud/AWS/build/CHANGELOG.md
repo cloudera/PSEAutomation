@@ -7,14 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Ansible waits now show retry attempts, retries remaining, current resource status/output, and async poll progress at normal verbosity so long-running playbooks do not appear stuck.
+- `REFRESH_JENKINSFILE` is now the first parameter in every AWS/Azure Jenkinsfile; PollSCM jobs also support the same refresh-and-exit behavior.
+- AWS Docker image references now use the cloud-specific `clouderapartners/cdp-public-cloud-hol-provisioner-aws` repository, matching the Azure image naming convention.
+- Parallel data-service heartbeat output now displays separate, counted `IN PROGRESS`, `SUCCEEDED`, and `FAILED` rows for easier Jenkins log scanning.
+
 ### Added
 - Shell logging colors (AWS/Azure): `hol_color_enabled` default-on for `hol_ok` / `hol_warn` / `hol_step` and related helpers in non-TTY Jenkins docker logs (same opt-outs as Ansible); `assignCdpEnvAdminRoles.sh` sources `hol-output.sh` when available for green/red role lines.
 - Parallel data-service wait (AWS/Azure): `hol_wait_parallel_data_services` logs each service as it finishes and periodic heartbeats while others run (`HOL_DS_WAIT_HEARTBEAT_SEC`, default 45s) so Jenkins console does not look hung after one playbook’s PLAY RECAP.
+- Terraform console colors (AWS/Azure): `hol_terraform` / `hol_apply_terraform_env` mirror `hol_color_enabled` (`TF_IN_AUTOMATION=false`, `-color=true`; opt-out via `NO_COLOR`, `HOL_ANSIBLE_COLOR=false`, or `TF_CLI_ARGS=-no-color`); Keycloak, CDP, and enhancement apply/destroy in `hol-functions.sh` use the wrapper.
 - Parallel Ansible playbook logs (AWS/Azure): `hol_run_ansible_playbook` sets `ANSIBLE_FORCE_COLOR=1` when stdout is a TTY, `HOL_ANSIBLE_COLOR=true`, or Jenkins/CI env (`BUILD_URL`, `JENKINS_URL`, `CI=true`); DeployHoL `docker run` passes `-e BUILD_URL`; tailers pass ANSI through unchanged; playbook failure excerpts strip escape codes before `fatal:` / `PLAY RECAP` grep.
 - CDE/CDW/CDF disable playbooks (AWS/Azure): user-visible success `debug` messages on teardown completion (and when CDF is already absent), aligned with CAI `Successfully deleted/disabled … in environment …` wording.
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed
+- CDW `disable-cdw.yml` (AWS/Azure): list-clusters verify uses `workshop_name` from extra-vars or derives prefix from `cdp_env_name` so destroy no longer fails after cluster poll succeeds.
+- AWS destroy: remove automated workshop VPC prep (EIP disassociate, NAT delete, ENI poll) from `destroy_cdp` and Terraform destroy retries; HoL runs disable playbooks then CDP Terraform only.
+- AWS/Azure destroy: remove duplicate CDP list-API gate in `destroy_cdp` after successful disable playbooks (stale control-plane rows no longer block Terraform); keep teardown enforcement in disable playbooks and `disable_data_services || hol_destroy_failed`.
+- AWS destroy (IGW detach): `hol_aws_trace_vpc_destroy_blockers` lists NAT gateways and ENIs with public IPs; skip EIP disassociate on NAT ENIs; fail fast before CDP Terraform when blockers remain after prep; cap each destroy attempt with `HOL_CDP_TERRAFORM_DESTROY_ATTEMPT_SEC` (default 900) instead of indefinite *Still destroying…* with no AWS progress.
+- AWS destroy: `hol_terraform_timed` runs CDP Terraform destroy under `timeout` via a sourced bash subshell (fixes `timeout: hol_terraform: No such file or directory`). Pass source path as `$1` with `_` as `$0` so `shift` does not drop the `destroy` subcommand (fixes `Terraform has no command named env_prefix=…`). AWS `destroy_keycloak` skips when Terraform dir/state is missing (manual Keycloak cleanup).
+- Terraform console colors (AWS/Azure): `hol_terraform` no longer passes `-color=true` (unsupported on HoL Terraform); colors-on uses `hol_apply_terraform_env` only (`TF_IN_AUTOMATION=false`), colors-off uses `-no-color` on init/apply/destroy/plan/refresh or `TF_CLI_ARGS=-no-color`; `output`/`state` unchanged.
+- AWS destroy (VPC DependencyViolation): wait for CDP data services to leave list APIs before CDP Terraform destroy; pre-destroy VPC cleanup (NAT gateway poll, workshop-tagged unassociated EIP release, ENI/instance warnings); retry CDP Terraform on IGW/subnet mapped-public-address errors; align teardown order with Azure (Keycloak → `destroy_aws_enhancements` → CDP Terraform). Document manual AWS cleanup in `docs/oncloud/aws-provisioner.adoc`.
+- Ansible playbook streaming (AWS/Azure): `hol_run_ansible_playbook` calls the `hol_ansible_playbook` shell function directly; `stdbuf` wraps `ansible-playbook` inside the function so Jenkins destroy/provision no longer fails with `hol_ansible_playbook: No such file or directory`.
 - Keycloak/IDP Ansible (AWS/Azure): `cdp_idp_setup_user` and `cdp_idp_user_teardown` call `hol_ansible_playbook` so Jenkins console gets the same `hol_ansible_force_color` / `ANSIBLE_FORCE_COLOR` / `PY_COLORS` as data-service playbooks.
 - CDF `disable-cdf.yml` (AWS/Azure): set `cdf_service_requires_disable` before `cdf_skip_disable_service` (separate `set_fact` + play default) so Ansible does not reference an undefined sibling fact during derived-flag evaluation.
 - CDF enable (AWS/Azure): treat CDP `412 FAILED_PRECONDITION` / `CANCEL_ENABLE` (stale in-flight enable) as poll-only — no repeated enable-service retries; refresh list-services before enable when state was absent; wait for GOOD_HEALTH when list shows ENABLING/DISABLING instead of exiting early; clearer fail text when a stuck enable never becomes healthy (suggest `disable-cdf.yml` or UI cancel).
@@ -24,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AWS destroy: run `destroy_aws_enhancements` (detach `${env_prefix}-logs-policy` from `${env_prefix}-dladmin-role`) before CDP quickstart Terraform destroy so `aws_iam_policy` delete is not blocked by HoL’s `aws_iam_role_policy_attachment`.
 - AWS destroy: propagate Terraform teardown failures — `destroy_hol_infra` non-zero exit fails the container via `hol_destroy_failed` (aligned with Azure), so Jenkins no longer reports success when CDP Terraform errors.
 - CDF `disable-cdf.yml` (AWS/Azure): resolve service CRN from list-services; skip `disable-service` only when all list/info/current states are absent/disabled or DISABLING is already in progress.
+- CDF `disable-cdf.yml` (AWS/Azure): require both list-services and df_service_info clear before success; treat list-empty/info-present as in-progress (UI disable); remove early end_play that skipped verify polls.
+- CDF `enable-cdf.yml` (AWS/Azure): fail fast when DISABLING while Jenkins enable runs (manual UI disable during provision).
 - CDF `disable-cdf.yml` (AWS/Azure): set `cdf_disable_in_progress` and related flags in separate `set_fact` tasks so Ansible does not reference undefined sibling facts during derived-flag evaluation.
 - CDF enable/disable playbooks (AWS/Azure): list service state first and skip `enable-service` when the service is healthy or in progress (e.g. ENABLING, GOOD_HEALTH) and skip `disable-service` when absent/disabled or already DISABLING—no second API call on re-run.
 - CDF `cdp df enable-service` omits `instance_type` unless `CDF_INSTANCE_TYPE` is set, so CDP chooses the default Kubernetes node type. A custom type requires permission to set custom DataFlow instance types; the previous `m5.2xlarge` / `Standard_D8s_v5` defaults returned `INVALID_ARGUMENT` (and could surface as an authorizing 500) for actors without that entitlement.

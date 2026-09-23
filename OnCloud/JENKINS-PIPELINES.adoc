@@ -4,6 +4,32 @@
 
 Reference for Jenkins jobs that build HoL provisioner images and run workshop **provision** / **destroy** on AWS and Azure.
 
+=== Jenkins job names (UI)
+
+Map each Jenkinsfile to the job name in Jenkins:
+
+|===
+| Jenkins job | Jenkinsfile | Cloud
+
+| `hol-automation-build-aws`
+| `OnCloud/AWS/build/Jenkinsfile.Build`
+| AWS image build + push
+
+| `hol-automation-build-azure`
+| `OnCloud/Azure/build/Jenkinsfile.Build`
+| Azure image build + push
+
+| `hol-automation-deploy-aws`
+| `OnCloud/AWS/build/Jenkinsfile.DeployHoL` (or `TestDeployHoL`)
+| AWS workshop provision / destroy
+
+| `hol-automation-deploy-azure`
+| `OnCloud/Azure/build/Jenkinsfile.DeployHoL` (or `TestDeployHoL`)
+| Azure workshop provision / destroy
+|===
+
+Optional PollSCM jobs use `Jenkinsfile.PollSCM` and trigger the build/deploy jobs above (`REMOTE_JOB_*` in the Jenkinsfile).
+
 == Pipeline inventory
 
 |===
@@ -12,7 +38,7 @@ Reference for Jenkins jobs that build HoL provisioner images and run workshop **
 | Image build
 | `OnCloud/AWS/build/Jenkinsfile.Build`
 | `OnCloud/Azure/build/Jenkinsfile.Build`
-| `clouderapartners/cdp-public-cloud-hol-provisioner:<tag>` (AWS) +
+| `clouderapartners/cdp-public-cloud-hol-provisioner-aws:<tag>` (AWS) +
   `clouderapartners/cdp-public-cloud-hol-provisioner-azure:<tag>` (Azure)
 
 | Workshop deploy (production defaults)
@@ -49,7 +75,7 @@ Build and push provisioner images to Docker Hub.
 
 | `BUILD_BRANCH`
 | `main`
-| `azure-automation`
+| `main`
 | Git branch to checkout before `docker build`
 
 | `TF_QS_VER`
@@ -99,7 +125,7 @@ Single job runs **provision** or **destroy** for one workshop via a Docker conta
 
 | `IMAGE_BUILD_BRANCH`
 | Git branch to checkout and build when `BUILD_LOCAL_IMAGE=true` +
-  (AWS default `main`, Azure default `azure-automation`)
+  (default `main` for AWS and Azure)
 
 | `IMAGE_BUILD_TF_QS_VER`
 | `TF_QUICKSTART_VERSION` build-arg for local build +
@@ -109,12 +135,17 @@ Single job runs **provision** or **destroy** for one workshop via a Docker conta
 | Reload job parameters from Jenkinsfile and exit
 |===
 
+Azure deploy jobs also expose `AZURE_REGION` (default `westus2`) and `DATALAKE_VERSION` (default `7.3.2`):
+
+* `AZURE_REGION` — where CDP Terraform creates infra and the datalake. The subscription must be able to provision **PostgreSQL Flexible Server** in that region (`az postgres flexible-server list-skus --location <region>`). Some regions (for example `eastus` on restricted subscriptions) return empty SKU lists and Terraform fails with ARM `Version should be in: []`.
+* `DATALAKE_VERSION` — CDP runtime version passed to Terraform (`datalake_version`). Choose an entitled runtime (semantic `X.Y.Z` or `latest` in configfile). That error is often misread as an invalid version string; it usually indicates an empty allowed-value list from Azure for the chosen **region**, not a blank Jenkins parameter.
+
 When `BUILD_LOCAL_IMAGE=false` (normal production use):
 
 [source]
 ----
 IMAGE_TAG=latest
-→ docker pull clouderapartners/cdp-public-cloud-hol-provisioner:latest
+→ docker pull clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest
 → docker run … provision|destroy
 ----
 
@@ -123,7 +154,7 @@ When `BUILD_LOCAL_IMAGE=true` (branch testing without publishing):
 [source]
 ----
 BUILD_IMAGE_TAG=testbuildimage
-IMAGE_BUILD_BRANCH=azure-automation
+IMAGE_BUILD_BRANCH=main
 → git checkout branch
 → `docker build` with `--build-arg HOL_GIT_REVISION=$(git rev-parse HEAD)` (invalidates HoL COPY layers when the checkout commit changes; all steps `CACHED` on rebuild of the same commit is normal)
 → docker build -t clouderapartners/…-provisioner[-azure]:testbuildimage
@@ -138,7 +169,7 @@ If the image remains on the agent after provision, a follow-up **destroy** job c
 Use this workflow to test Dockerfile, entrypoint, or Ansible playbook changes from a feature branch without running the separate image-build job or pushing to Docker Hub.
 
 . Set `BUILD_LOCAL_IMAGE` = **true**
-. Set `IMAGE_BUILD_BRANCH` = your branch (e.g. `azure-automation`)
+. Set `IMAGE_BUILD_BRANCH` = your branch (e.g. `main` or a feature branch)
 . Set `BUILD_IMAGE_TAG` = **testbuildimage** (or any stable test tag)
 . Run with `ACTION=provision`, then re-run with `ACTION=destroy` using the same image parameters
 
@@ -154,11 +185,11 @@ Typical stage order:
 4. **Build Local Docker Image** — only when `BUILD_LOCAL_IMAGE=true` (includes `HOL_GIT_REVISION` build-arg so playbook/entrypoint COPY layers rebuild when the checkout commit changes)
 5. **Pull Docker Image** — only when `BUILD_LOCAL_IMAGE=false`
 6. **Assign CDP env admin roles for pipeline** — runs `jenkins/assignCdpEnvAdminRoles.sh` on the agent before the container starts (when the environment already exists). On first provision the environment is not created yet, so the provisioner runs the same script inside the container after Terraform creates the env and again before parallel data-service deploy. Grants `psejenkins`, the Jenkins `BUILD_USER_ID` when set, and the CDP API caller from `~/.cdp` the full environment admin role set (including `DFAdmin` for CDF enable and `DFFlowAdmin` for flow stop during destroy). CDF enable playbooks do not run IAM diagnostics; missing roles surface as CDP API errors.
-7. **Run Docker Container** — `docker run` with mounted `userconfig`, `~/.cdp`, cloud credentials, `-e BUILD_USER_ID`, and `-e BUILD_URL`. Ansible playbook output uses default-callback ANSI colors in console and per-service logs by default (`hol_ansible_force_color` via `hol_run_ansible_playbook` or `hol_ansible_playbook` for Keycloak IDP); use Jenkins `ansiColor('xterm')` so the console renders them. Shell helpers (`hol_ok`, `hol_warn`, Terraform section banners via `hol_subsection`, and `assignCdpEnvAdminRoles.sh` role lines) share the same default-on policy via `hol_color_enabled`. Opt out with `HOL_ANSIBLE_COLOR=false`, `NO_COLOR=1`, or `ANSIBLE_NOCOLOR=1`. Ansible playbook failures exit the container non-zero (failed `PLAY RECAP` / `fatal:` lines), so this stage fails the job.
+7. **Run Docker Container** — `docker run` with mounted `userconfig`, `~/.cdp`, cloud credentials, `-e BUILD_USER_ID`, and `-e BUILD_URL`. Ansible playbook output uses default-callback ANSI colors in console and per-service logs by default (`hol_ansible_force_color` via `hol_run_ansible_playbook` or `hol_ansible_playbook` for Keycloak IDP); use Jenkins `ansiColor('xterm')` so the console renders them. Shell helpers (`hol_ok`, `hol_warn`, Terraform section banners via `hol_subsection`, and `assignCdpEnvAdminRoles.sh` role lines) and Terraform apply/destroy/init (`hol_terraform` / `hol_apply_terraform_env`) share the same default-on policy via `hol_color_enabled`. Opt out with `HOL_ANSIBLE_COLOR=false`, `NO_COLOR=1`, or `ANSIBLE_NOCOLOR=1`. Ansible playbook failures exit the container non-zero (failed `PLAY RECAP` / `fatal:` lines), so this stage fails the job.
 8. **Check Logs for Failures** — parses provisioner log via `provisionFailureParser.groovy` for Ansible failure signatures when the container stage did not already fail
 9. **Assign admin roles to builduser** — provision only; idempotent re-run of the same script for the human who triggered the job when the container stage did not already cover them
 
-Colored Ansible tail output and shell helper output are on by default in container logs (`CDW.log`, `CDE.log`, `CAI.log`, `CDF.log`) and the Jenkins console when `ansiColor('xterm')` is enabled (non-TTY docker logs included); disable with `HOL_ANSIBLE_COLOR=false`, `NO_COLOR=1`, or `ANSIBLE_NOCOLOR=1`.
+Colored Ansible tail output, shell helper output, and Terraform plan/apply/destroy output are on by default in container logs (`CDW.log`, `CDE.log`, `CAI.log`, `CDF.log`) and the Jenkins console when `ansiColor('xterm')` is enabled (non-TTY docker logs included); disable with `HOL_ANSIBLE_COLOR=false`, `NO_COLOR=1`, or `ANSIBLE_NOCOLOR=1`.
 
 === CDP role assignment script
 
@@ -176,21 +207,62 @@ Targets (controlled by env vars):
 
 == Poll / integration jobs (`Jenkinsfile.PollSCM`)
 
-Optional scheduled jobs that:
+Optional scheduled jobs use the same `Jenkinsfile.PollSCM` under `OnCloud/AWS/build/` and `OnCloud/Azure/build/` (point either PollSCM job at either path). They:
 
 . Watch upstream repos (for example `cdp-tf-quickstarts`)
-. Run **Test Deploy** and **Test Destroy** against AWS and Azure deploy jobs in parallel
+. Run **Test Deploy** and **Test Destroy** against AWS and/or Azure deploy jobs based on `CLOUD_TARGET`
 
-By default, deploy and destroy downstream jobs are triggered with `BUILD_LOCAL_IMAGE=true` and `BUILD_IMAGE_TAG=testbuildimage` (same tag for provision and destroy in the poll run). Branch parameters:
+By default, deploy and destroy downstream jobs are triggered with `BUILD_LOCAL_IMAGE=false` (registry `IMAGE_TAG`, default `testmain` on downstream jobs) and `DOMAIN` / `HOSTEDZONEID` for APAC Route53 (`clouderapartners.click`). Set `BUILD_LOCAL_IMAGE=true` on the PollSCM job to build on agents using `BUILD_IMAGE_TAG`.
 
-* AWS PollSCM: `BUILD_BRANCH`, `AZURE_BUILD_BRANCH`, `BUILD_IMAGE_TAG`
-* Azure PollSCM: `AWS_BUILD_BRANCH`, `AZURE_BUILD_BRANCH`, `BUILD_IMAGE_TAG`
+=== PollSCM parameters
+
+|===
+| Parameter | Default | Purpose
+
+| `CLOUD_TARGET`
+| `BOTH`
+| `AWS`, `AZURE`, or `BOTH` — which downstream deploy/destroy jobs run in parallel
+
+| `AWS_BUILD_BRANCH`
+| `main`
+| `IMAGE_BUILD_BRANCH` for `hol-automation-deploy-aws`
+
+| `AZURE_BUILD_BRANCH`
+| `main`
+| `IMAGE_BUILD_BRANCH` for `hol-automation-deploy-azure`
+
+| `BUILD_IMAGE_TAG`
+| `testbuildimage`
+| Local image tag when `BUILD_LOCAL_IMAGE=true` on downstream jobs
+
+| `BUILD_LOCAL_IMAGE`
+| `false`
+| When true, downstream deploy/destroy jobs build locally instead of pulling `IMAGE_TAG`
+
+| `DOMAIN`
+| `clouderapartners.click`
+| Route53 domain passed to deploy/destroy
+
+| `DATALAKE_VERSION`
+| `7.3.2`
+| CDP datalake runtime passed to downstream deploy/destroy jobs
+
+| `AZURE_REGION` (downstream)
+| `westus2`
+| Passed to Azure deploy/destroy jobs (not a PollSCM parameter). Must support PostgreSQL Flexible Server for the subscription.
+
+| `HOSTEDZONEID`
+| _(empty — configure on Jenkins job)_
+| Route53 hosted zone for `DOMAIN` (do not commit real zone IDs)
+|===
 
 All deploy jobs mount the same host directory (`HOL_AUTO_EXEC_DIR/userconfig`) as `/userconfig` in the container. Use **unique `WORKSHOP_NAME` values** for concurrent runs so per-workshop state (Keycloak IP, Terraform, `.workshop/` dirs) does not collide.
 
 The **Build Test Images** stage keeps the registry build job triggers (`hol-automation-build-aws` / `hol-automation-build-azure`) in a commented block. Uncomment that `parallel { ... }` block to push images to Docker Hub before deploy instead of using local builds.
 
-Adjust `REMOTE_JOB_*` names in the Jenkinsfile to match your Jenkins folder layout.
+PollSCM downstream deploy/destroy jobs default to `hol-automation-deploy-aws` and `hol-automation-deploy-azure` (`REMOTE_JOB_AWS` / `REMOTE_JOB_AZURE` in `Jenkinsfile.PollSCM`).
+
+NOTE: Azure datalake failures with `Version should be in: []` come from Azure ARM (empty allowed SKU/version list for the subscription and region), not from an empty `DATALAKE_VERSION` in Jenkins. PollSCM passes `DATALAKE_VERSION` explicitly; the provisioner also requires it in `configfile`. See link:Azure/build/README.adoc#azure-datalake-version-should-be-in-[`Azure README`].
 
 == Typical workflows
 

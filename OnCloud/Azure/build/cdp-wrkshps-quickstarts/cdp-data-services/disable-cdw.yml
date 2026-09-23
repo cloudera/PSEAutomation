@@ -7,6 +7,8 @@
     cdw_async_timeout: 3600
     cdw_async_retries: 120
     cdw_async_delay: 30
+    ds_disable_wait_retries: 120
+    ds_disable_wait_delay: 30
 
   tasks:
     - name: Fetch details of the CDW cluster
@@ -247,50 +249,38 @@
           Teardown will continue and the cluster may remain until dependencies are removed.
       when: cdw_cluster_delete.failed | default(false)
 
-    - name: Get CDW cluster status
+    - name: Poll until CDW cluster absent for environment
       cloudera.cloud.dw_cluster_info:
         env: "{{ cdp_env_name }}"
-      register: dw_cluster_status
-      until: >
-        (dw_cluster_status.clusters | default([], true) | length == 0) or
-        (dw_cluster_status.clusters[0].status in ["Deleting", "Running", "Error", "Failed"])
-      retries: 50
-      delay: 30
-      ignore_errors: true
-      failed_when: false
+      register: cdw_absent_check
+      until: (cdw_absent_check.clusters | default([], true) | length) == 0
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
+      failed_when: (cdw_absent_check.clusters | default([], true) | length) > 0
 
-    - name: Check and print cluster status
-      ansible.builtin.debug:
-        msg: "Cluster is in {{ dw_cluster_status.clusters[0].status }} state"
-      when: (dw_cluster_status.clusters | default([], true) | length) > 0
+    - name: Verify CDW cluster absent via list-clusters
+      ansible.builtin.shell: |
+        cdp dw list-clusters 2>/dev/null | jq -r --arg prefix "{{ workshop_name | default(cdp_env_name | regex_replace('-cdp-env$', '')) }}" '
+          [.clusters[]? | select((.clusterName // "") | startswith($prefix))] | length'
+      register: cdw_list_count
+      changed_when: false
+      until: (cdw_list_count.stdout | default('1') | trim | int) == 0
+      retries: 30
+      delay: "{{ ds_disable_wait_delay }}"
+      failed_when: (cdw_list_count.stdout | default('1') | trim | int) > 0
 
-    - name: Warn when CDW cluster is still present after delete attempt
-      ansible.builtin.debug:
-        msg: >-
-          CDW cluster for {{ cdp_env_name }} is still in
-          {{ dw_cluster_status.clusters[0].status }} state after delete attempt.
-      when:
-        - (dw_cluster_status.clusters | default([], true) | length) > 0
-        - dw_cluster_status.clusters[0].status not in ["Deleting"]
-
-    - name: Fail task if cluster deletion failed
+    - name: Fail when CDW cluster still listed after teardown wait
       ansible.builtin.fail:
-        msg: "CDW cluster deletion failed with status {{ dw_cluster_status.clusters[0].status }}."
-      when:
-        - (dw_cluster_status.clusters | default([], true) | length) > 0
-        - dw_cluster_status.clusters[0].status in ["Error", "Failed"]
-
-    - name: Deactivate CDW cluster
-      cloudera.cloud.dw_cluster_info:
-        env: "{{ cdp_env_name }}"
-      register: deactivatedw
-      until: (deactivatedw.clusters | default([], true) | length) == 0
-      retries: 50
-      delay: 30
-      ignore_errors: true
-      failed_when: false
+        msg: >-
+          CDW cluster still listed for {{ cdp_env_name }}
+          (status: {{ cdw_absent_check.clusters[0].status | default(cdw_list_count.stdout | default('unknown')) }}).
+      when: >
+        (cdw_absent_check.clusters | default([], true) | length) > 0 or
+        (cdw_list_count.stdout | default('1') | trim | int) > 0
 
     - name: Print success message on CDW cluster deletion
       ansible.builtin.debug:
         msg: "Successfully deleted CDW cluster in environment {{ cdp_env_name }}."
-      when: (deactivatedw.clusters | default([], true) | length) == 0
+      when: >
+        (cdw_absent_check.clusters | default([], true) | length) == 0 and
+        (cdw_list_count.stdout | default('1') | trim | int) == 0

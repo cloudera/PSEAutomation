@@ -9,7 +9,7 @@
 
 | AWS
 | link:AWS/build/README.adoc[`AWS/build/`]
-| `clouderapartners/cdp-public-cloud-hol-provisioner:latest`
+| `clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest`
 
 | Azure
 | link:Azure/build/README.adoc[`Azure/build/`]
@@ -91,7 +91,7 @@ Full pipeline reference (parameters, stages, local image build, role assignment)
 
 Deploy jobs support optional in-job image build (`BUILD_LOCAL_IMAGE` + `BUILD_IMAGE_TAG`, default `testbuildimage`) for branch testing without pushing to Docker Hub.
 
-Azure automation is developed on the `azure-automation` branch until merged to `main`.
+Azure and AWS provisioners are built from the `main` branch by default.
 
 ---
 

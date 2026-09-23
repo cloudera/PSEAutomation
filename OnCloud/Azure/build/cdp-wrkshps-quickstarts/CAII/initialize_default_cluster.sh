@@ -14,9 +14,15 @@ default_cluster_status=$(cdp compute list-clusters | jq -r --arg env_name "$env_
   | .status
 ')
 
-if [[ "$default_cluster_status" != "RUNNING" && "$default_cluster_status" != "CREATING" ]]; then
+status_lower=$(echo "$default_cluster_status" | tr '[:upper:]' '[:lower:]')
+if [[ -z "$status_lower" ]]; then
   echo "⚙️ Initializing default compute cluster..."
   cdp environments initialize-aws-compute-cluster --cli-input-json file://updated-convert-v2-env.json
+elif [[ "$status_lower" == *"failed"* || "$status_lower" == *"error"* || "$status_lower" == *"unhealthy"* ]]; then
+  echo "🔁 Existing default compute cluster is unhealthy (status: $default_cluster_status). Requesting reinitialization."
+  cdp environments initialize-aws-compute-cluster --cli-input-json file://updated-convert-v2-env.json
+else
+  echo "ℹ️ Default compute cluster already exists in status '$default_cluster_status'. Waiting without reinitializing."
 fi
 
 echo "⏳ Waiting for default compute cluster to reach RUNNING state..."
@@ -35,7 +41,7 @@ for i in {1..60}; do
   if [[ "$status_lower" == "running" ]]; then
     echo "✅ Default compute cluster is now RUNNING."
     break
-  elif [[ "$status_lower" == *"failed"* ]]; then
+  elif [[ "$status_lower" == *"failed"* || "$status_lower" == *"error"* || "$status_lower" == *"unhealthy"* ]]; then
     echo "❌ Default compute cluster initialization FAILED with status: $default_cluster_status."
     exit 1
   fi

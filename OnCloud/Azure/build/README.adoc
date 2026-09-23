@@ -206,12 +206,20 @@ docker run --rm --platform linux/amd64 \
 
 Storage lifecycle, CDW/CDE managed identities, and CAI NFS: link:cdp-wrkshps-quickstarts/azure_enhancements/README.adoc[`azure_enhancements/`] · link:../../../docs/oncloud/azure-enhancements.adoc[detailed guide]
 
+=== Azure datalake `Version should be in: []`
+
+If Terraform fails creating `cdp_datalake_azure_datalake` with `The value of the 'Version' should be in: []`, Azure ARM returned an *empty* allowed-value list for a nested resource (often PostgreSQL Flexible Server SKUs), not invalid Jenkins or Terraform bracket syntax. This usually means the **subscription cannot provision that resource type in the selected `AZURE_REGION`** (capacity or eligibility), even when `DATALAKE_VERSION` (e.g. `7.3.2`) worked in another region before.
+
+* Confirm `DATALAKE_VERSION` is set in the job/configfile (provisioner logs `Datalake version:` before Terraform apply).
+* In Azure Portal, open the failed deployment **Operations** for the datalake resource group and read the underlying ARM error.
+* Try another region (PollSCM and deploy jobs default to `westus2`; `eastus` may return empty SKU lists on some subscriptions) or open an Azure **Quota / region access** request if SKU lists are empty for your subscription.
+
 == Jenkins pipelines
 
 Workshop **provision** / **destroy** jobs: `Jenkinsfile.DeployHoL` and `Jenkinsfile.TestDeployHoL`.
 
 * link:../../JENKINS-PIPELINES.adoc[Jenkins pipelines guide] — all jobs, parameters, stages, local image build (`BUILD_LOCAL_IMAGE`, `BUILD_IMAGE_TAG`), and CDP role assignment
-* Image build job: `Jenkinsfile.Build` (default branch `azure-automation`)
+* Image build job: `Jenkinsfile.Build` (default branch `main`)
 
 == Further reading
 

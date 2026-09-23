@@ -11,14 +11,14 @@ pipeline {
     }
 
     parameters {
+        booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         string(name: 'PRIMARY_TAG', defaultValue: 'testmain', description: 'Primary tag (e.g. 2.4.1 or latest) for the Docker image')
         booleanParam(name: 'PUSH_SECONDARY_TAG', defaultValue: true, description: 'Push secondary tag for this Docker Image?')
         string(name: 'SECONDARY_TAG', defaultValue: new Date().format('yyyyMMdd') + '-${BUILD_NUMBER}', description: 'Secondary tag for the Docker image')
         choice(name: 'DELETE_WORKDIR', choices: ['false', 'true'], description: 'Delete the Work directory at the end of the job.')
-        booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         booleanParam(name: 'MULTI_PLATFORM_BUILD', defaultValue: false, description: 'Enable multi-platform build and push?')
         string(name: 'TF_QS_VER', defaultValue: 'main', description: 'CDP-TF-QUICKSTART tag version (e.g. v0.8.5 or main) to use for building Docker image')
-        string(name: 'BUILD_BRANCH', defaultValue: 'azure-automation', description: 'Git branch to checkout (Azure provisioner lives on azure-automation until merged to main)')
+        string(name: 'BUILD_BRANCH', defaultValue: 'main', description: 'Git branch to checkout before docker build')
     }
 
     options {
@@ -32,7 +32,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    def branch = params.BUILD_BRANCH?.trim() ?: 'azure-automation'
+                    def branch = params.BUILD_BRANCH?.trim() ?: 'main'
                     echo "Stage :: Checkout ${branch} branch."
                     checkout([
                         $class: 'GitSCM',
@@ -49,7 +49,7 @@ pipeline {
                         echo "Branch: \$(git branch --show-current || true)"
                         test -f ${DOCKERFILE_DIR}/Dockerfile || {
                           echo "ERROR: ${DOCKERFILE_DIR}/Dockerfile not found after checkout."
-                          echo "Ensure BUILD_BRANCH is 'azure-automation' (main does not contain the Azure build tree)."
+                          echo "Ensure BUILD_BRANCH points at a commit that contains ${DOCKERFILE_DIR}/Dockerfile (default: main)."
                           ls -la ${DOCKERFILE_DIR} || ls -la .
                           exit 1
                         }

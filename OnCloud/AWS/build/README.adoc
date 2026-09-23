@@ -20,7 +20,7 @@ Pull the published image (or link:#_developer_guide_build_tag_and_push[build loc
 
 [source,bash]
 ----
-docker pull clouderapartners/cdp-public-cloud-hol-provisioner:latest
+docker pull clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest
 ----
 
 === 2. Prepare userconfig
@@ -41,7 +41,7 @@ docker run --rm \
   -v ~/hol-userconfig:/userconfig \
   -v $HOME/.cdp:/root/.cdp \
   -v $HOME/.aws:/root/.aws \
-  clouderapartners/cdp-public-cloud-hol-provisioner:latest provision
+  clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest provision
 ----
 
 Workshop access details are written to `~/hol-userconfig/{WORKSHOP_NAME}.txt`.
@@ -60,7 +60,7 @@ docker run -d --name hol-${WORKSHOP}-provision \
   -v ~/hol-userconfig:/userconfig \
   -v $HOME/.cdp:/root/.cdp \
   -v $HOME/.aws:/root/.aws \
-  clouderapartners/cdp-public-cloud-hol-provisioner:latest provision
+  clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest provision
 ----
 
 Follow the container log:
@@ -94,7 +94,7 @@ docker run --rm \
   -v ~/hol-userconfig:/userconfig \
   -v $HOME/.cdp:/root/.cdp \
   -v $HOME/.aws:/root/.aws \
-  clouderapartners/cdp-public-cloud-hol-provisioner:latest provision \
+  clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest provision \
   2>&1 | tee ~/hol-userconfig/provision.log
 ----
 
@@ -108,7 +108,7 @@ docker run --rm \
   -v ~/hol-userconfig:/userconfig \
   -v $HOME/.cdp:/root/.cdp \
   -v $HOME/.aws:/root/.aws \
-  clouderapartners/cdp-public-cloud-hol-provisioner:latest destroy
+  clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest destroy
 ----
 
 Use the same optional `-d` / `docker logs -f` pattern as provision (replace the container name, e.g. `hol-${WORKSHOP}-destroy`).
@@ -159,22 +159,22 @@ docker images | grep hol-aws
 docker login
 ----
 
-Use a Docker Hub account with push access to `clouderapartners/cdp-public-cloud-hol-provisioner`.
+Use a Docker Hub account with push access to `clouderapartners/cdp-public-cloud-hol-provisioner-aws`.
 
 === Tag and push
 
 [source,bash]
 ----
-docker tag hol-aws:latest clouderapartners/cdp-public-cloud-hol-provisioner:latest
-docker push clouderapartners/cdp-public-cloud-hol-provisioner:latest
+docker tag hol-aws:latest clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest
+docker push clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest
 ----
 
 To publish an additional version tag:
 
 [source,bash]
 ----
-docker tag hol-aws:latest clouderapartners/cdp-public-cloud-hol-provisioner:<version>
-docker push clouderapartners/cdp-public-cloud-hol-provisioner:<version>
+docker tag hol-aws:latest clouderapartners/cdp-public-cloud-hol-provisioner-aws:<version>
+docker push clouderapartners/cdp-public-cloud-hol-provisioner-aws:<version>
 ----
 
 NOTE: Images built on one platform may not run on another. For multi-arch publish (as in `Jenkinsfile.Build`), use link:https://docs.docker.com/build/building/multi-platform/[Docker multi-platform builds] (`docker buildx`).

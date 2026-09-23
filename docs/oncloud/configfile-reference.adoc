@@ -124,7 +124,7 @@ If omitted, a key pair is generated automatically.
 
 == Data service sizing (optional)
 
-The provisioner applies cloud-specific defaults for data service compute sizing on AWS and Azure; leave the keys below commented unless you need a non-default size. CDE and CAI use built-in defaults when `CDE_INSTANCE_TYPE` / `CAI_WS_INSTANCE_TYPE` are omitted (`m5.2xlarge` on AWS; `Standard_D8s_v5` on Azure). On Azure, `resolve_azure_instance_type` in `hol-functions.sh` verifies the requested SKU in `AZURE_REGION` and falls back through the v5 family list used for CDE and CAI workspace types (and for `CDF_INSTANCE_TYPE` when set). CDF enable omits `instance_type` unless `CDF_INSTANCE_TYPE` is set, so CDP chooses the default Kubernetes node type. CDW sizing uses virtual warehouse and DataViz size keys only—not VM instance types.
+The provisioner applies cloud-specific defaults for data service compute sizing on AWS and Azure; leave the keys below commented unless you need a non-default size. CDE and CAI use built-in defaults when `CDE_INSTANCE_TYPE` / `CAI_WS_INSTANCE_TYPE` are omitted (`m5.2xlarge` on AWS; `Standard_D8s_v5` on Azure). On Azure, `resolve_azure_instance_type` in `hol-functions.sh` verifies the requested SKU in `AZURE_REGION` and falls back through the supported list. Azure CDW activation uses the Azure-specific CDP operation with the environment CRN, subnet, and managed identity, allowing CDP to select the supported cluster compute configuration. CDF enable omits `instance_type` unless `CDF_INSTANCE_TYPE` is set, so CDP chooses the default Kubernetes node type.
 
 |===
 | Key | Services | Description

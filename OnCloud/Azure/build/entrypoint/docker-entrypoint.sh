@@ -1,6 +1,7 @@
 #!/bin/bash
 # ***************************************************************************************************#
 source /usr/local/bin/hol-functions.sh
+hol_apply_terraform_env
 hol_fixup_cloudera_cloud_python
 configure_git_for_userconfig
 # Setting required path and variables.
@@ -27,10 +28,19 @@ provision)
     cdp_prereq
     check_key_pair
     sleep 10
+    cdp_environment_preexisting=false
+    if cdp_environment_exists; then
+        cdp_environment_preexisting=true
+        hol_info "Existing CDP environment detected — rerun failures will not trigger infrastructure rollback"
+    fi
     provision_cdp
     if [ $? -ne 0 ]; then
-        hol_warn "CDP environment provisioning failed — rolling back"
-        destroy_cdp
+        if [[ "$cdp_environment_preexisting" == true ]]; then
+            hol_warn "CDP environment update failed — preserving the pre-existing environment and Terraform state"
+        else
+            hol_warn "New CDP environment provisioning failed — rolling back resources created by this run"
+            destroy_cdp
+        fi
         hol_provision_failed "$workshop_name"
     else
         write_workshop_cdp_outputs
@@ -89,7 +99,7 @@ destroy)
     setup_azure_cli_auth
     if [ "$provision_caii" == "yes" ]; then
         hol_subsection "CAII teardown" "🧠"
-        destroy_cai_inference
+        destroy_cai_inference || hol_destroy_failed "$workshop_name"
     fi
     disable_data_services || hol_destroy_failed "$workshop_name"
     if [ "$provision_keycloak" == "yes" ]; then

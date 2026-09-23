@@ -39,7 +39,8 @@
         + (
           ['--load-balancer-subnets'] + (cdf_lb_subnets | list)
           if (
-            cdf_lb_subnets is defined
+            not (use_public_load_balancer | bool)
+            and cdf_lb_subnets is defined
             and (cdf_lb_subnets | length) > 0
           )
           else []

@@ -50,7 +50,7 @@ NOTE: The image is `linux/amd64`. On Apple Silicon Macs, include `--platform lin
 * *OWNER* (resource tag `pse-owner`): default `pse-apac@cloudera.com`
 * *LOCAL_MACHINE_IP*: IP or CIDR to whitelist for environment access
 * *PROVISION_CAII*: when set to `YES`, `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`
-* *AZURE_REGION*: Azure region for CDP and Keycloak resources (for example, `eastus`)
+* *AZURE_REGION*: Azure region for CDP and Keycloak resources (default in Jenkins/config example: `westus2`; must support PostgreSQL Flexible Server for datalake)
 * *SSH_KEY_NAME*: optional existing SSH key name; if omitted, a key pair is generated automatically
 
 See link:configfile-reference.adoc[configfile reference] for all supported keys.
@@ -62,7 +62,7 @@ See link:configfile-reference.adoc[configfile reference] for all supported keys.
 3. Workshop users mapped to CDP IAM groups with least-privilege roles
 4. Parameterized Keycloak admin password
 5. Azure and CDP prerequisite checks for VNet, public IP, storage account, IAM, and SAML provider quotas
-6. Optional activation of CDW, CDE, CAI, and CDF data services (parallel when multiple are selected; enable/disable playbooks skip redundant API calls when a service is already healthy or absent)
+6. Optional activation of CDW, CDE, CAI, and CDF data services (parallel when multiple are selected; enable/disable playbooks skip redundant API calls when a service is already healthy or absent; Azure CDW resolves the environment CRN and uses the Azure-specific CDP operation with its default network mode)
 7. Idempotent provision and destroy workflows (CDF disable resolves service CRN, stops flows, terminates deployments, then `cdp df disable-service --terminate-deployments --no-persist`)
 8. Uses `cdp-tf-quickstarts` Azure Terraform modules pulled at runtime
 9. Dynamic CDW virtual warehouse count based on workshop user count

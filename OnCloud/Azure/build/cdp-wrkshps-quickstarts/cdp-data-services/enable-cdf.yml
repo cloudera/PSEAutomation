@@ -40,15 +40,6 @@
     cdf_enable_initial_delay: 90
 
   tasks:
-    - name: Sanitize instance type value
-      ansible.builtin.set_fact:
-        instance_type: >-
-          {{
-            (instance_type | regex_search('Standard_[A-Za-z0-9_]+'))
-            | default(instance_type, true)
-          }}
-      when: instance_type is defined and (instance_type | string | trim | length) > 0
-
     - name: Check and print variable status
       ansible.builtin.debug:
         msg:
@@ -107,17 +98,6 @@
               | default({})
             )
           }}
-        cdf_list_detailed_state: >-
-          {{
-            (
-              (cdf_list_raw.stdout | default('{"services": []}') | from_json).services
-              | default([])
-              | selectattr('name', 'equalto', cdp_env_name)
-              | list
-              | first
-              | default({})
-            ).status.detailedState | default('')
-          }}
         cdf_list_state: >-
           {{
             (
@@ -128,6 +108,17 @@
               | first
               | default({})
             ).status.state | default('NOT_FOUND')
+          }}
+        cdf_list_detailed_state: >-
+          {{
+            (
+              (cdf_list_raw.stdout | default('{"services": []}') | from_json).services
+              | default([])
+              | selectattr('name', 'equalto', cdp_env_name)
+              | list
+              | first
+              | default({})
+            ).status.detailedState | default('')
           }}
 
     - name: Check if CDF service is already enabled
@@ -237,6 +228,19 @@
           in_progress={{ cdf_service_in_progress }},
           needs_recovery={{ cdf_service_needs_recovery }},
           skip_enable={{ cdf_skip_enable }}
+
+    - name: Fail when CDF disable is in progress (conflicts with Jenkins enable)
+      ansible.builtin.fail:
+        msg: >-
+          CDF is DISABLING for {{ cdp_env_name }} while this job is trying to enable it
+          (common if disable was started in the CDP DataFlow UI during provision).
+          Wait until disable finishes and the service is gone from list-services, then re-run —
+          do not run UI disable and Jenkins enable in parallel.
+      when:
+        - not cdf_service_healthy | default(false)
+        - cdf_current_state | default('') == 'DISABLING'
+          or cdf_info_state | default('') == 'DISABLING'
+          or cdf_list_state | default('') == 'DISABLING'
 
     - name: Skip enable when CDF service already exists
       ansible.builtin.debug:

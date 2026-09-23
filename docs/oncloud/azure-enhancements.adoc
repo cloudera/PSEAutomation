@@ -73,7 +73,7 @@ HoL sets `create_vm_mounting_nfs=false` and uses `prepare_cai_nfs_workbench_moun
 | Step | Re-run behavior
 
 | CDP Terraform (`provision_cdp`)
-| NFS share already exists — no change
+| For a pre-existing environment, creates a saved plan and refuses any delete or replacement action before applying additive or in-place updates. A failed update preserves the environment and Terraform state.
 
 | `azure_enhancements`
 | CDW/CDE identities idempotent
@@ -86,6 +86,15 @@ HoL sets `create_vm_mounting_nfs=false` and uses `prepare_cai_nfs_workbench_moun
 
 | Failed partial CAI
 | Re-run `provision` retries NFS prep and workspace create with the same workbench path
+
+| CAII scripts
+| Refreshes the scripts in the existing workshop directory without nesting directories or retaining stale copies
+
+| Healthy or in-progress CAII resources
+| Reuses running resources and waits for in-progress default/named compute clusters, AI Registry, and serving app without submitting duplicate create requests
+
+| Failed CAII resources
+| Retries supported default-cluster initialization; recreates only the failed named compute cluster, AI Registry, or serving app without destroying the CDP environment
 |===
 
 If Keycloak is disabled (`PROVISION_KEYCLOAK=no`), CAI NFS prep cannot run automatically. Create the workbench subdirectory and `chown 8536:8536` manually, or enable the Cloudera mount VM (`create_vm_mounting_nfs=true`) per link:https://docs.cloudera.com/machine-learning/cloud/requirements-azure/topics/ml-azure-setup-2.5.html[Cloudera Azure CAI requirements].

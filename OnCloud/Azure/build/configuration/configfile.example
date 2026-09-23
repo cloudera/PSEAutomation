@@ -6,7 +6,9 @@
 PROVISION_KEYCLOAK:yes
 KEYCLOAK_ADMIN_PASSWORD:changeme
 PROVISION_CAII:no
-AZURE_REGION:eastus
+# AZURE_REGION: CDP infra + datalake region. Must support PostgreSQL Flexible Server for your subscription
+# (check: az postgres flexible-server list-skus --location <region>). Default westus2; eastus may return empty SKUs.
+AZURE_REGION:westus2
 CDP_DEPLOYMENT_TYPE:public
 WORKSHOP_NAME:pseworkshop
 NUMBER_OF_WORKSHOP_USERS:10
@@ -16,6 +18,8 @@ LOCAL_MACHINE_IP:203.0.113.10/32
 ENABLE_DATA_SERVICES:CDW,CAI,CDE,CDF
 DOMAIN:example.com
 HOSTEDZONEID:Z1234567890ABC
+# DATALAKE_VERSION: CDP datalake runtime (e.g. 7.3.2 or latest). Independent of AZURE_REGION; pick a version
+# supported by your CDP entitlement. ARM error "Version should be in: []" usually means region/subscription SKU gap, not a bad version string.
 DATALAKE_VERSION:7.3.2
 
 # --- Optional: existing SSH key (omit to auto-generate) ---
@@ -29,6 +33,7 @@ DATALAKE_VERSION:7.3.2
 #CDP_GROUP_LIMIT:50
 
 # --- Optional: data service sizing overrides ---
+# CDW activation requires one of these supported compute VM types. Default: Standard_E16ads_v5.
 #CDW_VRTL_WAREHOUSE_SIZE:small
 #CDW_DATAVIZ_SIZE:small
 # CDE (cdp de enable-service): sizing applies to CORE or ALLP per CDE_VC_TIER; inactive tier is 0/0/0 in enable-cde.yml.
