@@ -9,6 +9,7 @@
     cde_async_delay: 30
     ds_disable_wait_retries: 120
     ds_disable_wait_delay: 30
+    cdp_env_name: "{{ workshop_name }}-cdp-env"
   tasks:
     - name: Check if CDE service exists
       cloudera.cloud.de_info:

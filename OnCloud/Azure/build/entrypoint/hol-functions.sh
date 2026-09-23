@@ -3113,7 +3113,8 @@ deploy_cde() {
 disable_cde() {
    hol_disable_service "cde"
    hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cde.yml --extra-vars \
-      "workshop_name=$workshop_name"
+      "workshop_name=$workshop_name \
+      cdp_env_name=$workshop_name-cdp-env"
 }
 #--------------------------------------------------------------------------------------------------#
 #--------------------------------------------------------------------------------------------------#
