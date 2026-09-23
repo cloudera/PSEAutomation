@@ -3275,7 +3275,9 @@ disable_cai() {
    hol_disable_service "cai"
    hol_run_ansible_playbook $DS_CONFIG_DIR/disable-cai.yml --extra-vars \
       "cdp_env_name=$workshop_name-cdp-env \
-      workshop_name=$workshop_name"
+      workshop_name=$workshop_name \
+      azure_subscription_id=$azure_subscription_id \
+      azure_resource_group=${AZURE_RESOURCE_GROUP:-${workshop_name}-rmgp}"
 }
 #--------------------------------------------------------------------------------------------------#
 deploy_cdf() {

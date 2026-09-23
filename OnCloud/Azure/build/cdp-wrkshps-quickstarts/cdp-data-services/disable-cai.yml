@@ -6,6 +6,8 @@
   vars:
     ds_disable_wait_retries: 120
     ds_disable_wait_delay: 30
+    cai_azure_subscription_id: "{{ azure_subscription_id | default(lookup('ansible.builtin.env', 'AZURE_SUBSCRIPTION_ID'), true) }}"
+    cai_azure_resource_group: "{{ azure_resource_group | default(workshop_name + '-rmgp', true) }}"
   tasks:
     - name: Check and print variable status
       debug:
@@ -31,12 +33,160 @@
       ansible.builtin.meta: end_play
       when: not workspace_exists
 
+    - name: Describe CAI workspace before deletion
+      ansible.builtin.command:
+        argv:
+          - cdp
+          - ml
+          - describe-workspace
+          - --environment-name
+          - "{{ cdp_env_name }}"
+          - --workspace-name
+          - "{{ workshop_name }}-cai-ws"
+      register: cai_workspace_description
+      changed_when: false
+
+    - name: Set CAI Azure cleanup facts
+      ansible.builtin.set_fact:
+        cai_workspace_crn: "{{ (cai_workspace_description.stdout | from_json).workspace.crn }}"
+        cai_k8s_cluster_name: "{{ (cai_workspace_description.stdout | from_json).workspace.k8sClusterName }}"
+        cai_admin_identity_name: adminIdentity
+        cai_archiver_credential_name: >-
+          {{ (cai_workspace_description.stdout | from_json).workspace.k8sClusterName
+             + '-adminIdentity-mlx-sa-cdsw-archiver' }}
+
+    - name: Check CAI AKS cluster
+      ansible.builtin.command:
+        argv:
+          - az
+          - aks
+          - show
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --resource-group
+          - "{{ cai_azure_resource_group }}"
+          - --name
+          - "{{ cai_k8s_cluster_name }}"
+          - --only-show-errors
+      register: cai_aks_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check CAI admin managed identity
+      ansible.builtin.command:
+        argv:
+          - az
+          - identity
+          - show
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --resource-group
+          - "{{ cai_azure_resource_group }}"
+          - --name
+          - "{{ cai_admin_identity_name }}"
+          - --only-show-errors
+      register: cai_admin_identity_check
+      changed_when: false
+      failed_when: false
+      when: cai_aks_check.rc == 0
+
+    - name: Restore missing CAI admin managed identity for clean deletion
+      ansible.builtin.command:
+        argv:
+          - az
+          - identity
+          - create
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --resource-group
+          - "{{ cai_azure_resource_group }}"
+          - --name
+          - "{{ cai_admin_identity_name }}"
+          - --only-show-errors
+      register: cai_admin_identity_repair
+      when:
+        - cai_aks_check.rc == 0
+        - cai_admin_identity_check.rc != 0
+
+    - name: Read CAI AKS OIDC issuer
+      ansible.builtin.command:
+        argv:
+          - az
+          - aks
+          - show
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --resource-group
+          - "{{ cai_azure_resource_group }}"
+          - --name
+          - "{{ cai_k8s_cluster_name }}"
+          - --query
+          - oidcIssuerProfile.issuerUrl
+          - --output
+          - tsv
+          - --only-show-errors
+      register: cai_aks_oidc_issuer
+      changed_when: false
+      when: cai_aks_check.rc == 0
+
+    - name: Check CAI archiver federated credential
+      ansible.builtin.command:
+        argv:
+          - az
+          - identity
+          - federated-credential
+          - show
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --resource-group
+          - "{{ cai_azure_resource_group }}"
+          - --identity-name
+          - "{{ cai_admin_identity_name }}"
+          - --name
+          - "{{ cai_archiver_credential_name }}"
+          - --only-show-errors
+      register: cai_archiver_credential_check
+      changed_when: false
+      failed_when: false
+      when: cai_aks_check.rc == 0
+
+    - name: Restore missing CAI archiver credential for clean deletion
+      ansible.builtin.command:
+        argv:
+          - az
+          - identity
+          - federated-credential
+          - create
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --resource-group
+          - "{{ cai_azure_resource_group }}"
+          - --identity-name
+          - "{{ cai_admin_identity_name }}"
+          - --name
+          - "{{ cai_archiver_credential_name }}"
+          - --issuer
+          - "{{ cai_aks_oidc_issuer.stdout | trim }}"
+          - --subject
+          - system:serviceaccount:mlx:mlx-sa-cdsw-archiver
+          - --audiences
+          - api://AzureADTokenExchange
+          - --only-show-errors
+      register: cai_archiver_credential_repair
+      retries: 6
+      delay: 10
+      until: cai_archiver_credential_repair.rc == 0
+      when:
+        - cai_aks_check.rc == 0
+        - cai_archiver_credential_check.rc != 0
+
     - name: Delete CAI Workspace if exists
       ansible.builtin.command: >
         cdp ml delete-workspace \
         --environment-name "{{ cdp_env_name }}" \
         --workspace-name "{{ workshop_name }}-cai-ws" \
-        --no-force
+        --no-force \
+        --remove-storage
       register: ml_delete_workspace
       failed_when: false
       when: workspace_exists
@@ -61,26 +211,57 @@
         - workspace_exists
         - (ml_delete_workspace.rc | default(1)) == 0
 
-    - name: Force delete CAI workspace after normal deletion failure
+    - name: Count remaining CAI Azure resources after normal deletion
+      ansible.builtin.command:
+        argv:
+          - az
+          - resource
+          - list
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --tag
+          - "WorkspaceCrn={{ cai_workspace_crn }}"
+          - --query
+          - length(@)
+          - --output
+          - tsv
+          - --only-show-errors
+      register: cai_azure_resource_count_after_normal
+      changed_when: false
+      when: >
+        ((ml_delete_workspace.rc | default(1)) != 0) or
+        (cai_normal_delete_status.stdout | default('') | trim) != 'ABSENT'
+
+    - name: Refuse force deletion while CAI Azure resources remain
+      ansible.builtin.fail:
+        msg: >-
+          Normal CAI deletion failed and Azure still contains
+          {{ cai_azure_resource_count_after_normal.stdout | default('unknown') | trim }}
+          resource(s) tagged for workspace {{ cai_workspace_crn }}. Force deletion was not
+          attempted because it could orphan those resources.
+      when:
+        - cai_azure_resource_count_after_normal is not skipped
+        - (cai_azure_resource_count_after_normal.stdout | default('1') | trim | int) > 0
+
+    - name: Reconcile CAI workspace only when Azure resources are already absent
       ansible.builtin.command: >
         cdp ml delete-workspace
         --environment-name "{{ cdp_env_name }}"
         --workspace-name "{{ workshop_name }}-cai-ws"
         --force
+        --remove-storage
       register: cai_force_delete
       failed_when: false
       when:
         - workspace_exists
-        - >
-          ((ml_delete_workspace.rc | default(1)) != 0) or
-          (cai_normal_delete_status.stdout | default('') | trim) != 'ABSENT'
+        - cai_azure_resource_count_after_normal is not skipped
+        - (cai_azure_resource_count_after_normal.stdout | default('1') | trim | int) == 0
 
-    - name: Report CAI force-delete recovery
+    - name: Report safe CAI control-plane reconciliation
       ansible.builtin.debug:
         msg: >-
-          Normal deletion did not remove CAI workspace {{ workshop_name }}-cai-ws
-          (status: {{ cai_normal_delete_status.stdout | default('unknown') | trim }}).
-          Requested force deletion to reconcile the orphaned CDP resource.
+          Azure contains no resources tagged for CAI workspace {{ cai_workspace_crn }}.
+          Requested force deletion only to reconcile its orphaned CDP control-plane record.
       when: cai_force_delete is not skipped
 
     - name: Poll forced CAI workspace deletion
@@ -109,16 +290,65 @@
       changed_when: false
       when: workspace_exists
 
+    - name: Verify CAI Azure resources are absent
+      ansible.builtin.command:
+        argv:
+          - az
+          - resource
+          - list
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --tag
+          - "WorkspaceCrn={{ cai_workspace_crn }}"
+          - --query
+          - length(@)
+          - --output
+          - tsv
+          - --only-show-errors
+      register: cai_azure_resource_final_count
+      changed_when: false
+      until: (cai_azure_resource_final_count.stdout | default('1') | trim | int) == 0
+      retries: "{{ ds_disable_wait_retries }}"
+      delay: "{{ ds_disable_wait_delay }}"
+      when: (cai_ws_final_count.stdout | default('1') | trim | int) == 0
+
+    - name: Remove temporary CAI identity repair
+      ansible.builtin.command:
+        argv:
+          - az
+          - identity
+          - delete
+          - --subscription
+          - "{{ cai_azure_subscription_id }}"
+          - --resource-group
+          - "{{ cai_azure_resource_group }}"
+          - --name
+          - "{{ cai_admin_identity_name }}"
+          - --only-show-errors
+      when:
+        - cai_admin_identity_repair is not skipped
+        - (cai_azure_resource_final_count.stdout | default('1') | trim | int) == 0
+
     - name: Fail when CAI workspace deletion did not complete
       ansible.builtin.fail:
         msg: >-
           CAI workspace {{ workshop_name }}-cai-ws still appears in list-workspaces for
-          {{ cdp_env_name }} after normal and force deletion attempts
+          {{ cdp_env_name }} after normal and safe reconciliation attempts
           (normal status: {{ cai_normal_delete_status.stdout | default('unknown') | trim }},
           force request rc: {{ cai_force_delete.rc | default('not-run') }}).
       when: >
         workspace_exists and
         (cai_ws_final_count.stdout | default('1') | trim | int) > 0
+
+    - name: Fail when CAI Azure resources remain
+      ansible.builtin.fail:
+        msg: >-
+          CAI workspace {{ workshop_name }}-cai-ws was removed from CDP, but Azure still
+          contains {{ cai_azure_resource_final_count.stdout | default('unknown') | trim }}
+          resource(s) tagged for workspace {{ cai_workspace_crn }}.
+      when: >
+        (cai_ws_final_count.stdout | default('1') | trim | int) == 0 and
+        (cai_azure_resource_final_count.stdout | default('1') | trim | int) > 0
 
     - name: Print success message on workspace deletion
       ansible.builtin.debug:
