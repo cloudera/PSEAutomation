@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Azure Jenkins role assignment no longer performs the same checks before, during, and after provision. The pipeline caller is checked immediately before data-service APIs, the build user after provision, and destroy credentials before teardown; existing roles are fetched once per principal instead of once per role.
 - Azure data services now start concurrently without the previous cumulative 25-second stagger. Built-in CAI/CDE instance defaults bypass slow Azure SKU discovery; explicit instance overrides still receive availability validation and fallback.
 - CDW playbook waits use single live retry checks for cluster deletion, activation, and database-catalog startup, avoiding pre-expanded/stale attempt output.
 - Ansible waits now show retry attempts, retries remaining, current resource status/output, and async poll progress at normal verbosity so long-running playbooks do not appear stuck.

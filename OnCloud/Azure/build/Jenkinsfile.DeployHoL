@@ -384,6 +384,9 @@ ENV_TAGS:${envTags}
         }
 
         stage('Assign CDP env admin roles for pipeline') {
+            when {
+                expression { params.ACTION == 'destroy' }
+            }
             steps {
                 script {
                     def assignScriptCandidates = [
@@ -403,7 +406,7 @@ ENV_TAGS:${envTags}
                         WORKSHOP_NAME='${params.WORKSHOP_NAME}' \
                         BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' \
                         CDP_MACHINE_USERNAME='psejenkins' \
-                        ASSIGN_BUILD_USER=true \
+                        ASSIGN_BUILD_USER=false \
                         ASSIGN_MACHINE_USER=true \
                         ASSIGN_CALLER=true \
                         '${assignScript}'

@@ -73,9 +73,11 @@ ENV_ADMIN_ROLES=(
    MLAdmin
 )
 
+CDP_RESOURCE_ROLES_JSON="$(cdp iam list-resource-roles 2>/dev/null || echo '{"resourceRoles":[]}')"
+
 get_crn_resource_role() {
    local role_name="$1"
-   cdp iam list-resource-roles 2>/dev/null \
+   echo "$CDP_RESOURCE_ROLES_JSON" \
       | jq -r --arg role "$role_name" '.resourceRoles[]? | select(.crn | endswith(":" + $role)) | .crn' \
       | head -1
 }
@@ -238,12 +240,15 @@ human_user_has_resource_role() {
 assign_machine_user_roles() {
    local machine_user_name="$1"
    local machine_user_crn="$2"
-   local role_name role_crn err_file assign_failed=0
+   local role_name role_crn err_file assigned_roles_json assign_failed=0
 
    echo "Assigning environment roles to machine user '${machine_user_name}' on ${CDP_ENV_NAME}"
+   assigned_roles_json="$(cdp iam list-machine-user-assigned-resource-roles \
+      --machine-user "$machine_user_crn" 2>/dev/null || echo '{"resourceRoles":[]}')"
 
    for role_name in "${ENV_ADMIN_ROLES[@]}"; do
-      if machine_user_has_resource_role "$machine_user_crn" "$role_name"; then
+      if echo "$assigned_roles_json" | jq -e --arg role ":$role_name" --arg env "$CDP_ENV_CRN" \
+         '.resourceRoles[]? | select(.crn | endswith($role)) | select(.resourceCrn == $env)' >/dev/null; then
          _hol_assign_ok "${role_name} (already assigned)"
          continue
       fi
@@ -276,12 +281,15 @@ assign_machine_user_roles() {
 assign_human_user_roles() {
    local workload_username="$1"
    local user_crn="$2"
-   local role_name role_crn err_file assign_failed=0
+   local role_name role_crn err_file assigned_roles_json assign_failed=0
 
    echo "Assigning environment roles to user '${workload_username}' on ${CDP_ENV_NAME}"
+   assigned_roles_json="$(cdp iam list-user-assigned-resource-roles \
+      --user "$user_crn" 2>/dev/null || echo '{"resourceRoles":[]}')"
 
    for role_name in "${ENV_ADMIN_ROLES[@]}"; do
-      if human_user_has_resource_role "$user_crn" "$role_name"; then
+      if echo "$assigned_roles_json" | jq -e --arg role ":$role_name" --arg env "$CDP_ENV_CRN" \
+         '.resourceRoles[]? | select(.crn | endswith($role)) | select(.resourceCrn == $env)' >/dev/null; then
          _hol_assign_ok "${role_name} (already assigned)"
          continue
       fi
