@@ -6,6 +6,7 @@ pipeline {
         choice(name: 'ACTION', choices: ['provision', 'destroy'], description: 'Choose whether to provision or destroy the stack')
         choice(name: 'PROVISION_KEYCLOAK', choices: ['YES', 'NO'], description: 'Choose whether to provision Keycloak Instance (YES/NO)')
         choice(name: 'PROVISION_CAII', choices: ['NO', 'YES'], description: 'Provision CAII (YES/NO). When YES, LOCAL_MACHINE_IP cannot be 0.0.0.0/0 — use your Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
+        booleanParam(name: 'DELETE_DATAHUBS', defaultValue: true, description: 'Delete all Data Hubs associated with the workshop environment during destroy.')
         password(name: 'KEYCLOAK_ADMIN_PASSWORD', defaultValue: 'admin', description: '❗❗❗(MANDATORY) Admin User Password for Keycloak')
         choice(name: 'CDP_DEPLOYMENT_TYPE', choices: ['public', 'private', 'semi-private'], description: 'Choose the CDP Deployment Type (public/private/semi-private). Default: public')
         string(name: 'AZURE_REGION', defaultValue: 'westus2', description: 'Azure Region (e.g., westus2). Must support PostgreSQL Flexible Server for CDP datalake (verify with az postgres flexible-server list-skus).')
@@ -245,6 +246,7 @@ pipeline {
                     writeFile file: env.CONFIG_FILE, text: """PROVISION_KEYCLOAK:${params.PROVISION_KEYCLOAK}
 KEYCLOAK_ADMIN_PASSWORD:${params.KEYCLOAK_ADMIN_PASSWORD}
 PROVISION_CAII:${params.PROVISION_CAII}
+DELETE_DATAHUBS:${params.DELETE_DATAHUBS}
 AZURE_REGION:${params.AZURE_REGION}
 CDP_DEPLOYMENT_TYPE:${params.CDP_DEPLOYMENT_TYPE}
 LOCAL_MACHINE_IP:${params.LOCAL_MACHINE_IP}

@@ -73,6 +73,11 @@ Both AWS and Azure provisioners read a flat `configfile` mounted at `/userconfig
 | yes
 | Comma-separated list: `CDW`, `CAI`, `CDE`, `CDF`
 
+| `DELETE_DATAHUBS`
+| optional
+| optional
+| `true` (default) deletes all Data Hubs associated with the workshop environment during destroy; `false` skips Data Hub deletion. Infrastructure destruction will still fail if Data Hubs remain attached to the environment.
+
 | `DOMAIN`
 | yes
 | yes

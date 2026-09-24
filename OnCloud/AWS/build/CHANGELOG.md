@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Data Hub teardown is controlled by optional `DELETE_DATAHUBS` (default `true`); set it to `false` to leave environment Data Hubs untouched.
 - AWS teardown now deletes every Data Hub associated with the workshop CDP environment in parallel with data-service teardown, periodically retries normal deletion requests, reports live cluster states, and waits for both before allowing infrastructure destruction.
 - AWS Jenkins role assignment no longer performs the same checks before, during, and after provision. The pipeline caller is checked immediately after environment creation, the build user after provision, and destroy credentials before teardown; existing roles are fetched once per principal instead of once per role.
 - Ansible waits now show retry attempts, retries remaining, current resource status/output, and async poll progress at normal verbosity so long-running playbooks do not appear stuck.

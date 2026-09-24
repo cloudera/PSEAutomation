@@ -92,7 +92,12 @@ destroy)
         destroy_cai_inference || hol_destroy_failed "$workshop_name"
     fi
     hol_subsection "Deleting Data Hubs and data services in parallel" "🗑️"
-    delete_environment_datahubs &
+    if [[ "${delete_datahubs:-true}" == "true" ]]; then
+        delete_environment_datahubs &
+    else
+        hol_skip "Data Hub deletion disabled (DELETE_DATAHUBS=false)"
+        true &
+    fi
     datahub_delete_pid=$!
     disable_data_services &
     data_services_delete_pid=$!

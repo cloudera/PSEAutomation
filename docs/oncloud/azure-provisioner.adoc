@@ -50,6 +50,7 @@ NOTE: The image is `linux/amd64`. On Apple Silicon Macs, include `--platform lin
 * *OWNER* (resource tag `pse-owner`): default `pse-apac@cloudera.com`
 * *LOCAL_MACHINE_IP*: IP or CIDR to whitelist for environment access
 * *PROVISION_CAII*: when set to `YES`, `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`
+* *DELETE_DATAHUBS*: delete all Data Hubs associated with the environment during destroy (default `true`); setting `false` skips deletion, but infrastructure destroy cannot complete while Data Hubs remain
 * *AZURE_REGION*: Azure region for CDP and Keycloak resources (default in Jenkins/config example: `westus2`; must support PostgreSQL Flexible Server for datalake)
 * *SSH_KEY_NAME*: optional existing SSH key name; if omitted, a key pair is generated automatically
 

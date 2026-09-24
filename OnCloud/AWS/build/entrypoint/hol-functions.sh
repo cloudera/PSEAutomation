@@ -246,6 +246,7 @@ hol_enabled_data_services_csv() {
 
 validating_variables() {
    hol_subsection "Validating configfile & input parameters" "📋"
+   delete_datahubs="${delete_datahubs:-true}"
    sleep 10
    if [ ! -f "/userconfig/configfile" ]; then
       hol_fail "Config file 'configfile' not found in /userconfig.
@@ -452,6 +453,12 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
             ;;
          ENABLE_DATA_SERVICES)
             HOL_ENABLE_DATA_SERVICES=$value
+            ;;
+         DELETE_DATAHUBS)
+            delete_datahubs=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+            if [[ "$delete_datahubs" != "true" && "$delete_datahubs" != "false" ]]; then
+               hol_fail "Invalid DELETE_DATAHUBS '${value}'. Allowed: true, false."
+            fi
             ;;
          CDW_VRTL_WAREHOUSE_SIZE)
             cdw_vrtl_warehouse_size=$(echo $value | tr '[:upper:]' '[:lower:]')

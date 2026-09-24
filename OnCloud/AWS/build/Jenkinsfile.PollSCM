@@ -25,6 +25,7 @@ pipeline {
         string(name: 'DOMAIN', defaultValue: 'clouderapartners.click', description: 'Route53 domain for Keycloak/DNS (passed to deploy/destroy jobs)')
         string(name: 'HOSTEDZONEID', defaultValue: '', description: 'Route53 hosted zone ID for DOMAIN (set on Jenkins job; not stored in repo)')
         string(name: 'DATALAKE_VERSION', defaultValue: '7.3.2', description: 'CDP datalake runtime passed to deploy/destroy (e.g. 7.3.2)')
+        booleanParam(name: 'DELETE_DATAHUBS', defaultValue: true, description: 'Delete environment Data Hubs during destroy.')
         booleanParam(name: 'BUILD_LOCAL_IMAGE', defaultValue: false, description: 'Build image on deploy agents; when false, pull IMAGE_TAG from registry')
     }
     
@@ -100,6 +101,7 @@ pipeline {
                     def awsDeployParams = [
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
+                        booleanParam(name: 'DELETE_DATAHUBS', value: params.DELETE_DATAHUBS),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'DOMAIN', value: "${params.DOMAIN}"),
                         string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
@@ -143,6 +145,7 @@ pipeline {
                     def azureDeployParams = [
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
+                        booleanParam(name: 'DELETE_DATAHUBS', value: params.DELETE_DATAHUBS),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'DOMAIN', value: "${params.DOMAIN}"),
                         string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
@@ -254,6 +257,7 @@ pipeline {
                     def awsDestroyParams = [
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
+                        booleanParam(name: 'DELETE_DATAHUBS', value: params.DELETE_DATAHUBS),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'DOMAIN', value: "${params.DOMAIN}"),
                         string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
@@ -297,6 +301,7 @@ pipeline {
                     def azureDestroyParams = [
                         string(name: 'PROVISION_KEYCLOAK', value: 'YES'),
                         string(name: 'PROVISION_CAII', value: 'NO'),
+                        booleanParam(name: 'DELETE_DATAHUBS', value: params.DELETE_DATAHUBS),
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'DOMAIN', value: "${params.DOMAIN}"),
                         string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
