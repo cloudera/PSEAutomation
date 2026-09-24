@@ -3680,6 +3680,75 @@ hol_enable_data_services() {
    return $failed
 }
 #--------------------------------------------------------------------------------------------------#
+delete_environment_datahubs() {
+   local env_name="${workshop_name}-cdp-env"
+   local retries="${HOL_DATAHUB_DELETE_RETRIES:-120}"
+   local delay="${HOL_DATAHUB_DELETE_DELAY_SEC:-30}"
+   local attempt cluster cluster_json delete_output remaining summary name crn
+   local -a clusters=()
+
+   if ! cluster_json=$(cdp datahub list-clusters --environment-name "$env_name" 2>&1); then
+      hol_warn "Unable to list Data Hubs for ${env_name}: ${cluster_json}"
+      return 1
+   fi
+   if ! echo "$cluster_json" | jq -e '.clusters | arrays' >/dev/null 2>&1; then
+      hol_warn "Invalid Data Hub list response for ${env_name}: ${cluster_json}"
+      return 1
+   fi
+
+   while IFS= read -r cluster; do
+      clusters+=("$cluster")
+   done < <(echo "$cluster_json" | jq -r '.clusters[]? | [.clusterName, .crn] | @tsv')
+   if [[ ${#clusters[@]} -eq 0 ]]; then
+      hol_ok "No Data Hubs found for ${env_name}"
+      return 0
+   fi
+
+   hol_subsection "Deleting environment Data Hubs" "🗑️"
+   hol_info "Environment: ${env_name}; clusters: $(echo "$cluster_json" | jq -r '[.clusters[].clusterName] | join(", ")')"
+
+   for cluster in "${clusters[@]}"; do
+      IFS=$'\t' read -r name crn <<<"$cluster"
+      if delete_output=$(cdp datahub delete-cluster --cluster-name "$crn" --no-force 2>&1); then
+         hol_ok "Data Hub deletion requested: ${name}"
+      else
+         hol_warn "Data Hub '${name}' did not accept the initial delete request; polling and retrying: ${delete_output}"
+      fi
+   done
+
+   for ((attempt = 1; attempt <= retries; attempt++)); do
+      if ! cluster_json=$(cdp datahub list-clusters --environment-name "$env_name" 2>&1); then
+         hol_warn "Data Hub status check ${attempt}/${retries} failed: ${cluster_json}"
+         sleep "$delay"
+         continue
+      fi
+      if ! echo "$cluster_json" | jq -e '.clusters | arrays' >/dev/null 2>&1; then
+         hol_warn "Data Hub status check ${attempt}/${retries} returned invalid JSON: ${cluster_json}"
+         sleep "$delay"
+         continue
+      fi
+
+      remaining=$(echo "$cluster_json" | jq -r '.clusters | length')
+      if [[ "$remaining" -eq 0 ]]; then
+         hol_ok "All Data Hubs deleted from ${env_name}"
+         return 0
+      fi
+
+      summary=$(echo "$cluster_json" | jq -r '[.clusters[] | "\(.clusterName)=\(.status)"] | join(", ")')
+      hol_step "Data Hub deletion check ${attempt}/${retries}: ${remaining} remaining (${summary})"
+
+      if ((attempt % 4 == 0)); then
+         while IFS=$'\t' read -r name crn; do
+            cdp datahub delete-cluster --cluster-name "$crn" --no-force >/dev/null 2>&1 || true
+         done < <(echo "$cluster_json" | jq -r '.clusters[]? | [.clusterName, .crn] | @tsv')
+      fi
+      sleep "$delay"
+   done
+
+   hol_warn "Data Hubs still exist in ${env_name} after $((retries * delay)) seconds: ${summary}"
+   return 1
+}
+#--------------------------------------------------------------------------------------------------#
 disable_data_services() {
    local selected_services token
    selected_services=$(hol_enabled_data_services_csv)

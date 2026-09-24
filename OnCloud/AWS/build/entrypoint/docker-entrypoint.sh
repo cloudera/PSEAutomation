@@ -91,7 +91,20 @@ destroy)
         hol_subsection "CAII teardown" "🧠"
         destroy_cai_inference || hol_destroy_failed "$workshop_name"
     fi
-    disable_data_services || hol_destroy_failed "$workshop_name"
+    hol_subsection "Deleting Data Hubs and data services in parallel" "🗑️"
+    delete_environment_datahubs &
+    datahub_delete_pid=$!
+    disable_data_services &
+    data_services_delete_pid=$!
+
+    datahub_delete_status=0
+    data_services_delete_status=0
+    wait "$datahub_delete_pid" || datahub_delete_status=$?
+    wait "$data_services_delete_pid" || data_services_delete_status=$?
+    if [[ "$datahub_delete_status" -ne 0 || "$data_services_delete_status" -ne 0 ]]; then
+        hol_warn "CDP teardown failed (Data Hubs=${datahub_delete_status}, data services=${data_services_delete_status})"
+        hol_destroy_failed "$workshop_name"
+    fi
     if [ "$provision_keycloak" == "yes" ]; then
         cdp_idp_user_teardown
     fi
