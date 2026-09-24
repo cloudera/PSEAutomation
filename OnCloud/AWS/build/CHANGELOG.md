@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDE/CDW/CDF enable playbooks (AWS/Azure): user-visible success `debug` messages on completion (and when CDF is already healthy), aligned with CAI `Successfully provisioned … in environment …` wording.
 
 ### Fixed
+- Data Hub teardown treats CDP environment-not-found responses as an idempotent success and reports that no associated Data Hubs exist, while retaining failures for other list API errors.
 - CDW `disable-cdw.yml` (AWS/Azure): list-clusters verify uses `workshop_name` from extra-vars or derives prefix from `cdp_env_name` so destroy no longer fails after cluster poll succeeds.
 - AWS destroy: remove automated workshop VPC prep (EIP disassociate, NAT delete, ENI poll) from `destroy_cdp` and Terraform destroy retries; HoL runs disable playbooks then CDP Terraform only.
 - AWS/Azure destroy: remove duplicate CDP list-API gate in `destroy_cdp` after successful disable playbooks (stale control-plane rows no longer block Terraform); keep teardown enforcement in disable playbooks and `disable_data_services || hol_destroy_failed`.

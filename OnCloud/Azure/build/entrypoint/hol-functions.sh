@@ -3695,6 +3695,10 @@ delete_environment_datahubs() {
    local -a clusters=()
 
    if ! cluster_json=$(cdp datahub list-clusters --environment-name "$env_name" 2>&1); then
+      if grep -qiE "Environment with name .* was not found|environmentCrn by name.*404 Not Found|RESOURCE_NOT_FOUND" <<<"$cluster_json"; then
+         hol_ok "No Data Hubs found — CDP environment '${env_name}' does not exist or was already deleted"
+         return 0
+      fi
       hol_warn "Unable to list Data Hubs for ${env_name}: ${cluster_json}"
       return 1
    fi
@@ -3725,6 +3729,10 @@ delete_environment_datahubs() {
 
    for ((attempt = 1; attempt <= retries; attempt++)); do
       if ! cluster_json=$(cdp datahub list-clusters --environment-name "$env_name" 2>&1); then
+         if grep -qiE "Environment with name .* was not found|environmentCrn by name.*404 Not Found|RESOURCE_NOT_FOUND" <<<"$cluster_json"; then
+            hol_ok "All Data Hubs absent — CDP environment '${env_name}' was deleted during teardown"
+            return 0
+         fi
          hol_warn "Data Hub status check ${attempt}/${retries} failed: ${cluster_json}"
          sleep "$delay"
          continue
