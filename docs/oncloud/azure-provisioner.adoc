@@ -66,7 +66,7 @@ See link:configfile-reference.adoc[configfile reference] for all supported keys.
 6. Optional activation of CDW, CDE, CAI, and CDF data services (parallel when multiple are selected; enable/disable playbooks skip redundant API calls when a service is already healthy or absent; Azure CDW resolves the environment CRN and uses the Azure-specific CDP operation with its default network mode)
 7. Idempotent provision and destroy workflows (CDF disable resolves service CRN, stops flows, terminates deployments, then `cdp df disable-service --terminate-deployments --no-persist`)
 8. Uses `cdp-tf-quickstarts` Azure Terraform modules pulled at runtime
-9. Dynamic CDW virtual warehouse count based on workshop user count
+9. Dynamic CDW Hive, Impala, and Trino Virtual Warehouse count based on workshop user count, with configurable auto-suspend and live Trino instance-type validation
 10. Optional GPU-backed CAI workspaces
 11. Azure Files NFS for CAI/CAII (premium storage, private endpoints) — see link:azure-enhancements.adoc#_cai_nfs_via_cdp_terraform[CAI NFS section]
 12. Configurable data service sizing and Spark version overrides

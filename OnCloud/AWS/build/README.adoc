@@ -4,6 +4,8 @@
 
 Container-based automation that provisions a **disposable** Cloudera Data Platform Public Cloud Hands-on Lab stack on AWS — environment, datalake, data services (CAI, CDW, CDE, CDF), optional Keycloak SSO, and workshop users.
 
+CDW provisioning creates Hive, Impala, and Trino Virtual Warehouses. Auto-suspend is enabled for all three by default; Trino uses the current CDP-supported AWS instance catalog.
+
 Detailed reference: link:../../../docs/oncloud/aws-provisioner.adoc[AWS provisioner guide] · link:../../../docs/oncloud/configfile-reference.adoc[configfile reference]
 
 == Quick start

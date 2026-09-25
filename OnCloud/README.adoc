@@ -4,6 +4,8 @@
 
 **AutoClouderaDeploy** provisions disposable Cloudera Data Platform Public Cloud Hands-on Lab environments from a single Docker container — CDP environment, datalake, optional data services (CAI, CDW, CDE, CDF), Keycloak SSO, and workshop users.
 
+When CDW is selected, the provisioner creates Hive, Impala, and Trino Virtual Warehouses for each workshop user group. Auto-suspend is enabled by default for all three engines, with configurable timeout and live cloud-specific Trino instance-type validation.
+
 |===
 | Cloud | Directory | Published image
 

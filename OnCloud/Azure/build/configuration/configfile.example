@@ -37,6 +37,11 @@ DATALAKE_VERSION:7.3.2
 # CDW activation requires one of these supported compute VM types. Default: Standard_E16ads_v5.
 #CDW_VRTL_WAREHOUSE_SIZE:small
 #CDW_DATAVIZ_SIZE:small
+# Hive/Impala current default: Standard_E16ds_v5; also support Standard_E16ads_v5 and Standard_E16pds_v5.
+# Trino: AUTO/current Azure default; supported on 2026-09-25: Standard_E16ads_v5, Standard_E16ds_v5
+#CDW_TRINO_INSTANCE_TYPE:AUTO
+#CDW_AUTOSUSPEND:true
+#CDW_AUTOSUSPEND_TIMEOUT_SECONDS:300
 # CDE (cdp de enable-service): sizing applies to CORE or ALLP per CDE_VC_TIER; inactive tier is 0/0/0 in enable-cde.yml.
 #CDE_INSTANCE_TYPE:Standard_D8s_v5
 #CDE_INITIAL_INSTANCES:1

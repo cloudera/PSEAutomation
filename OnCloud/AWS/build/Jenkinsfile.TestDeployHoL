@@ -29,6 +29,9 @@ pipeline {
         string(name: 'CDP_GROUP_LIMIT', defaultValue: '50', description: 'Maximum number of CDP groups allowed')
         string(name: 'CDW_VRTL_WAREHOUSE_SIZE', defaultValue: 'xsmall', description: 'Size of the CDW Virtual Warehouse (e.g., small, medium, large, etc.)')
         string(name: 'CDW_DATAVIZ_SIZE', defaultValue: 'viz-default', description: 'Size of the CDW Dataviz (e.g., viz-small, viz-default)')
+        string(name: 'CDW_TRINO_INSTANCE_TYPE', defaultValue: 'AUTO', description: 'Trino instance type. AUTO resolves and validates the current cloud default from CDP.')
+        choice(name: 'CDW_AUTOSUSPEND', choices: ['true', 'false'], description: 'Enable auto-suspend for Hive, Impala, and Trino warehouses')
+        string(name: 'CDW_AUTOSUSPEND_TIMEOUT_SECONDS', defaultValue: '300', description: 'Idle seconds before an auto-suspend enabled warehouse is suspended')
         choice(name: 'CDE_SPARK_VERSION', choices: ['AUTO', 'SPARK3_5_4', 'SPARK3_5', 'SPARK3_3', 'SPARK3_2', 'SPARK3', 'SPARK2'], description: 'AUTO (default) picks SPARK3_5_4 on Datalake 7.3+. Avoid SPARK3 on 7.3.x — it resolves to Spark 3.2.x and fails runtime catalog lookup for create-vc.')
         choice(name: 'CDE_VC_TIER', choices: ['CORE', 'ALLP'], description: 'Virtual cluster tier (default CORE: HoL 1-1 on Core pool; ALLP uses All Purpose pool)')
         string(name: 'CDE_INSTANCE_TYPE', defaultValue: 'm5.2xlarge', description: 'CDE Instance type (e.g., m5.2xlarge)')
@@ -260,6 +263,9 @@ CDP_GROUP_LIMIT:${params.CDP_GROUP_LIMIT}
 
 CDW_VRTL_WAREHOUSE_SIZE:${params.CDW_VRTL_WAREHOUSE_SIZE}
 CDW_DATAVIZ_SIZE:${params.CDW_DATAVIZ_SIZE}
+CDW_TRINO_INSTANCE_TYPE:${params.CDW_TRINO_INSTANCE_TYPE}
+CDW_AUTOSUSPEND:${params.CDW_AUTOSUSPEND}
+CDW_AUTOSUSPEND_TIMEOUT_SECONDS:${params.CDW_AUTOSUSPEND_TIMEOUT_SECONDS}
 
 CDE_INSTANCE_TYPE:${params.CDE_INSTANCE_TYPE}
 CDE_INITIAL_INSTANCES:${params.CDE_INITIAL_INSTANCES}

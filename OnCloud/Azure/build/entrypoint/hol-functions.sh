@@ -485,6 +485,21 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          CDW_DATAVIZ_SIZE)
             cdw_dataviz_size=$(echo $value | tr '[:upper:]' '[:lower:]')
             ;;
+         CDW_TRINO_INSTANCE_TYPE)
+            cdw_trino_instance_type="$value"
+            ;;
+         CDW_AUTOSUSPEND)
+            cdw_autosuspend=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+            if [[ "$cdw_autosuspend" != "true" && "$cdw_autosuspend" != "false" ]]; then
+               hol_fail "Invalid CDW_AUTOSUSPEND '${value}'. Allowed: true, false."
+            fi
+            ;;
+         CDW_AUTOSUSPEND_TIMEOUT_SECONDS)
+            if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+               hol_fail "Invalid CDW_AUTOSUSPEND_TIMEOUT_SECONDS '${value}'. Use a positive integer."
+            fi
+            cdw_autosuspend_timeout_seconds=$value
+            ;;
          CDE_INSTANCE_TYPE)
             cde_instance_type="$value"
             ;;
@@ -3167,6 +3182,9 @@ deploy_cdw() {
       cdw_managed_identity_id=$CDW_MANAGED_IDENTITY_ID \
       vw_size=$cdw_vrtl_warehouse_size \
       cdvc_size=$cdw_dataviz_size \
+      trino_instance_type=$cdw_trino_instance_type \
+      cdw_autosuspend=$cdw_autosuspend \
+      cdw_autosuspend_timeout_seconds=$cdw_autosuspend_timeout_seconds \
       number_vw_to_create=$number_vw_to_create" || return $?
 }
 #--------------------------------------------------------------------------------------------------#
@@ -3488,11 +3506,20 @@ deploy_single_data_service() {
       hol_init_service "cdw"
       DEFAULT_CDW_VRTL_WAREHOUSE_SIZE="xsmall"
       DEFAULT_CDW_DATAVIZ_SIZE="viz-default"
+      DEFAULT_CDW_TRINO_INSTANCE_TYPE="AUTO"
+      DEFAULT_CDW_AUTOSUSPEND="true"
+      DEFAULT_CDW_AUTOSUSPEND_TIMEOUT_SECONDS=300
       cdw_vrtl_warehouse_size="${cdw_vrtl_warehouse_size:-$DEFAULT_CDW_VRTL_WAREHOUSE_SIZE}"
       cdw_dataviz_size="${cdw_dataviz_size:-$DEFAULT_CDW_DATAVIZ_SIZE}"
+      cdw_trino_instance_type="${cdw_trino_instance_type:-$DEFAULT_CDW_TRINO_INSTANCE_TYPE}"
+      cdw_autosuspend="${cdw_autosuspend:-$DEFAULT_CDW_AUTOSUSPEND}"
+      cdw_autosuspend_timeout_seconds="${cdw_autosuspend_timeout_seconds:-$DEFAULT_CDW_AUTOSUSPEND_TIMEOUT_SECONDS}"
       hol_service_vars \
          "Virtual Warehouse Size" "$cdw_vrtl_warehouse_size" \
-         "DataViz Size" "$cdw_dataviz_size"
+         "DataViz Size" "$cdw_dataviz_size" \
+         "Trino Instance Type" "$cdw_trino_instance_type" \
+         "Auto-suspend" "$cdw_autosuspend" \
+         "Auto-suspend Timeout" "${cdw_autosuspend_timeout_seconds}s"
       hol_deploy_service "cdw"
       deploy_cdw || status=1
       if [[ $status -eq 0 ]]; then

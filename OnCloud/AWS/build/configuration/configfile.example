@@ -31,6 +31,11 @@ DATALAKE_VERSION:7.3.2
 # --- Optional: data service sizing overrides ---
 #CDW_VRTL_WAREHOUSE_SIZE:xsmall
 #CDW_DATAVIZ_SIZE:viz-default
+# Hive/Impala current default: r5d.4xlarge; also support r5ad.4xlarge, r5dn.4xlarge, r6id.4xlarge, r6gd.4xlarge, r7gd.4xlarge.
+# Trino: AUTO/current AWS default; supported on 2026-09-25: r5d.4xlarge, r5ad.4xlarge, r5dn.4xlarge, r6id.4xlarge
+#CDW_TRINO_INSTANCE_TYPE:AUTO
+#CDW_AUTOSUSPEND:true
+#CDW_AUTOSUSPEND_TIMEOUT_SECONDS:300
 # CDE (cdp de enable-service): sizing applies to CORE or ALLP per CDE_VC_TIER; inactive tier is 0/0/0 in enable-cde.yml.
 #CDE_INSTANCE_TYPE:m5.2xlarge
 #CDE_INITIAL_INSTANCES:1

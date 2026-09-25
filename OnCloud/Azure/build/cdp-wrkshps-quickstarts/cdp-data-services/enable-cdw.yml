@@ -6,6 +6,10 @@
   vars:
     vw_size: "xsmall"
     cdvc_size: "viz-default"
+    trino_instance_type: "AUTO"
+    cdw_autosuspend: true
+    cdw_autosuspend_timeout_seconds: 300
+    cdw_cloud: "azure"
     cdw_async_timeout: 7200
     cdw_async_retries: 120
     cdw_async_delay: 30
@@ -28,6 +32,9 @@
           - "cdw_managed_identity_id: {{ cdw_managed_identity_id }}"
           - "vw_size: {{ vw_size }}"
           - "cdvc_size: {{ cdvc_size }}"
+          - "trino_instance_type: {{ trino_instance_type }}"
+          - "cdw_autosuspend: {{ cdw_autosuspend }}"
+          - "cdw_autosuspend_timeout_seconds: {{ cdw_autosuspend_timeout_seconds }}"
 
     - name: Get CDP environment details
       cloudera.cloud.env_info:
@@ -297,12 +304,56 @@
       debug:
         msg: "Existing virtual warehouses: {{ existing_vws.stdout_lines }}"
 
+    - name: Get current CDW allowed instance types
+      ansible.builtin.command:
+        argv:
+          - cdp
+          - dw
+          - describe-allowed-instance-types
+      register: cdw_allowed_instance_types_result
+      changed_when: false
+
+    - name: Resolve Trino instance type from current CDW catalog
+      ansible.builtin.set_fact:
+        cdw_trino_allowed_instance_types: >-
+          {{
+            (cdw_allowed_instance_types_result.stdout | from_json)[cdw_cloud].trino.allowed
+            | default([], true)
+          }}
+        cdw_trino_instance_type_resolved: >-
+          {{
+            (cdw_allowed_instance_types_result.stdout | from_json)[cdw_cloud].trino.default
+            if (trino_instance_type | upper) == 'AUTO'
+            else trino_instance_type
+          }}
+
+    - name: Validate Trino instance type
+      ansible.builtin.assert:
+        that:
+          - cdw_trino_instance_type_resolved in cdw_trino_allowed_instance_types
+        fail_msg: >-
+          Unsupported Azure Trino instance type '{{ cdw_trino_instance_type_resolved }}'.
+          Current allowed values: {{ cdw_trino_allowed_instance_types | join(', ') }}.
+
+    - name: Report resolved Trino instance type
+      ansible.builtin.debug:
+        msg: "Using Azure Trino instance type {{ cdw_trino_instance_type_resolved }}."
+
+    - name: Build virtual warehouse autosuspend configuration
+      ansible.builtin.set_fact:
+        cdw_autoscaling_config: >-
+          disableAutoSuspend={{ (not (cdw_autosuspend | bool)) | lower }}{{
+            ',autoSuspendTimeoutSeconds=' ~ (cdw_autosuspend_timeout_seconds | int | string)
+            if (cdw_autosuspend | bool)
+            else ''
+          }}
+
     - name: Build missing virtual warehouse deployment plan
       ansible.builtin.set_fact:
         vw_deploy_plan_missing: >-
           {%- set missing = [] -%}
           {%- for i in range(1, (number_vw_to_create | default(1) | int) + 1) -%}
-          {%- for vw_type in ['hive', 'impala'] -%}
+          {%- for vw_type in ['hive', 'impala', 'trino'] -%}
           {%- set name = workshop_name ~ '-' ~ vw_type ~ '-' ~ i -%}
           {%- if name not in existing_vws.stdout_lines -%}
           {%- set _ = missing.append({'vw_type': vw_type, 'suffix': i | string, 'name': name}) -%}
@@ -349,8 +400,8 @@
             --vw-type "hive" \
             --name "{{ item.name }}" \
             --t-shirt-size "{{ vw_size }}" \
-            --autoscaling disableAutoSuspend="true"
-        else
+            --autoscaling "{{ cdw_autoscaling_config }}"
+        elif [ "{{ item.vw_type }}" = "impala" ]; then
           cdp dw create-vw \
             --cluster-id "{{ cdw_cluster_id }}" \
             --dbc-id "{{ dbcatalogstatus.database_catalogs[0].id }}" \
@@ -358,7 +409,16 @@
             --name "{{ item.name }}" \
             --t-shirt-size "{{ vw_size }}" \
             --impala-ha-settings highAvailabilityMode="DISABLED" \
-            --autoscaling disableAutoSuspend="true"
+            --autoscaling "{{ cdw_autoscaling_config }}"
+        else
+          cdp dw create-vw \
+            --cluster-id "{{ cdw_cluster_id }}" \
+            --dbc-id "{{ dbcatalogstatus.database_catalogs[0].id }}" \
+            --vw-type "trino" \
+            --name "{{ item.name }}" \
+            --instance-type "{{ cdw_trino_instance_type_resolved }}" \
+            --t-shirt-size "{{ vw_size }}" \
+            --autoscaling "{{ cdw_autoscaling_config }}"
         fi
       args:
         executable: /bin/bash
@@ -438,6 +498,13 @@
         that:
           - (final_vws.stdout_lines | select('match', workshop_name ~ '-impala-' ~ item) | list | length) > 0
         fail_msg: "Impala virtual warehouse {{ workshop_name }}-impala-{{ item }} does not exist after deployment."
+      with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
+
+    - name: Validate expected trino virtual warehouses exist
+      ansible.builtin.assert:
+        that:
+          - (final_vws.stdout_lines | select('match', workshop_name ~ '-trino-' ~ item) | list | length) > 0
+        fail_msg: "Trino virtual warehouse {{ workshop_name }}-trino-{{ item }} does not exist after deployment."
       with_sequence: start=1 end="{{ number_vw_to_create | default(1) }}"
 
     - name: Print success message on successful CDW cluster enable

@@ -142,6 +142,18 @@ The provisioner applies cloud-specific defaults for data service compute sizing 
 | CDW
 | Data visualization instance size
 
+| `CDW_TRINO_INSTANCE_TYPE`
+| CDW
+| Trino Virtual Warehouse instance type. Default `AUTO` resolves and validates the current CDP cloud default at deployment time. See <<cdw-virtual-warehouse-instance-types>>.
+
+| `CDW_AUTOSUSPEND`
+| CDW
+| `true` (default) enables auto-suspend for Hive, Impala, and Trino Virtual Warehouses; `false` keeps them running.
+
+| `CDW_AUTOSUSPEND_TIMEOUT_SECONDS`
+| CDW
+| Idle time before auto-suspend, in seconds (default `300`).
+
 | `CDE_INSTANCE_TYPE`
 | CDE
 | CDE service cluster instance type. AWS default `m5.2xlarge`. Azure default `Standard_D8s_v5`; provisioner fallbacks include `Standard_D8as_v5`, `Standard_D8ds_v5`, `Standard_D16s_v5` (pick from the CDE UI workload dropdown for your region)
@@ -190,6 +202,58 @@ The provisioner applies cloud-specific defaults for data service compute sizing 
 | CDF
 | `yes` or `no` — public load balancer for the CDF service. Cluster and load-balancer subnets come from CDP Terraform outputs, not configfile.
 |===
+
+[[cdw-virtual-warehouse-instance-types]]
+=== CDW Virtual Warehouse instance types
+
+CDP maintains separate instance-type catalogs for Hive, Impala, and Trino on each cloud. The provisioner queries `cdp dw describe-allowed-instance-types` before creating the warehouses. Hive and Impala use the current CDP defaults. `CDW_TRINO_INSTANCE_TYPE:AUTO` uses the current Trino default; an explicit Trino override must appear in the corresponding `trino.allowed` list or provisioning fails before warehouse creation.
+
+Supported types reported by CDP on 2026-09-25:
+
+|===
+| Cloud | Engine | Default | Supported instance types
+
+| AWS
+| Hive
+| `r5d.4xlarge`
+| `r5d.4xlarge`, `r5ad.4xlarge`, `r5dn.4xlarge`, `r6id.4xlarge`, `r6gd.4xlarge`, `r7gd.4xlarge`
+
+| AWS
+| Impala
+| `r5d.4xlarge`
+| `r5d.4xlarge`, `r5ad.4xlarge`, `r5dn.4xlarge`, `r6id.4xlarge`, `r6gd.4xlarge`, `r7gd.4xlarge`
+
+| AWS
+| Trino
+| `r5d.4xlarge`
+| `r5d.4xlarge`, `r5ad.4xlarge`, `r5dn.4xlarge`, `r6id.4xlarge`
+
+| Azure
+| Hive
+| `Standard_E16ds_v5`
+| `Standard_E16ads_v5`, `Standard_E16ds_v5`, `Standard_E16pds_v5`
+
+| Azure
+| Impala
+| `Standard_E16ds_v5`
+| `Standard_E16ads_v5`, `Standard_E16ds_v5`, `Standard_E16pds_v5`
+
+| Azure
+| Trino
+| `Standard_E16ds_v5`
+| `Standard_E16ads_v5`, `Standard_E16ds_v5`
+|===
+
+The CDP service controls this catalog and may change it independently of the provisioner. View the current values with:
+
+[source,bash]
+----
+cdp dw describe-allowed-instance-types \
+  | jq '{
+      aws: {hive: .aws.hive, impala: .aws.impala, trino: .aws.trino},
+      azure: {hive: .azure.hive, impala: .azure.impala, trino: .azure.trino}
+    }'
+----
 
 == Resource tags (optional)
 

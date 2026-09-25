@@ -80,7 +80,7 @@ See link:configfile-reference.adoc[configfile reference] for all supported keys.
 6. Optional activation of CDW, CDE, CAI, and CDF data services (parallel when multiple are selected; enable/disable playbooks skip redundant API calls when a service is already healthy or absent)
 7. Idempotent provision and destroy workflows (CDF disable resolves service CRN, stops flows, terminates deployments, then `cdp df disable-service --terminate-deployments --no-persist`)
 8. Uses `cdp-tf-quickstarts` Terraform modules pulled at runtime
-9. Dynamic CDW virtual warehouse count based on workshop user count
+9. Dynamic CDW Hive, Impala, and Trino Virtual Warehouse count based on workshop user count, with configurable auto-suspend and live Trino instance-type validation
 10. Optional GPU-backed CAI workspaces
 11. Configurable data service sizing and Spark version overrides
 12. CDV and Data Catalog deployment with CDW
