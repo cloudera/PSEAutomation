@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Trino Virtual Warehouses are created alongside Hive and Impala, using a live-validated CDP instance type; auto-suspend is enabled for all three engines by default and is configurable.
 
+### Fixed
+- Keycloak EC2 provisioning no longer uses unused SSH file provisioners that could crash Terraform when the instance public DNS was still unknown.
+
 ## [4.0.0] - 2026-09-24
 
 ### Changed

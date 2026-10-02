@@ -30,29 +30,6 @@ resource "aws_instance" "keycloak-server" {
   tags = {
     "Name" = "${var.workshop_name}-keyc"
   }
-  provisioner "file" {
-    source      = "cloudera-newco-wshps.png"
-    destination = "/tmp/cloudera-newco-wshps.png"
-
-    connection {
-      type        = "ssh"
-      user        = "ubuntu"
-      private_key = file("/userconfig/.${var.workshop_name}/${var.instance_keypair}.pem")
-      host        = self.public_dns
-    }
-  }
-  provisioner "file" {
-    source      = "cloudera-wshps.png"
-    destination = "/tmp/cloudera-wshps.png"
-
-    connection {
-      type        = "ssh"
-      user        = "ubuntu"
-      private_key = file("/userconfig/.${var.workshop_name}/${var.instance_keypair}.pem")
-      host        = self.public_dns
-    }
-  }
-
 }
 resource "aws_eip" "kc_elastic_ip" {
   instance = aws_instance.keycloak-server.id

@@ -141,27 +141,4 @@ resource "azurerm_linux_virtual_machine" "keycloak" {
     wildcard_privkey        = var.wildcard_privkey,
   }))
 
-  provisioner "file" {
-    source      = "cloudera-newco-wshps.png"
-    destination = "/tmp/cloudera-newco-wshps.png"
-
-    connection {
-      type        = "ssh"
-      user        = "ubuntu"
-      private_key = file("/userconfig/.${var.workshop_name}/${var.ssh_key_name}.pem")
-      host        = azurerm_public_ip.keycloak.ip_address
-    }
-  }
-
-  provisioner "file" {
-    source      = "cloudera-wshps.png"
-    destination = "/tmp/cloudera-wshps.png"
-
-    connection {
-      type        = "ssh"
-      user        = "ubuntu"
-      private_key = file("/userconfig/.${var.workshop_name}/${var.ssh_key_name}.pem")
-      host        = azurerm_public_ip.keycloak.ip_address
-    }
-  }
 }
