@@ -21,8 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed CAI workspaces are removed and recreated on rerun; CDF no longer masks hidden `CANCEL_ENABLE` backend operations as successful activation.
 - Provision failures never invoke full CDP Terraform rollback; `destroy_cdp` now refuses to run unless the requested action is explicitly `destroy`.
 - CDP Terraform runs only for a confirmed-new environment or an explicit unhealthy/failure status; healthy, in-progress, unknown, and status-lookup-failure states fail closed without touching Terraform.
-- Explicit destroy defers CAI workspace cleanup to cascading environment deletion when CDP reports that the transitioning environment is not ready; unrelated CAI delete errors remain fatal.
-- Explicit destroy continues past child CAII, Data Hub, and data-service cleanup failures and relies on cascading CDP environment deletion; independent Keycloak failure no longer blocks CDP teardown.
 
 ## [4.0.0] - 2026-09-24
 

@@ -2420,8 +2420,8 @@ destroy_cdp() {
    cdp_cidr=$(echo "$local_ip" | sed 's/,/\",\"/g')
    cdp_cidr="\"${cdp_cidr}\""
 
-   # Child services are cleaned up first when possible. The Terraform-managed CDP environment uses
-   # cascading deletion, so explicit destroy can finish cleanup when a child API is unavailable.
+   # Data service teardown is enforced by disable_data_services (playbooks + entrypoint exit on failure).
+   # CDP environment deletion is not invoked here — use CDP console/CLI separately if needed; HoL destroys the quickstart VPC via Terraform.
 
    hol_terraform init
    local cdp_tf_destroy_args=(
@@ -2454,13 +2454,14 @@ destroy_hol_infra() {
       destroy_keycloak
       keycloak_destroy_status=$?
    fi
-   destroy_aws_enhancements
-   enhancements_destroy_status=$?
-   if [[ "$enhancements_destroy_status" -eq 0 ]]; then
+   if [[ "$keycloak_destroy_status" -eq 0 ]]; then
+      destroy_aws_enhancements
+      enhancements_destroy_status=$?
+   fi
+   if [[ "$keycloak_destroy_status" -eq 0 && "$enhancements_destroy_status" -eq 0 ]]; then
       destroy_cdp
       cdp_destroy_status=$?
    else
-      hol_warn "AWS enhancement policy cleanup failed — CDP Terraform destroy is blocked to avoid attached-policy deletion conflicts"
       cdp_destroy_status=1
    fi
 

@@ -123,7 +123,7 @@ destroy)
     validating_variables
     if [ "$provision_caii" == "yes" ]; then
         hol_subsection "CAII teardown" "🧠"
-        destroy_cai_inference || hol_warn "CAII child cleanup failed — continuing explicit destroy so cascading environment deletion can finish cleanup"
+        destroy_cai_inference || hol_destroy_failed "$workshop_name"
     fi
     hol_subsection "Deleting Data Hubs and data services in parallel" "🗑️"
     if [[ "${delete_datahubs:-true}" == "true" ]]; then
@@ -141,7 +141,8 @@ destroy)
     wait "$datahub_delete_pid" || datahub_delete_status=$?
     wait "$data_services_delete_pid" || data_services_delete_status=$?
     if [[ "$datahub_delete_status" -ne 0 || "$data_services_delete_status" -ne 0 ]]; then
-        hol_warn "Child cleanup was incomplete (Data Hubs=${datahub_delete_status}, data services=${data_services_delete_status}) — continuing explicit destroy with cascading CDP environment deletion"
+        hol_warn "CDP teardown failed (Data Hubs=${datahub_delete_status}, data services=${data_services_delete_status})"
+        hol_destroy_failed "$workshop_name"
     fi
     if [ "$provision_keycloak" == "yes" ]; then
         cdp_idp_user_teardown
