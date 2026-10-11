@@ -820,9 +820,8 @@ setup_keycloak_ec2() {
 
    hol_subsection "Running Terraform for Keycloak" "🏗️"
    hol_terraform init
-   if ! hol_terraform state list 2>/dev/null | grep -q 'aws_security_group.vpc-ssh-web' \
-      && check_aws_sg_exists "$sg_name"; then
-      hol_warn "Security group '$sg_name' exists outside this Terraform state — using '$sg_name-$workshop_name'"
+   if check_aws_sg_exists "$sg_name"; then
+      hol_warn "Security group '$sg_name' already exists — using '$sg_name-$workshop_name' for replacement"
       sg_name="$sg_name-$workshop_name"
    fi
 
