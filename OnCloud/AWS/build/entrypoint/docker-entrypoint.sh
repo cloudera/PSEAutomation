@@ -65,14 +65,15 @@ provision)
         fi
         hol_info "CDP environment is confirmed absent and no Terraform state exists — provisioning a new stack"
         run_cdp_terraform=true
-    elif [[ "$cdp_environment_status" == "AVAILABLE" ]]; then
+    elif [[ "$cdp_environment_status" == "AVAILABLE" ||
+            "$cdp_environment_status" == "COMPUTE_CLUSTER_CREATION_IN_PROGRESS" ]]; then
         cdp_environment_preexisting=true
         if ! cdp_aws_infrastructure_healthy; then
-            hol_warn "CDP reports AVAILABLE, but its Terraform-managed VPC or subnets are missing — refusing Terraform apply and destroy; manual environment recovery is required"
+            hol_warn "CDP environment status is ${cdp_environment_status}, but its Terraform-managed VPC or subnets are missing — refusing Terraform apply and destroy; manual environment recovery is required"
             hol_provision_failed "$workshop_name"
         fi
-        hol_skip "CDP environment '${workshop_name}-cdp-env' is healthy (AVAILABLE) — skipping CDP Terraform"
-        hol_milestone "CDP Environment Available" "☁️"
+        hol_skip "CDP environment '${workshop_name}-cdp-env' is healthy (${cdp_environment_status}) — skipping CDP Terraform"
+        hol_milestone "CDP Environment Reused" "☁️"
     elif [[ "$cdp_environment_status" =~ (FAILED|ERROR|UNHEALTHY|UNAVAILABLE|CORRUPT|NODE_FAILURE) ]]; then
         cdp_environment_preexisting=true
         hol_warn "CDP environment is explicitly unhealthy (status=${cdp_environment_status}) — allowing guarded Terraform reconciliation"
