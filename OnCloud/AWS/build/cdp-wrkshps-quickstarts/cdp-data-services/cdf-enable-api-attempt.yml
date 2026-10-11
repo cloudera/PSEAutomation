@@ -74,7 +74,7 @@
             ~ ' '
             ~ (cdf_enable_cmd.stdout | default('') | string)
           ) | trim
-        ) is search('(?i)(FAILED_PRECONDITION|\\[412\\]|Status Code: 412|CANCEL_ENABLE|cannot be enabled at the moment|valid actions.*CANCEL_ENABLE)')
+        ) is search('(?i)(CANCEL_ENABLE|valid actions.*CANCEL_ENABLE)')
       }}
     cdf_enable_conflict_ok: >-
       {{
@@ -176,7 +176,7 @@
               ~ ' '
               ~ (cdf_enable_cmd.stdout | default('') | string)
             ) | trim
-          ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|timed out|access denied|not authorized|permission)')
+          ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|environment is not ready|timed out|access denied|not authorized|permission)')
         )
       }}
     cdf_enable_is_authorizing_500: >-
@@ -200,23 +200,13 @@
         ) and (
           not (cdf_enable_stuck_precondition | default(false) | bool)
         ) and (
-          not (
-            (
-              (
-                (cdf_enable_cmd.stderr | default('') | string)
-                ~ ' '
-                ~ (cdf_enable_cmd.stdout | default('') | string)
-              ) | trim
-            ) is search('(?i)(FAILED_PRECONDITION|\\[412\\]|Status Code: 412|CANCEL_ENABLE|cannot be enabled at the moment)')
-          )
-        ) and (
           (
             (
               (cdf_enable_cmd.stderr | default('') | string)
               ~ ' '
               ~ (cdf_enable_cmd.stdout | default('') | string)
             ) | trim
-          ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|try again later|timed out|throttl)')
+          ) is search('(?i)(INTERNAL|authorizing|\\[500\\]|error occurred while|environment is not ready|try again later|timed out|throttl)')
         ) and (
           (cdf_enable_attempt | int) < (cdf_enable_api_retries | int)
         )

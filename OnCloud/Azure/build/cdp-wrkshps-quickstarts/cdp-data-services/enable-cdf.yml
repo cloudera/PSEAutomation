@@ -441,9 +441,11 @@
     - name: Fail fast when CDF enable CLI returned an error
       ansible.builtin.fail:
         msg: >-
-          cdp df enable-service failed for {{ cdp_env_name }} after {{ cdf_enable_api_retries }} attempt(s)
-          (transient INTERNAL/authorizing/[500] responses are retried with {{ cdf_enable_retry_delay }}s delay;
-          412 FAILED_PRECONDITION / CANCEL_ENABLE is not retried — the playbook polls for GOOD_HEALTH instead):
+          cdp df enable-service failed for {{ cdp_env_name }}
+          after {{ cdf_enable_recorded_attempt | default(cdf_enable_api_retries) }} attempt(s)
+          (transient INTERNAL/authorizing/[500] and environment-not-ready responses are retried with
+          {{ cdf_enable_retry_delay }}s delay; an explicit CANCEL_ENABLE action remains terminal because
+          the hidden backend operation must be cancelled or disabled before a new enable request can start):
           {{ cdf_enable_result.msg | default(cdf_enable_result.stderr | default('unknown error')) }}.
           Verify the CDP caller (~/.cdp credentials used in the container) has environment-scoped DFAdmin
           (assignCdpEnvAdminRoles.sh / hol_assign_pipeline_cdp_env_admin_roles assigns DFAdmin and syncs users).

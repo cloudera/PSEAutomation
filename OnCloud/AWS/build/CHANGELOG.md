@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDP Terraform runs only for a confirmed-new environment or an explicit unhealthy/failure status; healthy, in-progress, unknown, and status-lookup-failure states fail closed without touching Terraform.
 - CAII teardown stops immediately when CDP reports `environment is not ready`, rather than retrying registry or compute deletion while the environment is transitioning.
 - Explicit destroy launches CAII, Data Hub, and independent data-service teardown concurrently; failures block only the later parent Terraform deletion after every child cleanup has been attempted.
+- CDF enable retries temporary `environment is not ready` preconditions during concurrent service provisioning, while genuine `CANCEL_ENABLE` backend operations remain terminal.
 
 ## [4.0.0] - 2026-09-24
 
