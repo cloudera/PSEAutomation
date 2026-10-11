@@ -3192,6 +3192,10 @@ disable_data_services() {
    for service in "${data_services[@]}"; do
       token=$(hol_normalize_data_service_token "$service")
       [[ -z "$token" ]] && continue
+      if [[ "$token" == "cai" && "$provision_caii" == "yes" ]]; then
+         hol_skip "CAI skipped in data services list — deleted by CAII teardown"
+         continue
+      fi
       services_to_disable+=("$token")
    done
 

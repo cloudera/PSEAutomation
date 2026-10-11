@@ -121,11 +121,15 @@ provision)
 destroy)
     hol_banner "HoL Destroy Pipeline" "🗑️"
     validating_variables
+    hol_subsection "Deleting CAII, Data Hubs, and data services in parallel" "🗑️"
     if [ "$provision_caii" == "yes" ]; then
-        hol_subsection "CAII teardown" "🧠"
-        destroy_cai_inference || hol_destroy_failed "$workshop_name"
+        destroy_cai_inference &
+    else
+        hol_skip "CAII deletion disabled (PROVISION_CAII is not yes)"
+        true &
     fi
-    hol_subsection "Deleting Data Hubs and data services in parallel" "🗑️"
+    caii_delete_pid=$!
+
     if [[ "${delete_datahubs:-true}" == "true" ]]; then
         delete_environment_datahubs &
     else
@@ -136,12 +140,14 @@ destroy)
     disable_data_services &
     data_services_delete_pid=$!
 
+    caii_delete_status=0
     datahub_delete_status=0
     data_services_delete_status=0
+    wait "$caii_delete_pid" || caii_delete_status=$?
     wait "$datahub_delete_pid" || datahub_delete_status=$?
     wait "$data_services_delete_pid" || data_services_delete_status=$?
-    if [[ "$datahub_delete_status" -ne 0 || "$data_services_delete_status" -ne 0 ]]; then
-        hol_warn "CDP teardown failed (Data Hubs=${datahub_delete_status}, data services=${data_services_delete_status})"
+    if [[ "$caii_delete_status" -ne 0 || "$datahub_delete_status" -ne 0 || "$data_services_delete_status" -ne 0 ]]; then
+        hol_warn "CDP teardown failed (CAII=${caii_delete_status}, Data Hubs=${datahub_delete_status}, data services=${data_services_delete_status})"
         hol_destroy_failed "$workshop_name"
     fi
     if [ "$provision_keycloak" == "yes" ]; then
