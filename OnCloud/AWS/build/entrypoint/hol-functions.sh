@@ -1524,10 +1524,11 @@ provision_cai_inference() {
 
   local env_name="${workshop_name}-cdp-env"
 
+  # CAI workbench provisioning completes with the other selected data services before this phase.
   # Step 1: Initialize compute cluster
   initialize_compute_cluster || return 1
 
-  # Step 2: Provision compute cluster, AI registry and CAI workbench in parallel
+  # Step 2: Provision compute cluster and AI registry in parallel
   provision_compute_cluster &
   pid_compute=$!
   sleep 60
@@ -1535,19 +1536,13 @@ provision_cai_inference() {
   enable_ai_registry &
   pid_ai_registry=$!
 
-  deploy_single_data_service cai &
-  pid_cai=$!
-
   wait $pid_compute
   status_compute=$?
 
   wait $pid_ai_registry
   status_ai_registry=$?
 
-  wait $pid_cai
-  status_cai=$?
-
-  if [[ $status_compute -ne 0 || $status_ai_registry -ne 0 || $status_cai -ne 0 ]]; then
+  if [[ $status_compute -ne 0 || $status_ai_registry -ne 0 ]]; then
     hol_warn "One or more CAII provisioning steps failed"
     return 1
   fi

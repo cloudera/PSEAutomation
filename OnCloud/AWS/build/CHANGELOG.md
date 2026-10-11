@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicit destroy launches CAII, Data Hub, and independent data-service teardown concurrently; failures block only the later parent Terraform deletion after every child cleanup has been attempted.
 - CDF enable retries temporary `environment is not ready` preconditions during concurrent service provisioning, while genuine `CANCEL_ENABLE` backend operations remain terminal.
 - Healthy reruns treat `COMPUTE_CLUSTER_CREATION_IN_PROGRESS` as an existing-environment child operation: VPC/subnets are verified and CDP Terraform is skipped.
+- CAI workbench creation may run with CDW/CDE/CDF, but CAII compute-cluster, registry, and serving-app provisioning waits until all selected data-service activations complete.
 
 ## [4.0.0] - 2026-09-24
 

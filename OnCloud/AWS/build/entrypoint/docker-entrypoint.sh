@@ -100,8 +100,8 @@ provision)
     parallel_pids=()
     if [ "$provision_caii" == "yes" ]; then
         sleep 30
-        hol_subsection "CAII provisioning" "🧠"
-        provision_cai_inference &
+        hol_subsection "CAI workbench provisioning" "🧠"
+        deploy_single_data_service cai &
         parallel_pids+=($!)
     fi
 
@@ -114,6 +114,11 @@ provision)
     done
     if [ "$parallel_failed" -ne 0 ]; then
         hol_provision_failed "$workshop_name"
+    fi
+
+    if [ "$provision_caii" == "yes" ]; then
+        hol_subsection "CAII compute and inference provisioning" "🧠"
+        provision_cai_inference || hol_provision_failed "$workshop_name"
     fi
 
     hol_milestone "Infrastructure Provisioned" "🎉"
