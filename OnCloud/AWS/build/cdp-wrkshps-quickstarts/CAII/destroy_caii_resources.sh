@@ -44,7 +44,7 @@ delete_ai_registry() {
   fi
 
   echo "🗑️ Deleting AI Registry (status: ${ai_registry_status:-unknown}): $ai_registry_crn"
-  delete_output=$(cdp ml delete-model-registry --model-registry-crn "$ai_registry_crn" 2>&1)
+  delete_output=$(cdp ml delete-model-registry --model-registry-crn "$ai_registry_crn" --no-force 2>&1)
   delete_status=$?
   if [[ $delete_status -eq 0 ]]; then
     echo "✅ AI Registry delete request submitted."
