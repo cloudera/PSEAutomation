@@ -33,6 +33,7 @@ ai_registry_exists() {
 delete_ai_registry() {
   local ai_registry_crn
   local ai_registry_status
+  local delete_output delete_status
 
   ai_registry_crn=$(get_ai_registry_crn)
   ai_registry_status=$(get_ai_registry_status)
@@ -43,11 +44,18 @@ delete_ai_registry() {
   fi
 
   echo "🗑️ Deleting AI Registry (status: ${ai_registry_status:-unknown}): $ai_registry_crn"
-  if cdp ml delete-model-registry --model-registry-crn "$ai_registry_crn"; then
+  delete_output=$(cdp ml delete-model-registry --model-registry-crn "$ai_registry_crn" 2>&1)
+  delete_status=$?
+  if [[ $delete_status -eq 0 ]]; then
     echo "✅ AI Registry delete request submitted."
     return 0
   fi
 
+  printf '%s\n' "$delete_output"
+  if grep -qi 'environment is not ready' <<<"$delete_output"; then
+    echo "❌ AI Registry deletion is blocked because the CDP environment is transitioning. Retry destroy after the environment is ready."
+    return 2
+  fi
   echo "⚠️ AI Registry delete command failed for CRN: $ai_registry_crn"
   return 1
 }
@@ -55,6 +63,7 @@ delete_ai_registry() {
 # --- Delete Compute Cluster ---
 delete_compute_cluster() {
   local compute_cluster_crn
+  local delete_output delete_status
 
   compute_cluster_crn=$(cdp compute list-clusters 2>/dev/null | jq -r --arg name "$cluster_name" '
     .clusters[] | select(.isDefault == false and .clusterName == $name) | .clusterCrn
@@ -62,9 +71,16 @@ delete_compute_cluster() {
 
   if [[ -n "$compute_cluster_crn" ]]; then
     echo "🗑️ Deleting Compute Cluster: $compute_cluster_crn"
-    if cdp compute delete-cluster --cluster-crn "$compute_cluster_crn" --skip-validation; then
+    delete_output=$(cdp compute delete-cluster --cluster-crn "$compute_cluster_crn" --skip-validation 2>&1)
+    delete_status=$?
+    if [[ $delete_status -eq 0 ]]; then
       echo "✅ Compute Cluster delete request submitted."
       return 0
+    fi
+    printf '%s\n' "$delete_output"
+    if grep -qi 'environment is not ready' <<<"$delete_output"; then
+      echo "❌ Compute Cluster deletion is blocked because the CDP environment is transitioning. Retry destroy after the environment is ready."
+      return 2
     fi
     echo "⚠️ Compute Cluster delete command failed for CRN: $compute_cluster_crn"
     return 1
@@ -86,8 +102,14 @@ pid_ai_registry=$!
 delete_compute_cluster &
 pid_compute=$!
 
-wait $pid_ai_registry || true
-wait $pid_compute || true
+ai_registry_delete_status=0
+compute_delete_status=0
+wait "$pid_ai_registry" || ai_registry_delete_status=$?
+wait "$pid_compute" || compute_delete_status=$?
+if [[ $ai_registry_delete_status -eq 2 || $compute_delete_status -eq 2 ]]; then
+  echo "❌ CAII cleanup blocked: the CDP environment is transitioning. No parent infrastructure deletion will be attempted."
+  exit 1
+fi
 
 # --- Final Verification Loop ---
 echo "🔍 Verifying deletion of all resources..."
@@ -102,7 +124,12 @@ for attempt in $(seq 1 "$MAX_VERIFY_ATTEMPTS"); do
     # Re-trigger delete if registry is still present after the first attempt
     if [[ "$attempt" -gt 1 && $((attempt % 4)) -eq 0 ]]; then
       echo "🔁 Re-attempting AI Registry deletion..."
-      delete_ai_registry || true
+      delete_ai_registry
+      delete_status=$?
+      if [[ $delete_status -eq 2 ]]; then
+        echo "❌ CAII cleanup blocked: the CDP environment is transitioning. No parent infrastructure deletion will be attempted."
+        exit 1
+      fi
     fi
   fi
 
@@ -112,7 +139,12 @@ for attempt in $(seq 1 "$MAX_VERIFY_ATTEMPTS"); do
 
     if [[ "$attempt" -gt 1 && $((attempt % 4)) -eq 0 ]]; then
       echo "🔁 Re-attempting Compute Cluster deletion..."
-      delete_compute_cluster || true
+      delete_compute_cluster
+      delete_status=$?
+      if [[ $delete_status -eq 2 ]]; then
+        echo "❌ CAII cleanup blocked: the CDP environment is transitioning. No parent infrastructure deletion will be attempted."
+        exit 1
+      fi
     fi
   fi
 

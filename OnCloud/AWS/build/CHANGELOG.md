@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed CAI workspaces are removed and recreated on rerun; CDF no longer masks hidden `CANCEL_ENABLE` backend operations as successful activation.
 - Provision failures never invoke full CDP Terraform rollback; `destroy_cdp` now refuses to run unless the requested action is explicitly `destroy`.
 - CDP Terraform runs only for a confirmed-new environment or an explicit unhealthy/failure status; healthy, in-progress, unknown, and status-lookup-failure states fail closed without touching Terraform.
+- CAII teardown stops immediately when CDP reports `environment is not ready`, rather than retrying registry or compute deletion while the environment is transitioning.
 
 ## [4.0.0] - 2026-09-24
 
