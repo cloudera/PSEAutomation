@@ -45,10 +45,15 @@ variable "kc_security_group" {
   type        = string
   default     = "hol-default-sg"
 }
-variable "local_ip" {
-  description = "IPV4 Address User's Local Machine"
-  type        = string
-  default     = "0.0.0.0/0"
+variable "local_ips" {
+  description = "IPv4 CIDRs allowed to access Keycloak"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+
+  validation {
+    condition     = length(var.local_ips) > 0 && alltrue([for cidr in var.local_ips : can(cidrnetmask(cidr))])
+    error_message = "local_ips must contain at least one valid IPv4 CIDR."
+  }
 }
 variable "keycloak_admin_password" {
   description = "admin password for keycloak"

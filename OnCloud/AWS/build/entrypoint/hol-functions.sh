@@ -826,11 +826,13 @@ setup_keycloak_ec2() {
       sg_name="$sg_name-$workshop_name"
    fi
 
-   # Preserve the original Keycloak behavior: only the first configured CIDR is allowed.
-   kc_ip=$(echo "$local_ip" | cut -d',' -f1)
+   local kc_cidrs
+   kc_cidrs=$(jq -cn --arg cidrs "$local_ip" '
+      $cidrs | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique
+   ')
    hol_terraform apply -auto-approve \
       -var "workshop_name=$workshop_name" \
-      -var "local_ip=$kc_ip" \
+      -var "local_ips=$kc_cidrs" \
       -var "instance_keypair=$aws_key_pair" \
       -var "aws_region=$aws_region" \
       -var "domain=$domain" \
@@ -922,11 +924,13 @@ destroy_keycloak() {
       hol_skip "No Keycloak IP or hosted zone — skipping Route53 cleanup"
    fi
 
-   # Extract only the first IP for Keycloak (admin access only)
-   kc_ip=$(echo "$local_ip" | cut -d',' -f1)
+   local kc_cidrs
+   kc_cidrs=$(jq -cn --arg cidrs "$local_ip" '
+      $cidrs | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique
+   ')
    hol_terraform destroy -auto-approve \
       -var "workshop_name=$workshop_name" \
-      -var "local_ip=$kc_ip" \
+      -var "local_ips=$kc_cidrs" \
       -var "instance_keypair=$aws_key_pair" \
       -var "aws_region=$aws_region" \
       -var "kc_security_group=$sg_name" \
@@ -1004,6 +1008,8 @@ cdp_environment_exists() {
 load_cdp_terraform_outputs() {
    local aws_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/aws"
    local public_subnets private_subnets
+   local public_subnet_count=0
+   local private_subnet_count=0
 
    if [[ ! -d "$aws_tf_dir" ]]; then
       hol_warn "CDP Terraform directory not found at ${aws_tf_dir}; cannot recover subnet outputs for data services"
@@ -1014,17 +1020,30 @@ load_cdp_terraform_outputs() {
    public_subnets=$(hol_terraform output -json aws_public_subnet_ids 2>/dev/null || true)
    private_subnets=$(hol_terraform output -json aws_private_subnet_ids 2>/dev/null || true)
 
-   if ! jq -e 'type == "array" and length >= 3' <<<"$public_subnets" >/dev/null 2>&1; then
-      hol_warn "Terraform output aws_public_subnet_ids must contain at least three subnets"
-      return 1
+   if jq -e 'type == "array"' <<<"$public_subnets" >/dev/null 2>&1; then
+      public_subnet_count=$(jq 'length' <<<"$public_subnets")
    fi
-   if ! jq -e 'type == "array" and length >= 3' <<<"$private_subnets" >/dev/null 2>&1; then
-      hol_warn "Terraform output aws_private_subnet_ids must contain at least three subnets"
+   if jq -e 'type == "array"' <<<"$private_subnets" >/dev/null 2>&1; then
+      private_subnet_count=$(jq 'length' <<<"$private_subnets")
+   fi
+
+   if [[ $public_subnet_count -lt 3 && $private_subnet_count -lt 3 ]]; then
+      hol_warn "Terraform outputs must contain at least three public or three private subnets"
       return 1
    fi
 
-   ENV_PUBLIC_SUBNETS=$(jq -c '.[0:3]' <<<"$public_subnets")
-   ENV_PRIVATE_SUBNETS=$(jq -c '.[0:3]' <<<"$private_subnets")
+   if [[ $public_subnet_count -ge 3 ]]; then
+      ENV_PUBLIC_SUBNETS=$(jq -c '.[0:3]' <<<"$public_subnets")
+   else
+      ENV_PUBLIC_SUBNETS=$(jq -c '.[0:3]' <<<"$private_subnets")
+      hol_warn "Public subnet output has fewer than three entries — using private subnet output"
+   fi
+   if [[ $private_subnet_count -ge 3 ]]; then
+      ENV_PRIVATE_SUBNETS=$(jq -c '.[0:3]' <<<"$private_subnets")
+   else
+      ENV_PRIVATE_SUBNETS="$ENV_PUBLIC_SUBNETS"
+      hol_warn "Private subnet output has fewer than three entries — using public subnet output"
+   fi
    export ENV_PUBLIC_SUBNETS ENV_PRIVATE_SUBNETS
 
    BUCKET_NAME=$(hol_terraform output -raw log_storage_bucket_name 2>/dev/null || true)

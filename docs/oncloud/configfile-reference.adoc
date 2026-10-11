@@ -66,7 +66,7 @@ Both AWS and Azure provisioners read a flat `configfile` mounted at `/userconfig
 | `LOCAL_MACHINE_IP`
 | yes
 | yes
-| Comma-separated IP/CIDRs to whitelist. Keycloak uses only the first CIDR, so place the Jenkins or administrator IP first; CDP uses all entries
+| Comma-separated IP/CIDRs to whitelist. On AWS, Keycloak allows all traffic from specific CIDRs but restricts `0.0.0.0/0` to ports 22, 80, 443, and 5000. On Azure, Keycloak uses only the first CIDR. CDP uses all entries
 
 | `ENABLE_DATA_SERVICES`
 | yes

@@ -37,40 +37,34 @@ resource "aws_eip" "kc_elastic_ip" {
 
 resource "aws_security_group" "vpc-ssh-web" {
   name        = var.kc_security_group
-  description = "Allow SSH Connection from specific IP"
+  description = "Allow Keycloak access from configured CIDRs"
 
   lifecycle {
     create_before_destroy = true
   }
 
-  ingress {
-    description = "Allow SSH Traffic"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["${var.local_ip}"]
+  dynamic "ingress" {
+    for_each = length(local.trusted_cidrs) > 0 ? [1] : []
+    content {
+      description = "Allow all traffic from trusted CIDRs"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = local.trusted_cidrs
+    }
   }
-  ingress {
-    description = "Allow web Traffic"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["${var.local_ip}"]
+
+  dynamic "ingress" {
+    for_each = length(local.public_cidrs) > 0 ? local.public_ports : toset([])
+    content {
+      description = "Allow Keycloak port ${ingress.value} from public CIDR"
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "tcp"
+      cidr_blocks = local.public_cidrs
+    }
   }
-  ingress {
-    description = "Allow web Traffic"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["${var.local_ip}"]
-  }
-  ingress {
-    description = "Allow web Traffic"
-    from_port   = 5000
-    to_port     = 5000
-    protocol    = "tcp"
-    cidr_blocks = ["${var.local_ip}"]
-  }
+
   egress {
     description = "Allow All Outbound Connection"
     from_port   = 0
@@ -78,4 +72,11 @@ resource "aws_security_group" "vpc-ssh-web" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+}
+
+locals {
+  configured_cidrs = distinct(var.local_ips)
+  public_cidrs     = [for cidr in local.configured_cidrs : cidr if cidr == "0.0.0.0/0"]
+  trusted_cidrs    = [for cidr in local.configured_cidrs : cidr if cidr != "0.0.0.0/0"]
+  public_ports     = toset([22, 80, 443, 5000])
 }

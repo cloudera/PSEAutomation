@@ -61,7 +61,7 @@ NOTE: Images built on one platform may not run on another. For multi-platform bu
 == Jenkins and configfile parameters
 
 * *OWNER* (resource tag `pse-owner`): default `pse-apac@cloudera.com`. Cannot use `owner` — CDP reserves it as a default tag.
-* *LOCAL_MACHINE_IP*: comma-separated IP/CIDRs to whitelist for environment access. Keycloak uses only the first CIDR, so place the Jenkins or administrator IP first; CDP uses all entries. Default `0.0.0.0/0` is allowed for most deployments.
+* *LOCAL_MACHINE_IP*: comma-separated IP/CIDRs to whitelist for environment access. Keycloak allows all traffic from each specific CIDR; when `0.0.0.0/0` is supplied, it receives only ports 22, 80, 443, and 5000. CDP uses all entries. Default `0.0.0.0/0` is allowed for most deployments.
 * *PROVISION_CAII*: when set to `YES`, `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`. Use your Jenkins agent IP or a Cloudera VPN address: `208.127.31.110/32` or `208.127.31.11/32`.
 
 The same CAII restriction is enforced in Jenkins parameter validation and in the container `configfile` check at runtime.
