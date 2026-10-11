@@ -38,7 +38,50 @@
         --workspace-name "{{ workshop_name }}-cai-ws" \
         --no-force
       register: ml_delete_workspace
+      changed_when: ml_delete_workspace.rc == 0
+      failed_when: false
       when: workspace_exists
+
+    - name: Detect CAI deletion blocked by environment transition
+      ansible.builtin.set_fact:
+        cai_delete_deferred_to_environment: >-
+          {{
+            (ml_delete_workspace.rc | default(0) | int) != 0 and
+            (
+              (
+                (ml_delete_workspace.stderr | default('') | string)
+                ~ ' '
+                ~ (ml_delete_workspace.stdout | default('') | string)
+              )
+              is search('(?i)environment is not ready')
+            )
+          }}
+      when: workspace_exists
+
+    - name: Fail on unexpected CAI workspace deletion error
+      ansible.builtin.fail:
+        msg: >-
+          CAI workspace deletion failed:
+          {{ ml_delete_workspace.stderr | default(ml_delete_workspace.stdout | default('unknown error')) }}.
+      when:
+        - workspace_exists
+        - (ml_delete_workspace.rc | default(0) | int) != 0
+        - not cai_delete_deferred_to_environment | default(false)
+
+    - name: Defer CAI workspace cleanup to cascading environment deletion
+      ansible.builtin.debug:
+        msg: >-
+          CDP rejected standalone CAI workspace deletion because {{ cdp_env_name }} is transitioning.
+          Continuing explicit destroy; cascading environment deletion will remove the workspace.
+      when:
+        - workspace_exists
+        - cai_delete_deferred_to_environment | default(false)
+
+    - name: End CAI teardown after deferring to environment deletion
+      ansible.builtin.meta: end_play
+      when:
+        - workspace_exists
+        - cai_delete_deferred_to_environment | default(false)
 
     - name: Pause for 30 seconds after triggering deprovisioning workspace
       pause:
