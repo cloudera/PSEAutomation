@@ -49,8 +49,23 @@ provision)
     fi
     sleep 10
     cdp_environment_preexisting=false
-    cdp_environment_status=$(get_cdp_environment_status)
-    if [[ "$cdp_environment_status" == "AVAILABLE" ]]; then
+    cdp_environment_status=""
+    cdp_status_lookup_rc=0
+    cdp_environment_status=$(get_cdp_environment_status) || cdp_status_lookup_rc=$?
+    cdp_environment_status=$(printf '%s' "$cdp_environment_status" | tr '[:lower:]' '[:upper:]')
+    run_cdp_terraform=false
+
+    if [[ "$cdp_status_lookup_rc" -eq 1 ]]; then
+        hol_warn "Unable to determine CDP environment status — refusing Terraform apply or destroy"
+        hol_provision_failed "$workshop_name"
+    elif [[ "$cdp_status_lookup_rc" -eq 2 ]]; then
+        if cdp_environment_exists; then
+            hol_warn "CDP reports environment absent but Terraform state exists — refusing automatic recreation; manual recovery is required"
+            hol_provision_failed "$workshop_name"
+        fi
+        hol_info "CDP environment is confirmed absent and no Terraform state exists — provisioning a new stack"
+        run_cdp_terraform=true
+    elif [[ "$cdp_environment_status" == "AVAILABLE" ]]; then
         cdp_environment_preexisting=true
         if ! cdp_aws_infrastructure_healthy; then
             hol_warn "CDP reports AVAILABLE, but its Terraform-managed VPC or subnets are missing — refusing Terraform apply and destroy; manual environment recovery is required"
@@ -58,11 +73,16 @@ provision)
         fi
         hol_skip "CDP environment '${workshop_name}-cdp-env' is healthy (AVAILABLE) — skipping CDP Terraform"
         hol_milestone "CDP Environment Available" "☁️"
+    elif [[ "$cdp_environment_status" =~ (FAILED|ERROR|UNHEALTHY|UNAVAILABLE|CORRUPT|NODE_FAILURE) ]]; then
+        cdp_environment_preexisting=true
+        hol_warn "CDP environment is explicitly unhealthy (status=${cdp_environment_status}) — allowing guarded Terraform reconciliation"
+        run_cdp_terraform=true
     else
-        if [[ -n "$cdp_environment_status" ]] || cdp_environment_exists; then
-            cdp_environment_preexisting=true
-            hol_info "Existing or partial CDP environment detected (status=${cdp_environment_status:-not registered}) — rerun failures will not trigger infrastructure rollback"
-        fi
+        hol_warn "CDP environment status '${cdp_environment_status:-unknown}' is not a safe Terraform reconciliation state — refusing Terraform apply or destroy"
+        hol_provision_failed "$workshop_name"
+    fi
+
+    if [[ "$run_cdp_terraform" == true ]]; then
         provision_cdp
         if [ $? -ne 0 ]; then
             hol_warn "CDP provisioning failed — preserving all CDP, AWS, Keycloak, and Terraform resources for safe recovery"

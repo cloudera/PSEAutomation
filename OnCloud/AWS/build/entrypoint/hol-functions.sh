@@ -988,19 +988,36 @@ sync_cdp_tf_quickstarts() {
 
 # Function to provision CDP Environment.
 get_cdp_environment_status() {
-   cdp environments describe-environment \
-      --environment-name "${workshop_name}-cdp-env" 2>/dev/null \
-      | jq -r '.environment.status // empty' 2>/dev/null || true
+   local env_name="${workshop_name}-cdp-env"
+   local response status
+
+   if response=$(cdp environments describe-environment \
+      --environment-name "$env_name" 2>/dev/null); then
+      status=$(jq -r '.environment.status // empty' <<<"$response" 2>/dev/null)
+      if [[ -n "$status" ]]; then
+         printf '%s\n' "$status"
+         return 0
+      fi
+   fi
+
+   if ! response=$(cdp environments list-environments --no-paginate 2>/dev/null); then
+      return 1
+   fi
+
+   status=$(jq -r --arg env_name "$env_name" '
+      [.environments[]? | select((.environmentName // .name // "") == $env_name) | .status // empty]
+      | first // empty
+   ' <<<"$response" 2>/dev/null)
+   if [[ -n "$status" ]]; then
+      printf '%s\n' "$status"
+      return 0
+   fi
+
+   return 2
 }
 
 cdp_environment_exists() {
    local aws_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/aws"
-
-   if cdp environments describe-environment \
-      --environment-name "${workshop_name}-cdp-env" >/dev/null 2>&1; then
-      return 0
-   fi
-
    [[ -s "${aws_tf_dir}/terraform.tfstate" ]]
 }
 
