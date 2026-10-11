@@ -2389,6 +2389,10 @@ run_cdp_terraform_destroy() {
 # Function to destroy CDP Environment.
 destroy_cdp() {
    USER_NAMESPACE=$workshop_name
+   if [[ "${USER_ACTION:-}" != "destroy" ]]; then
+      hol_warn "Refusing CDP Terraform destroy while ACTION='${USER_ACTION:-unset}'; full-stack deletion is allowed only by an explicit destroy run"
+      return 1
+   fi
    hol_banner "Destroying CDP environment infrastructure" "🗑️"
    if [[ ! -d "/userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/aws" ]]; then
       hol_skip "Terraform state not found — skipping CDP terraform destroy"

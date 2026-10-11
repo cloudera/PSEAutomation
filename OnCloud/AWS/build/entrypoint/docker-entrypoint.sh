@@ -65,19 +65,7 @@ provision)
         fi
         provision_cdp
         if [ $? -ne 0 ]; then
-            if [[ "$cdp_environment_preexisting" == true ]]; then
-                hol_warn "CDP environment update failed — preserving the pre-existing environment and Terraform state"
-            else
-                hol_warn "New CDP environment provisioning failed — rolling back resources created by this run"
-                if destroy_aws_enhancements; then
-                    destroy_cdp
-                    if [[ "$provision_keycloak" == "yes" && "$keycloak_preexisting" != true ]]; then
-                        destroy_keycloak
-                    fi
-                else
-                    hol_warn "Enhancement cleanup failed — refusing CDP Terraform destroy to avoid attached-policy conflicts"
-                fi
-            fi
+            hol_warn "CDP provisioning failed — preserving all CDP, AWS, Keycloak, and Terraform resources for safe recovery"
             hol_provision_failed "$workshop_name"
         else
             hol_milestone "CDP Environment Provisioned" "☁️"
