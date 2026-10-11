@@ -83,7 +83,7 @@
             steps {
                 script {
                     // Set a custom build name
-                    currentBuild.displayName = "#${BUILD_NUMBER} - ${params.WORKSHOP_NAME}"
+                    currentBuild.displayName = "#${BUILD_NUMBER} - ${params.WORKSHOP_NAME} - ${params.ACTION}"
                 }
             }
         }
