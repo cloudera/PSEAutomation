@@ -9,7 +9,7 @@ env_name="${workshop_name}-cdp-env"
 echo "🔧 Checking default compute cluster status for environment: $env_name"
 
 default_cluster_status=$(cdp compute list-clusters | jq -r --arg env_name "$env_name" '
-  .clusters[]
+  .clusters[]?
   | select(.isDefault == true and .envName == $env_name)
   | .status
 ')
@@ -22,7 +22,7 @@ fi
 echo "⏳ Waiting for default compute cluster to reach RUNNING state..."
 for i in {1..60}; do
   default_cluster_status=$(cdp compute list-clusters | jq -r --arg env_name "$env_name" '
-    .clusters[]
+    .clusters[]?
     | select(.isDefault == true and .envName == $env_name)
     | .status
   ')

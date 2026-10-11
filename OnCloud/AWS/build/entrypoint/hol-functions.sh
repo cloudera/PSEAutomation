@@ -1001,6 +1001,76 @@ cdp_environment_exists() {
    [[ -s "${aws_tf_dir}/terraform.tfstate" ]]
 }
 
+load_cdp_terraform_outputs() {
+   local aws_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/aws"
+   local public_subnets private_subnets
+
+   if [[ ! -d "$aws_tf_dir" ]]; then
+      hol_warn "CDP Terraform directory not found at ${aws_tf_dir}; cannot recover subnet outputs for data services"
+      return 1
+   fi
+
+   cd "$aws_tf_dir" || return 1
+   public_subnets=$(hol_terraform output -json aws_public_subnet_ids 2>/dev/null || true)
+   private_subnets=$(hol_terraform output -json aws_private_subnet_ids 2>/dev/null || true)
+
+   if ! jq -e 'type == "array" and length >= 3' <<<"$public_subnets" >/dev/null 2>&1; then
+      hol_warn "Terraform output aws_public_subnet_ids must contain at least three subnets"
+      return 1
+   fi
+   if ! jq -e 'type == "array" and length >= 3' <<<"$private_subnets" >/dev/null 2>&1; then
+      hol_warn "Terraform output aws_private_subnet_ids must contain at least three subnets"
+      return 1
+   fi
+
+   ENV_PUBLIC_SUBNETS=$(jq -c '.[0:3]' <<<"$public_subnets")
+   ENV_PRIVATE_SUBNETS=$(jq -c '.[0:3]' <<<"$private_subnets")
+   export ENV_PUBLIC_SUBNETS ENV_PRIVATE_SUBNETS
+
+   BUCKET_NAME=$(hol_terraform output -raw log_storage_bucket_name 2>/dev/null || true)
+   export BUCKET_NAME
+
+   hol_kv "Public subnets (first 3)" "$ENV_PUBLIC_SUBNETS"
+   hol_kv "Private subnets (first 3)" "$ENV_PRIVATE_SUBNETS"
+   return 0
+}
+
+cdp_aws_infrastructure_healthy() {
+   local vpc_id vpc_state subnet_json expected_subnets
+   local -a subnet_ids
+
+   load_cdp_terraform_outputs || return 1
+
+   vpc_id=$(hol_aws_resolve_workshop_vpc_id 2>/dev/null || true)
+   [[ -n "$vpc_id" ]] || return 1
+
+   vpc_state=$(aws ec2 describe-vpcs \
+      --region "$aws_region" \
+      --vpc-ids "$vpc_id" \
+      --query 'Vpcs[0].State' \
+      --output text 2>/dev/null || true)
+   [[ "$vpc_state" == "available" ]] || return 1
+
+   while IFS= read -r subnet_id; do
+      subnet_ids+=("$subnet_id")
+   done < <(
+      {
+         jq -r '.[]' <<<"$ENV_PUBLIC_SUBNETS"
+         jq -r '.[]' <<<"$ENV_PRIVATE_SUBNETS"
+      } | sort -u
+   )
+   expected_subnets=${#subnet_ids[@]}
+   [[ $expected_subnets -ge 3 ]] || return 1
+
+   subnet_json=$(aws ec2 describe-subnets \
+      --region "$aws_region" \
+      --subnet-ids "${subnet_ids[@]}" \
+      --output json 2>/dev/null || true)
+   jq -e --arg vpc_id "$vpc_id" --argjson expected "$expected_subnets" '
+      [.Subnets[]? | select(.VpcId == $vpc_id)] | length == $expected
+   ' <<<"$subnet_json" >/dev/null 2>&1
+}
+
 provision_cdp() {
    hol_banner "Provisioning CDP environment" "☁️"
    sleep 10
@@ -1182,33 +1252,7 @@ EOF
 
    cdp_provision_status=0
    if [ $cdp_provision_status -eq 0 ]; then
-      export ENV_PUBLIC_SUBNETS=$(hol_terraform output -json aws_public_subnet_ids)
-      export ENV_PRIVATE_SUBNETS=$(hol_terraform output -json aws_private_subnet_ids)
-
-      hol_kv "Public subnets" "$ENV_PUBLIC_SUBNETS"
-      hol_kv "Private subnets" "$ENV_PRIVATE_SUBNETS"
-
-      ENV_PUBLIC_SUBNETS=$(hol_terraform output -json aws_public_subnet_ids | jq -c '.[0:3]')
-      hol_info "First 3 public subnets (CDW/CDF): $ENV_PUBLIC_SUBNETS"
-      ENV_PRIVATE_SUBNETS=$(hol_terraform output -json aws_private_subnet_ids | jq -c '.[0:3]')
-      hol_info "First 3 private subnets (CDW/CDF): $ENV_PRIVATE_SUBNETS"
-
-      export BUCKET_NAME=$(hol_terraform output -raw log_storage_bucket_name)
-
-      # Count elements in ENV_PUBLIC_SUBNETS and ENV_PRIVATE_SUBNETS
-      count_public=$(count_elements "$ENV_PUBLIC_SUBNETS")
-      count_private=$(count_elements "$ENV_PRIVATE_SUBNETS")
-
-      # echo -e "\nCounts:"
-      # echo "ENV_PUBLIC_SUBNETS count: $count_public"
-      # echo "ENV_PRIVATE_SUBNETS count: $count_private"
-
-      # Using conditional expressions to assign values
-      ENV_PUBLIC_SUBNETS=$([ "$count_public" -ge 1 ] && echo "$ENV_PUBLIC_SUBNETS" || echo "$ENV_PRIVATE_SUBNETS")
-      ENV_PRIVATE_SUBNETS=$([ "$count_private" -ge 1 ] && echo "$ENV_PRIVATE_SUBNETS" || echo "$ENV_PUBLIC_SUBNETS")
-
-      hol_kv "Final public subnets" "$ENV_PUBLIC_SUBNETS"
-      hol_kv "Final private subnets" "$ENV_PRIVATE_SUBNETS"
+      load_cdp_terraform_outputs || return 1
 
       aws_enhancements #calling aws_enahancements function
       aws_enhancements_status=$?
@@ -1247,13 +1291,40 @@ aws_enhancements() {
       -var="aws_region=$aws_region"
 }
 
+detach_aws_enhancement_policy() {
+   local role_name="${workshop_name}-dladmin-role"
+   local policy_name="${workshop_name}-logs-policy"
+   local policy_json policy_arn entities_json
+
+   policy_json=$(aws iam list-policies --scope Local --output json 2>/dev/null) || return 1
+   policy_arn=$(jq -r --arg policy_name "$policy_name" \
+      '.Policies[]? | select(.PolicyName == $policy_name) | .Arn' <<<"$policy_json" | head -n 1)
+   if [[ -z "$policy_arn" ]]; then
+      hol_skip "IAM policy '${policy_name}' is already absent"
+      return 0
+   fi
+
+   entities_json=$(aws iam list-entities-for-policy \
+      --policy-arn "$policy_arn" \
+      --entity-filter Role \
+      --output json 2>/dev/null) || return 1
+   if ! jq -e --arg role_name "$role_name" \
+      '.PolicyRoles[]? | select(.RoleName == $role_name)' <<<"$entities_json" >/dev/null; then
+      hol_skip "IAM policy '${policy_name}' is not attached to '${role_name}'"
+      return 0
+   fi
+
+   aws iam detach-role-policy --role-name "$role_name" --policy-arn "$policy_arn"
+}
+
 # Tear down HoL-owned IAM attachments before CDP quickstart Terraform destroys shared policies.
 destroy_aws_enhancements() {
    hol_subsection "Removing AWS enhancements" "✨"
    USER_NAMESPACE=$workshop_name
    local dladmin_tf_dir="/userconfig/.$USER_NAMESPACE/aws_enhancements/dladmin_log_policy"
    if [[ ! -d "$dladmin_tf_dir" || ! -f "$dladmin_tf_dir/main.tf" ]]; then
-      hol_skip "dladmin_log_policy Terraform not found — skipping enhancement destroy"
+      hol_warn "dladmin_log_policy Terraform not found — detaching its exact IAM role policy attachment directly"
+      detach_aws_enhancement_policy || return 1
       return 0
    fi
    cd "$dladmin_tf_dir" || return 1
@@ -1263,8 +1334,11 @@ destroy_aws_enhancements() {
       -var="aws_region=$aws_region"
    local status=$?
    if [[ $status -ne 0 ]]; then
-      hol_warn "dladmin_log_policy destroy failed — CDP Terraform may be unable to delete ${workshop_name}-logs-policy while still attached"
-      return 1
+      hol_warn "dladmin_log_policy Terraform destroy failed — trying its exact IAM role policy attachment directly"
+      detach_aws_enhancement_policy || {
+         hol_warn "Unable to detach ${workshop_name}-logs-policy — refusing CDP Terraform destroy"
+         return 1
+      }
    fi
    hol_ok "Detached ${workshop_name}-logs-policy from datalake admin role"
    return 0
@@ -1281,13 +1355,18 @@ initialize_compute_cluster() {
    fi
    cd /userconfig/.$USER_NAMESPACE/CAII
 
+   if ! jq -e 'type == "array" and length > 0' <<<"${ENV_PUBLIC_SUBNETS:-}" >/dev/null 2>&1; then
+      hol_warn "ENV_PUBLIC_SUBNETS is missing or invalid — cannot initialize the default compute cluster"
+      return 1
+   fi
+
    chmod +x ./convert_v2_env.sh
-   ./convert_v2_env.sh $ENV_PUBLIC_SUBNETS $workshop_name $local_ip
+   ./convert_v2_env.sh "$ENV_PUBLIC_SUBNETS" "$workshop_name" "$local_ip" || return 1
 
    #deploy Compute cluster
    chmod +x ./initialize_default_cluster.sh
 
-   ./initialize_default_cluster.sh $workshop_name
+   ./initialize_default_cluster.sh "$workshop_name" || return 1
 }
 
 provision_compute_cluster() {
@@ -1411,7 +1490,7 @@ provision_cai_inference() {
   local env_name="${workshop_name}-cdp-env"
 
   # Step 1: Initialize compute cluster
-  initialize_compute_cluster
+  initialize_compute_cluster || return 1
 
   # Step 2: Provision compute cluster, AI registry and CAI workbench in parallel
   provision_compute_cluster &

@@ -52,6 +52,10 @@ provision)
     cdp_environment_status=$(get_cdp_environment_status)
     if [[ "$cdp_environment_status" == "AVAILABLE" ]]; then
         cdp_environment_preexisting=true
+        if ! cdp_aws_infrastructure_healthy; then
+            hol_warn "CDP reports AVAILABLE, but its Terraform-managed VPC or subnets are missing — refusing Terraform apply and destroy; manual environment recovery is required"
+            hol_provision_failed "$workshop_name"
+        fi
         hol_skip "CDP environment '${workshop_name}-cdp-env' is healthy (AVAILABLE) — skipping CDP Terraform"
         hol_milestone "CDP Environment Available" "☁️"
     else
@@ -65,9 +69,13 @@ provision)
                 hol_warn "CDP environment update failed — preserving the pre-existing environment and Terraform state"
             else
                 hol_warn "New CDP environment provisioning failed — rolling back resources created by this run"
-                destroy_cdp
-                if [[ "$provision_keycloak" == "yes" && "$keycloak_preexisting" != true ]]; then
-                    destroy_keycloak
+                if destroy_aws_enhancements; then
+                    destroy_cdp
+                    if [[ "$provision_keycloak" == "yes" && "$keycloak_preexisting" != true ]]; then
+                        destroy_keycloak
+                    fi
+                else
+                    hol_warn "Enhancement cleanup failed — refusing CDP Terraform destroy to avoid attached-policy conflicts"
                 fi
             fi
             hol_provision_failed "$workshop_name"
