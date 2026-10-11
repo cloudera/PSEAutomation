@@ -27,34 +27,53 @@ provision)
     cdp_prereq
     check_key_pair
     if [ "$provision_keycloak" == "yes" ]; then
+        keycloak_preexisting=false
         if hol_keycloak_already_provisioned; then
-            hol_skip "Keycloak already provisioned for this workshop"
-            hol_milestone "Keycloak Server Provisioned" "🔐"
-        else
-            setup_keycloak_ec2
-            if [ $? -ne 0 ]; then
+            keycloak_preexisting=true
+            hol_info "Keycloak already provisioned — reconciling Terraform configuration"
+        fi
+        setup_keycloak_ec2
+        if [ $? -ne 0 ]; then
+            if [[ "$keycloak_preexisting" == true ]]; then
+                hol_warn "Keycloak update failed — preserving the pre-existing instance and Terraform state"
+            else
                 hol_warn "Keycloak provisioning failed — rolling back"
                 destroy_keycloak
-                hol_provision_failed "$workshop_name"
-            else
-                hol_milestone "Keycloak Server Provisioned" "🔐"
             fi
+            hol_provision_failed "$workshop_name"
+        else
+            hol_milestone "Keycloak Server Provisioned" "🔐"
         fi
     else
         hol_skip "Keycloak provisioning skipped (configfile)"
     fi
     sleep 10
-    provision_cdp
-    if [ $? -ne 0 ]; then
-        hol_warn "CDP environment provisioning failed — rolling back"
-        destroy_cdp
-        if [ "$provision_keycloak" == "yes" ]; then
-            destroy_keycloak
-        fi
-        hol_provision_failed "$workshop_name"
+    cdp_environment_preexisting=false
+    cdp_environment_status=$(get_cdp_environment_status)
+    if [[ "$cdp_environment_status" == "AVAILABLE" ]]; then
+        cdp_environment_preexisting=true
+        hol_skip "CDP environment '${workshop_name}-cdp-env' is healthy (AVAILABLE) — skipping CDP Terraform"
+        hol_milestone "CDP Environment Available" "☁️"
     else
-        write_workshop_cdp_outputs
-        hol_milestone "CDP Environment Provisioned" "☁️"
+        if [[ -n "$cdp_environment_status" ]] || cdp_environment_exists; then
+            cdp_environment_preexisting=true
+            hol_info "Existing or partial CDP environment detected (status=${cdp_environment_status:-not registered}) — rerun failures will not trigger infrastructure rollback"
+        fi
+        provision_cdp
+        if [ $? -ne 0 ]; then
+            if [[ "$cdp_environment_preexisting" == true ]]; then
+                hol_warn "CDP environment update failed — preserving the pre-existing environment and Terraform state"
+            else
+                hol_warn "New CDP environment provisioning failed — rolling back resources created by this run"
+                destroy_cdp
+                if [[ "$provision_keycloak" == "yes" && "$keycloak_preexisting" != true ]]; then
+                    destroy_keycloak
+                fi
+            fi
+            hol_provision_failed "$workshop_name"
+        else
+            hol_milestone "CDP Environment Provisioned" "☁️"
+        fi
     fi
     update_cdp_user_group
     if [ "$provision_keycloak" == "yes" ]; then
@@ -80,7 +99,6 @@ provision)
         hol_provision_failed "$workshop_name"
     fi
 
-    write_workshop_data_service_outputs
     hol_milestone "Infrastructure Provisioned" "🎉"
     hol_info "Workshop access details: /userconfig/${workshop_name}.txt (attached to Jenkins email when run from CI)"
     ;;

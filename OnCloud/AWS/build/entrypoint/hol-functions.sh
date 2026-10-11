@@ -91,8 +91,7 @@ hol_remove_keycloak_ip_on_destroy() {
    rm -f "$(hol_keycloak_ip_path)"
 }
 
-# True when per-workshop keycloak_ip or Keycloak Terraform elastic_ip output exists (provision rerun).
-# Does not probe VM liveness; cdp_idp_setup_user waits for Keycloak HTTPS before Ansible.
+# True when per-workshop keycloak_ip or Keycloak Terraform elastic_ip output exists.
 hol_keycloak_already_provisioned() {
    resolve_keycloak_server_ip optional >/dev/null 2>&1
 }
@@ -103,7 +102,7 @@ hol_keycloak_users_json_path() {
 }
 
 # Validates keycloak_hol_user_fetch output for the workshop report. Always run fetch on rerun;
-# hol_write_keycloak_workshop_report replaces any prior Keycloak block in the report file.
+# hol_write_keycloak_workshop_report regenerates the credential report.
 hol_load_keycloak_report_users() {
    local hol_session_name="$1"
    local json_path
@@ -116,49 +115,10 @@ hol_load_keycloak_report_users() {
    sample_keycloak_user2=$(jq -r '.[1].username // "n/a"' "$json_path")
 }
 
-# Remove an existing Keycloak block from the workshop report (rerun-safe).
-hol_strip_keycloak_workshop_report_section() {
-   local report_path="$1"
-   local ws="$2"
-
-   [[ -f "$report_path" ]] || return 0
-   awk -v ws="$ws" '
-   BEGIN { state=0 }
-   state == 0 {
-      if ($0 ~ /^={63}$/) { hold = $0 ORS; state = 1; next }
-      printf "%s", $0 ORS
-      next
-   }
-   state == 1 {
-      if (index($0, "Keycloak Details For") && index($0, ws)) { state = 2; hold = ""; next }
-      printf "%s%s", hold, $0 ORS
-      hold = ""
-      state = 0
-      next
-   }
-   state == 2 {
-      if ($0 ~ /^={63}$/) { state = 0 }
-      next
-   }
-   ' "$report_path"
-}
-
-# Write Keycloak report section once per workshop report file (replace prior block).
+# Regenerate the original Keycloak-only workshop report on every run.
 hol_write_keycloak_workshop_report() {
    local report_path="/userconfig/${workshop_name}.txt"
-   local tmp stripped
-
-   tmp=$(mktemp)
-   if [[ -f "$report_path" ]]; then
-      stripped=$(hol_strip_keycloak_workshop_report_section "$report_path" "$workshop_name")
-      printf '%s' "$stripped" | sed -e '${/^$/d;}' >"$tmp"
-      if [[ -s "$tmp" ]]; then
-         tail -c1 "$tmp" | read -r _ || echo >>"$tmp"
-      fi
-   else
-      : >"$tmp"
-   fi
-   cat >>"$tmp" <<EOF
+   cat >"$report_path" <<EOF
 ===============================================================
             Keycloak Details For ${workshop_name} HOL:           
 ===============================================================
@@ -174,7 +134,6 @@ UserAssignment App Admin URL: http://${KEYCLOAK_SERVER_IP}:5000/admin
 UserAssignment App Participant URL: http://${KEYCLOAK_SERVER_IP}:5000/participant
 ===============================================================
 EOF
-   mv "$tmp" "$report_path"
 }
 
 wait_for_keycloak_ready() {
@@ -449,7 +408,10 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          #    cdp_private_key=$value
          #    ;;
          LOCAL_MACHINE_IP)
-            local_ip=$value
+            local_ip=$(printf '%s\n' "$value" \
+               | tr ',' '\n' \
+               | awk '{$1=$1}; NF && !seen[$0]++' \
+               | paste -sd, -)
             ;;
          ENABLE_DATA_SERVICES)
             HOL_ENABLE_DATA_SERVICES=$value
@@ -857,44 +819,30 @@ setup_keycloak_ec2() {
    local sg_name="$workshop_name-keyc-sg"
 
    hol_subsection "Running Terraform for Keycloak" "🏗️"
-   # Run Terraform to provision Keycloak instance
-   if check_aws_sg_exists "$sg_name"; then
-      hol_warn "Security group '$sg_name' exists — using '$sg_name-$workshop_name-sg'"
+   hol_terraform init
+   if ! hol_terraform state list 2>/dev/null | grep -q 'aws_security_group.vpc-ssh-web' \
+      && check_aws_sg_exists "$sg_name"; then
+      hol_warn "Security group '$sg_name' exists outside this Terraform state — using '$sg_name-$workshop_name'"
       sg_name="$sg_name-$workshop_name"
    fi
 
-   hol_terraform init
-   if hol_terraform state list 2>/dev/null | grep -q 'aws_instance.keycloak-server'; then
-      hol_skip "Keycloak EC2 already exists in Terraform state — skipping apply"
-      KEYCLOAK_SERVER_IP=$(hol_terraform output -raw elastic_ip 2>/dev/null || true)
-      if [[ -n "$KEYCLOAK_SERVER_IP" ]]; then
-         hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
-         hol_kv "Keycloak instance IP" "$KEYCLOAK_SERVER_IP"
-      fi
-   else
-      # Extract only the first IP for Keycloak (admin access only)
-      kc_ip=$(echo "$local_ip" | cut -d',' -f1)
+   # Preserve the original Keycloak behavior: only the first configured CIDR is allowed.
+   kc_ip=$(echo "$local_ip" | cut -d',' -f1)
+   hol_terraform apply -auto-approve \
+      -var "workshop_name=$workshop_name" \
+      -var "local_ip=$kc_ip" \
+      -var "instance_keypair=$aws_key_pair" \
+      -var "aws_region=$aws_region" \
+      -var "domain=$domain" \
+      -var "wildcard_fullchain=$FULLCHAIN" \
+      -var "wildcard_privkey=$PRIVKEY" \
+      -var "kc_security_group=$sg_name" \
+      -var "keycloak_admin_password=$keycloak__admin_password" || return 1
 
-      hol_terraform apply -auto-approve \
-         -var "workshop_name=$workshop_name" \
-         -var "local_ip=$kc_ip" \
-         -var "instance_keypair=$aws_key_pair" \
-         -var "aws_region=$aws_region" \
-         -var "domain=$domain" \
-         -var "wildcard_fullchain=$FULLCHAIN" \
-         -var "wildcard_privkey=$PRIVKEY" \
-         -var "kc_security_group=$sg_name" \
-         -var "keycloak_admin_password=$keycloak__admin_password"
-
-      RETURN=$?
-      if [ $RETURN -ne 0 ]; then
-         return 1
-      fi
-      KEYCLOAK_SERVER_IP=$(hol_terraform output -raw elastic_ip)
-      hol_step "Saving Keycloak IP to $(hol_keycloak_ip_path)"
-      hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
-      hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
-   fi
+   KEYCLOAK_SERVER_IP=$(hol_terraform output -raw elastic_ip)
+   hol_step "Saving Keycloak IP to $(hol_keycloak_ip_path)"
+   hol_save_keycloak_ip "$KEYCLOAK_SERVER_IP"
+   hol_ok "Keycloak instance IP: $KEYCLOAK_SERVER_IP"
 
    # Fetch the public IP of the created Keycloak instance
    if [[ -z "$KEYCLOAK_SERVER_IP" ]]; then
@@ -1036,6 +984,23 @@ sync_cdp_tf_quickstarts() {
 }
 
 # Function to provision CDP Environment.
+get_cdp_environment_status() {
+   cdp environments describe-environment \
+      --environment-name "${workshop_name}-cdp-env" 2>/dev/null \
+      | jq -r '.environment.status // empty' 2>/dev/null || true
+}
+
+cdp_environment_exists() {
+   local aws_tf_dir="/userconfig/.${workshop_name}/cdp-tf-quickstarts/aws"
+
+   if cdp environments describe-environment \
+      --environment-name "${workshop_name}-cdp-env" >/dev/null 2>&1; then
+      return 0
+   fi
+
+   [[ -s "${aws_tf_dir}/terraform.tfstate" ]]
+}
+
 provision_cdp() {
    hol_banner "Provisioning CDP environment" "☁️"
    sleep 10
@@ -1123,7 +1088,90 @@ EOF
    )
 
    hol_subsection "Running Terraform for CDP environment & datalake" "☁️"
-   hol_terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
+   if [[ "${cdp_environment_preexisting:-false}" == true ]]; then
+      local plan_file="/tmp/cdp-rerun-${workshop_name}.tfplan"
+      local plan_json="/tmp/cdp-rerun-${workshop_name}.json"
+      local ingress_cidr_changes
+      local ingress_targets=(
+         -target=module.cdp_aws_prereqs.module.aws_cdp_ingress.aws_vpc_security_group_ingress_rule.cdp_default_extra_sg_ingress
+         -target=module.cdp_aws_prereqs.module.aws_cdp_ingress.aws_vpc_security_group_ingress_rule.cdp_knox_extra_sg_ingress
+      )
+
+      rm -f "$plan_file" "$plan_json"
+      hol_info "Pre-existing environment: checking Terraform plan before apply"
+      if ! hol_terraform plan -out="$plan_file" "${cdp_tf_apply_args[@]}"; then
+         rm -f "$plan_file" "$plan_json"
+         return 1
+      fi
+      if ! hol_terraform show -json "$plan_file" >"$plan_json"; then
+         rm -f "$plan_file" "$plan_json"
+         return 1
+      fi
+
+      ingress_cidr_changes=$(jq '
+         [
+           .resource_changes[]?
+           | select(
+               .type == "aws_vpc_security_group_ingress_rule"
+               and (
+                 .name == "cdp_default_extra_sg_ingress"
+                 or .name == "cdp_knox_extra_sg_ingress"
+               )
+               and .change.actions == ["update"]
+               and .change.before.cidr_ipv4 != .change.after.cidr_ipv4
+             )
+         ] | length
+      ' "$plan_json")
+
+      if (( ingress_cidr_changes > 0 )); then
+         hol_warn "CIDR changes affect count-indexed ingress rules — rebuilding only the managed CDP extra-ingress rules"
+         rm -f "$plan_file" "$plan_json"
+         if ! hol_terraform destroy --auto-approve \
+            "${ingress_targets[@]}" "${cdp_tf_apply_args[@]}"; then
+            return 1
+         fi
+         if ! hol_terraform apply --auto-approve \
+            "${ingress_targets[@]}" "${cdp_tf_apply_args[@]}"; then
+            return 1
+         fi
+         if ! hol_terraform plan -out="$plan_file" "${cdp_tf_apply_args[@]}"; then
+            rm -f "$plan_file" "$plan_json"
+            return 1
+         fi
+         if ! hol_terraform show -json "$plan_file" >"$plan_json"; then
+            rm -f "$plan_file" "$plan_json"
+            return 1
+         fi
+      fi
+
+      if jq -e '
+         [
+           .resource_changes[]?
+           | select(
+               (.change.actions | index("delete")) != null
+               or (.change.actions == ["create", "delete"])
+               or (.change.actions == ["delete", "create"])
+             )
+         ] | length > 0
+      ' "$plan_json" >/dev/null; then
+         hol_warn "Terraform rerun plan contains delete or replacement actions — refusing to modify the pre-existing environment"
+         jq -r '
+            .resource_changes[]?
+            | select((.change.actions | index("delete")) != null)
+            | "   - \(.address): \(.change.actions | join(" -> "))"
+         ' "$plan_json"
+         rm -f "$plan_file" "$plan_json"
+         return 1
+      fi
+
+      hol_ok "Terraform rerun plan is non-destructive"
+      hol_terraform apply --auto-approve "$plan_file"
+      local apply_status=$?
+      rm -f "$plan_file" "$plan_json"
+      [[ $apply_status -eq 0 ]] || return 1
+   else
+      hol_terraform apply --auto-approve "${cdp_tf_apply_args[@]}"
+   fi
 
    if [ $? -ne 0 ]; then
       return 1
@@ -2309,75 +2357,6 @@ destroy_hol_infra() {
    else
       return 1
    fi
-}
-
-#--------------------------------------------------------------------------------------------------#
-workshop_output_file() {
-   echo "/userconfig/${workshop_name}.txt"
-}
-
-workshop_services_include() {
-   local service="$1"
-   local csv
-   csv=$(hol_enabled_data_services_csv)
-   [[ ",${csv}," == *",${service},"* ]]
-}
-
-append_workshop_output_section() {
-   local title="$1"
-   local out
-   out="$(workshop_output_file)"
-   {
-      echo ""
-      echo "==============================================================="
-      echo "     ${title}"
-      echo "==============================================================="
-   } >>"$out"
-}
-
-write_workshop_cdp_outputs() {
-   local out
-   out="$(workshop_output_file)"
-   append_workshop_output_section "CDP / AWS Infrastructure: ${workshop_name}"
-   {
-      echo "Generated (UTC): $(date -u +"%Y-%m-%d %H:%M:%S")"
-      echo "CDP Environment: ${workshop_name}-cdp-env"
-      echo "AWS Region: ${aws_region:-n/a}"
-      echo "EC2 Key Pair: ${aws_key_pair:-n/a}"
-      echo "CDP Log S3 Bucket: ${BUCKET_NAME:-n/a}"
-      echo "Public Subnets (first 3): ${ENV_PUBLIC_SUBNETS:-n/a}"
-      echo "Private Subnets (first 3): ${ENV_PRIVATE_SUBNETS:-n/a}"
-      echo "CDP Console: https://console.cdp.cloudera.com/"
-   } >>"$out"
-   hol_ok "CDP outputs appended to ${out}"
-}
-
-write_workshop_data_service_outputs() {
-   local out
-   out="$(workshop_output_file)"
-   append_workshop_output_section "Data Services: ${workshop_name}"
-   {
-      echo "Enabled Data Services: ${HOL_ENABLE_DATA_SERVICES:-n/a}"
-      if workshop_services_include cdw; then
-         echo "CDW Virtual Warehouse Size: ${cdw_vrtl_warehouse_size:-n/a}"
-         echo "CDW DataViz Size: ${cdw_dataviz_size:-n/a}"
-      fi
-      if workshop_services_include cde; then
-         echo "CDE Service Name: ${workshop_name}-cde"
-         echo "CDE Instance Type: ${cde_instance_type:-n/a}"
-         echo "CDE Spark Version: ${cde_spark_version:-n/a}"
-      fi
-      if workshop_services_include cai || [[ "${provision_caii:-no}" == "yes" ]]; then
-         echo "CAI Workspace Name: ${workshop_name}-cai-ws"
-         echo "CAI WS Instance Type: ${cai_ws_instance_type:-n/a}"
-         echo "CAI GPU Enabled: ${cai_enable_gpu:-n/a}"
-      fi
-      if workshop_services_include cdf; then
-         echo "CDF Environment Service: ${workshop_name}-cdp-env"
-         echo "CDF Instance Type: ${cdf_instance_type:-n/a}"
-      fi
-   } >>"$out"
-   hol_ok "Data service outputs appended to ${out} (also emailed via Jenkins when run from CI)"
 }
 
 #--------------------------------------------------------------------------------------------------#

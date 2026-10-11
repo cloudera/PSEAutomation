@@ -66,7 +66,7 @@ Both AWS and Azure provisioners read a flat `configfile` mounted at `/userconfig
 | `LOCAL_MACHINE_IP`
 | yes
 | yes
-| IP or CIDR to whitelist for environment access
+| Comma-separated IP/CIDRs to whitelist. Keycloak uses only the first CIDR, so place the Jenkins or administrator IP first; CDP uses all entries
 
 | `ENABLE_DATA_SERVICES`
 | yes

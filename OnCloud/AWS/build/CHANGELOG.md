@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Keycloak EC2 provisioning no longer uses unused SSH file provisioners that could crash Terraform when the instance public DNS was still unknown.
+- Repeated or whitespace-padded `LOCAL_MACHINE_IP` CIDRs are normalized before Terraform, preventing duplicate CDP security-group rule failures.
+- Existing Keycloak deployments now reconcile Terraform changes on reruns while retaining the original first-CIDR-only ingress behavior.
+- Jenkins now preserves `LOCAL_MACHINE_IP` exactly as supplied instead of implicitly appending global VPN CIDRs.
+- Healthy existing CDP environments skip Terraform entirely; partial environments rebuild only count-indexed extra-ingress rules when CIDRs change and are preserved when reconciliation fails.
 
 ## [4.0.0] - 2026-09-24
 

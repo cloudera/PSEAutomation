@@ -48,7 +48,7 @@ NOTE: The image is `linux/amd64`. On Apple Silicon Macs, include `--platform lin
 == Jenkins and configfile parameters
 
 * *OWNER* (resource tag `pse-owner`): default `pse-apac@cloudera.com`
-* *LOCAL_MACHINE_IP*: IP or CIDR to whitelist for environment access
+* *LOCAL_MACHINE_IP*: comma-separated IP/CIDRs to whitelist for environment access. Keycloak uses only the first CIDR, so place the Jenkins or administrator IP first; CDP uses all entries
 * *PROVISION_CAII*: when set to `YES`, `LOCAL_MACHINE_IP` **must not** be `0.0.0.0/0`
 * *DELETE_DATAHUBS*: delete all Data Hubs associated with the environment during destroy (default `true`); setting `false` skips deletion, but infrastructure destroy cannot complete while Data Hubs remain
 * *AZURE_REGION*: Azure region for CDP and Keycloak resources (default in Jenkins/config example: `westus2`; must support PostgreSQL Flexible Server for datalake)

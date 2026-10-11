@@ -10,7 +10,7 @@
         password(name: 'KEYCLOAK_ADMIN_PASSWORD', defaultValue: 'admin', description: '❗❗❗(MANDATORY) Admin User Password for Keycloak')
         choice(name: 'CDP_DEPLOYMENT_TYPE', choices: ['public', 'private', 'semi-private'], description: 'Choose the CDP Deployment Type (public/private/semi-private). Default: public')
         string(name: 'AZURE_REGION', defaultValue: 'westus2', description: 'Azure Region (e.g., westus2). Must support PostgreSQL Flexible Server for CDP datalake (verify with az postgres flexible-server list-skus).')
-        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'IP/CIDR to whitelist. Default 0.0.0.0/0 allows all. If PROVISION_CAII=YES, 0.0.0.0/0 is rejected — use Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
+        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'Comma-separated IP/CIDRs to whitelist. Keycloak uses only the first CIDR; place the Jenkins/administrator IP first. CDP uses all entries. If PROVISION_CAII=YES, 0.0.0.0/0 is rejected.')
         string(name: 'WORKSHOP_NAME', defaultValue: 'pseworkshop', description: 'Workshop Name (5-12 characters long, no underscores allowed)')
         string(name: 'NUMBER_OF_WORKSHOP_USERS', defaultValue: '1', description: 'Number of Workshop Users')
         string(name: 'WORKSHOP_USER_PREFIX', defaultValue: 'pseworkshop', description: 'Prefix for Workshop Users')
@@ -252,12 +252,6 @@
                      // Do not use "owner": CDP account default tags include it and reject overrides.
                     def envTags = "{pse-owner=${params.OWNER.trim()},apn-id=${env.AWS_APN_ID}}"
                     
-                    // Combine LOCAL_MACHINE_IP and VPN_CIDRS unless open access is requested
-                    def localIp = params.LOCAL_MACHINE_IP?.trim()
-                    def allCidrs = (localIp == '0.0.0.0/0')
-                        ? localIp
-                        : "${localIp},${env.VPN_CIDRS.trim()}"
-
                     // Create or overwrite the config file
                     writeFile file: env.CONFIG_FILE, text: """PROVISION_KEYCLOAK:${params.PROVISION_KEYCLOAK}
 KEYCLOAK_ADMIN_PASSWORD:${params.KEYCLOAK_ADMIN_PASSWORD}
@@ -265,7 +259,7 @@ PROVISION_CAII:${params.PROVISION_CAII}
 DELETE_DATAHUBS:${params.DELETE_DATAHUBS}
 AZURE_REGION:${params.AZURE_REGION}
 CDP_DEPLOYMENT_TYPE:${params.CDP_DEPLOYMENT_TYPE}
-LOCAL_MACHINE_IP:${allCidrs}
+LOCAL_MACHINE_IP:${params.LOCAL_MACHINE_IP.trim()}
 WORKSHOP_NAME:${params.WORKSHOP_NAME}
 NUMBER_OF_WORKSHOP_USERS:${params.NUMBER_OF_WORKSHOP_USERS}
 WORKSHOP_USER_PREFIX:${params.WORKSHOP_USER_PREFIX}

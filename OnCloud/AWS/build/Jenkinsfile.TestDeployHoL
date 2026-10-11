@@ -10,7 +10,7 @@ pipeline {
         password(name: 'KEYCLOAK_ADMIN_PASSWORD', defaultValue: 'admin', description: '❗❗❗(MANDATORY) Admin User Password for Keycloak')
         choice(name: 'CDP_DEPLOYMENT_TYPE', choices: ['public', 'private', 'semi-private'], description: 'Choose the CDP Deployment Type (public/private/semi-private). Default: public')
         string(name: 'AWS_REGION', defaultValue: 'ap-southeast-1', description: 'AWS Region (e.g., ap-southeast-1). Please provide a valid AWS region format (e.g., ap-southeast-1).')
-        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'IP/CIDR to whitelist. Default 0.0.0.0/0 allows all. If PROVISION_CAII=YES, 0.0.0.0/0 is rejected — use Jenkins agent IP or Cloudera VPN: 208.127.31.110/32 or 208.127.31.11/32.')
+        string(name: 'LOCAL_MACHINE_IP', defaultValue: '0.0.0.0/0', description: 'Comma-separated IP/CIDRs to whitelist. Keycloak uses only the first CIDR; place the Jenkins/administrator IP first. CDP uses all entries. If PROVISION_CAII=YES, 0.0.0.0/0 is rejected.')
         string(name: 'WORKSHOP_NAME', defaultValue: 'pseworkshop', description: 'Workshop Name (5-12 characters long, no underscores allowed)')
         string(name: 'NUMBER_OF_WORKSHOP_USERS', defaultValue: '1', description: 'Number of Workshop Users')
         string(name: 'WORKSHOP_USER_PREFIX', defaultValue: 'pseworkshop', description: 'Prefix for Workshop Users')

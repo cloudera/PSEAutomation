@@ -132,7 +132,7 @@ hol_keycloak_users_json_path() {
 }
 
 # Validates keycloak_hol_user_fetch output for the workshop report. Always run fetch on rerun;
-# hol_write_keycloak_workshop_report replaces any prior Keycloak block in the report file.
+# hol_write_keycloak_workshop_report regenerates the credential report.
 hol_load_keycloak_report_users() {
    local hol_session_name="$1"
    local json_path
@@ -145,49 +145,10 @@ hol_load_keycloak_report_users() {
    sample_keycloak_user2=$(jq -r '.[1].username // "n/a"' "$json_path")
 }
 
-# Remove an existing Keycloak block from the workshop report (rerun-safe).
-hol_strip_keycloak_workshop_report_section() {
-   local report_path="$1"
-   local ws="$2"
-
-   [[ -f "$report_path" ]] || return 0
-   awk -v ws="$ws" '
-   BEGIN { state=0 }
-   state == 0 {
-      if ($0 ~ /^={63}$/) { hold = $0 ORS; state = 1; next }
-      printf "%s", $0 ORS
-      next
-   }
-   state == 1 {
-      if (index($0, "Keycloak Details For") && index($0, ws)) { state = 2; hold = ""; next }
-      printf "%s%s", hold, $0 ORS
-      hold = ""
-      state = 0
-      next
-   }
-   state == 2 {
-      if ($0 ~ /^={63}$/) { state = 0 }
-      next
-   }
-   ' "$report_path"
-}
-
-# Write Keycloak report section once per workshop report file (replace prior block).
+# Regenerate the original Keycloak-only workshop report on every run.
 hol_write_keycloak_workshop_report() {
    local report_path="/userconfig/${workshop_name}.txt"
-   local tmp stripped
-
-   tmp=$(mktemp)
-   if [[ -f "$report_path" ]]; then
-      stripped=$(hol_strip_keycloak_workshop_report_section "$report_path" "$workshop_name")
-      printf '%s' "$stripped" | sed -e '${/^$/d;}' >"$tmp"
-      if [[ -s "$tmp" ]]; then
-         tail -c1 "$tmp" | read -r _ || echo >>"$tmp"
-      fi
-   else
-      : >"$tmp"
-   fi
-   cat >>"$tmp" <<EOF
+   cat >"$report_path" <<EOF
 ===============================================================
             Keycloak Details For ${workshop_name} HOL:           
 ===============================================================
@@ -203,7 +164,6 @@ UserAssignment App Admin URL: http://${KEYCLOAK_SERVER_IP}:5000/admin
 UserAssignment App Participant URL: http://${KEYCLOAK_SERVER_IP}:5000/participant
 ===============================================================
 EOF
-   mv "$tmp" "$report_path"
 }
 
 #TF_QUICKSTART_VERSION=v0.8.0
@@ -468,7 +428,10 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          #    cdp_private_key=$value
          #    ;;
          LOCAL_MACHINE_IP)
-            local_ip=$value
+            local_ip=$(printf '%s\n' "$value" \
+               | tr ',' '\n' \
+               | awk '{$1=$1}; NF && !seen[$0]++' \
+               | paste -sd, -)
             ;;
          ENABLE_DATA_SERVICES)
             HOL_ENABLE_DATA_SERVICES=$value
@@ -2897,77 +2860,6 @@ destroy_hol_infra() {
    else
       return 1
    fi
-}
-
-#--------------------------------------------------------------------------------------------------#
-workshop_output_file() {
-   echo "/userconfig/${workshop_name}.txt"
-}
-
-workshop_services_include() {
-   local service="$1"
-   local csv
-   csv=$(hol_enabled_data_services_csv)
-   [[ ",${csv}," == *",${service},"* ]]
-}
-
-append_workshop_output_section() {
-   local title="$1"
-   local out
-   out="$(workshop_output_file)"
-   {
-      echo ""
-      echo "==============================================================="
-      echo "     ${title}"
-      echo "==============================================================="
-   } >>"$out"
-}
-
-write_workshop_cdp_outputs() {
-   local out
-   out="$(workshop_output_file)"
-   append_workshop_output_section "CDP / Azure Infrastructure: ${workshop_name}"
-   {
-      echo "Generated (UTC): $(date -u +"%Y-%m-%d %H:%M:%S")"
-      echo "CDP Environment: ${workshop_name}-cdp-env"
-      echo "Azure Region: ${azure_region:-n/a}"
-      echo "Azure Resource Group: ${AZURE_RESOURCE_GROUP:-n/a}"
-      echo "Datalake Storage Account: ${DATA_STORAGE_ACCOUNT:-n/a}"
-      echo "Log Storage Account: ${LOG_STORAGE_ACCOUNT:-n/a}"
-      echo "Log Storage Container: ${LOG_STORAGE_CONTAINER:-n/a}"
-      echo "CDP Console: https://console.cdp.cloudera.com/"
-   } >>"$out"
-   hol_ok "CDP outputs appended to ${out}"
-}
-
-write_workshop_data_service_outputs() {
-   local out
-   out="$(workshop_output_file)"
-   append_workshop_output_section "Data Services & Identities: ${workshop_name}"
-   {
-      echo "Enabled Data Services: ${HOL_ENABLE_DATA_SERVICES:-n/a}"
-      if workshop_services_include cdw; then
-         echo "CDW Managed Identity: ${CDW_MANAGED_IDENTITY_ID:-n/a}"
-      fi
-      if workshop_services_include cde; then
-         echo "CDE Service Name: ${workshop_name}-cde"
-         echo "CDE Instance Type: ${cde_instance_type:-n/a}"
-         echo "CDE Cluster Managed Identity: ${CDE_CLUSTER_MANAGED_IDENTITY_ID:-n/a}"
-         echo "CDE VC Managed Identity: ${CDE_VC_MANAGED_IDENTITY_ID:-n/a}"
-      fi
-      if workshop_services_include cai || [[ "${provision_caii:-no}" == "yes" ]]; then
-         echo "CAI Workspace Name: ${workshop_name}-cai-ws"
-         echo "CAI WS Instance Type: ${cai_ws_instance_type:-n/a}"
-         echo "CAI NFS Mount Path: ${CAI_EXISTING_NFS:-n/a}"
-         echo "CAI NFS Storage Account: ${CAI_NFS_STORAGE_ACCOUNT:-n/a}"
-         echo "CAI NFS Share: ${CAI_NFS_SHARE_NAME:-n/a}"
-      fi
-      if workshop_services_include cdf; then
-         echo "CDF Environment Service: ${workshop_name}-cdp-env"
-         echo "CDF Instance Type: ${cdf_instance_type:-n/a}"
-      fi
-   } >>"$out"
-   hol_ok "Data service outputs appended to ${out} (also emailed via Jenkins when run from CI)"
 }
 
 #--------------------------------------------------------------------------------------------------#

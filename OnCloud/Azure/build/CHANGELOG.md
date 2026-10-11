@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Keycloak VM provisioning no longer uses unused SSH file provisioners, avoiding apply-time connection failures and Terraform crashes.
+- Repeated or whitespace-padded `LOCAL_MACHINE_IP` CIDRs are normalized before Terraform, preventing duplicate security-rule definitions.
+- Jenkins now preserves `LOCAL_MACHINE_IP` exactly as supplied instead of implicitly appending global VPN CIDRs.
 
 ## [1.0.0] - 2026-09-24
 

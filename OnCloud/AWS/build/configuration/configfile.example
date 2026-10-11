@@ -12,6 +12,7 @@ WORKSHOP_NAME:pseworkshop
 NUMBER_OF_WORKSHOP_USERS:10
 WORKSHOP_USER_PREFIX:pseworkshop
 WORKSHOP_USER_DEFAULT_PASSWORD:changeme
+# Keycloak uses only the first CIDR; put the Jenkins/administrator IP first. CDP uses all entries.
 LOCAL_MACHINE_IP:203.0.113.10/32
 ENABLE_DATA_SERVICES:CDW,CAI,CDE,CDF
 DELETE_DATAHUBS:true
