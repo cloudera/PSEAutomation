@@ -37,7 +37,7 @@ resource "aws_eip" "kc_elastic_ip" {
 
 resource "aws_security_group" "vpc-ssh-web" {
   name        = var.kc_security_group
-  description = "Allow Keycloak access from configured CIDRs"
+  description = "Allow SSH Connection from specific IP"
 
   lifecycle {
     create_before_destroy = true
