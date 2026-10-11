@@ -56,6 +56,13 @@
               'installation:finished', 'modify:finished', 'provision:finished', 'resume:finished'
             ]
           }}
+        workspace_failed: >-
+          {{
+            existing_ws_status.stdout in [
+              'modify:failed', 'installation:failed', 'provision:failed',
+              'resume:failed', 'deprovision:failed'
+            ]
+          }}
       when: workspace_exists
 
     - name: Skip provisioning if workspace already exists
@@ -66,6 +73,38 @@
     - name: End play when workspace already exists and is healthy
       ansible.builtin.meta: end_play
       when: workspace_exists and (workspace_healthy | default(false))
+
+    - name: Delete failed existing CAI workspace
+      ansible.builtin.command: >
+        cdp ml delete-workspace
+        --environment-name "{{ cdp_env_name }}"
+        --workspace-name "{{ workshop_name }}-cai-ws"
+        --no-force
+      register: ml_delete_failed_workspace
+      when:
+        - workspace_exists
+        - workspace_failed | default(false)
+
+    - name: Wait until failed CAI workspace is removed
+      ansible.builtin.shell: |
+        cdp ml list-workspaces 2>/dev/null | jq -r --arg ws "{{ workshop_name }}-cai-ws" --arg env "{{ cdp_env_name }}" '
+          [.workspaces[]? | select(.instanceName == $ws and .environmentName == $env)] | length'
+      register: failed_ws_list_count
+      changed_when: false
+      until: (failed_ws_list_count.stdout | default('1') | trim | int) == 0
+      retries: 120
+      delay: 30
+      when:
+        - workspace_exists
+        - workspace_failed | default(false)
+
+    - name: Reset workspace existence after failed workspace removal
+      ansible.builtin.set_fact:
+        workspace_exists: false
+        workspace_healthy: false
+      when:
+        - workspace_exists
+        - workspace_failed | default(false)
 
     - name: Generate JSON for provision-k8s-request
       set_fact:
@@ -133,7 +172,7 @@
         ]))
       retries: 50
       delay: 120
-      when: not workspace_exists
+      when: not (workspace_healthy | default(false))
       failed_when: false
 
     - name: Print ML Workspace Status

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Healthy existing CDP environments skip Terraform entirely; partial environments rebuild only count-indexed extra-ingress rules when CIDRs change and are preserved when reconciliation fails.
 - Healthy reruns reload and validate persisted subnet outputs before data services; CAII serializes multiple CIDRs correctly and stops immediately on invalid inputs or default-cluster initialization failure.
 - CDP `AVAILABLE` is trusted only when its Terraform-managed VPC and subnets still exist; teardown detaches the exact enhancement policy even when its Terraform state is unavailable, before destroying a CDP stack.
+- Failed CAI workspaces are removed and recreated on rerun; CDF no longer masks hidden `CANCEL_ENABLE` backend operations as successful activation.
 
 ## [4.0.0] - 2026-09-24
 

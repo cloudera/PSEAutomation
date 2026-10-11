@@ -4,6 +4,7 @@
     msg: >-
       CDF enable CLI attempt {{ cdf_enable_attempt }}/{{ cdf_enable_api_retries }}
       for {{ cdp_env_name }} (cdp df enable-service)
+  when: not cdf_enable_retry_done | default(false)
 
 - name: Build CDF enable CLI argument list
   ansible.builtin.set_fact:
@@ -45,6 +46,7 @@
           else []
         )
       }}
+  when: not cdf_enable_retry_done | default(false)
 
 - name: Submit CDF enable request via CDP CLI
   ansible.builtin.command:
@@ -52,6 +54,7 @@
   register: cdf_enable_cmd
   changed_when: cdf_enable_cmd.rc == 0
   failed_when: false
+  when: not cdf_enable_retry_done | default(false)
 
 - name: Build CDF enable attempt result facts
   ansible.builtin.set_fact:
@@ -83,33 +86,38 @@
           ) | trim
         ) is search('(?i)(already exists|CONFLICT|already enabled|enable.*in progress|ENABLING)')
       }}
+  when: not cdf_enable_retry_done | default(false)
+
+- name: Set CDF enable effective return code
+  ansible.builtin.set_fact:
     cdf_enable_effective_rc: >-
       {{
         0
         if (
-          (cdf_enable_cmd.rc | default(1) | int) == 0
-          or (
-            (
-              (
-                (cdf_enable_cmd.stderr | default('') | string)
-                ~ ' '
-                ~ (cdf_enable_cmd.stdout | default('') | string)
-              ) | trim
-            ) is search('(?i)(already exists|CONFLICT|already enabled|enable.*in progress|ENABLING|FAILED_PRECONDITION|\\[412\\]|Status Code: 412|CANCEL_ENABLE|cannot be enabled at the moment|valid actions.*CANCEL_ENABLE)')
+          not (cdf_enable_stuck_precondition | default(false) | bool)
+          and (
+            (cdf_enable_cmd.rc | default(1) | int) == 0
+            or (cdf_enable_conflict_ok | default(false) | bool)
           )
         )
-        else (cdf_enable_cmd.rc | default(1) | int)
+        else (
+          (cdf_enable_cmd.rc | default(1) | int)
+          if (cdf_enable_cmd.rc | default(1) | int) != 0
+          else 1
+        )
       }}
+  when: not cdf_enable_retry_done | default(false)
 
 - name: Set CDF enable poll-only flag for stuck or in-flight enable
   ansible.builtin.set_fact:
     cdf_enable_poll_only: >-
       {{
         (
-          (cdf_enable_stuck_precondition | default(false) | bool) or
-          (cdf_enable_conflict_ok | default(false) | bool)
+          (cdf_enable_conflict_ok | default(false) | bool) and
+          not (cdf_enable_stuck_precondition | default(false) | bool)
         ) | bool
       }}
+  when: not cdf_enable_retry_done | default(false)
 
 - name: Set CDF enable attempt result payload
   ansible.builtin.set_fact:
@@ -120,7 +128,8 @@
       msg: >-
         {{
           (
-            'CDF enable-service: stuck or in-flight enable (412/CANCEL_ENABLE or ENABLING) — continuing with health poll'
+            'CDF enable-service rejected because the backend requires CANCEL_ENABLE: '
+            ~ (cdf_enable_combined_msg | default('412 FAILED_PRECONDITION'))
             if (cdf_enable_stuck_precondition | default(false) | bool)
             else (
               'CDF enable-service: service already present or enabling — continuing with health poll'
@@ -140,7 +149,8 @@
     cdf_enable_msg: >-
       {{
         (
-          'CDF enable-service: stuck or in-flight enable (412/CANCEL_ENABLE or ENABLING) — continuing with health poll'
+          'CDF enable-service rejected because the backend requires CANCEL_ENABLE: '
+          ~ (cdf_enable_combined_msg | default('412 FAILED_PRECONDITION'))
           if (cdf_enable_stuck_precondition | default(false) | bool)
           else (
             'CDF enable-service: service already present or enabling — continuing with health poll'
@@ -211,11 +221,14 @@
           (cdf_enable_attempt | int) < (cdf_enable_api_retries | int)
         )
       }}
+  when: not cdf_enable_retry_done | default(false)
 
 - name: Record CDF enable CLI result for playbook
   ansible.builtin.set_fact:
     cdf_enable_result: "{{ cdf_enable_attempt_result }}"
     cdf_enable_retry_done: "{{ not (cdf_enable_should_retry | default(false) | bool) }}"
+    cdf_enable_recorded_attempt: "{{ cdf_enable_attempt }}"
+  when: not cdf_enable_retry_done | default(false)
 
 - name: Log CDF enable attempt outcome
   ansible.builtin.debug:
@@ -227,6 +240,7 @@
       api_error={{ cdf_enable_has_api_error | default(false) }},
       will_retry={{ cdf_enable_should_retry | default(false) }},
       msg={{ cdf_enable_msg | truncate(400, True, '...') }}
+  when: (cdf_enable_recorded_attempt | default(0) | int) == (cdf_enable_attempt | int)
 
 - name: Pause before next CDF enable retry
   ansible.builtin.pause:
