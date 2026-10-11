@@ -38,12 +38,36 @@
         --workspace-name "{{ workshop_name }}-cai-ws" \
         --no-force
       register: ml_delete_workspace
+      changed_when: (ml_delete_workspace.rc | default(1)) == 0
+      failed_when: false
       when: workspace_exists
+
+    - name: Stop CAI teardown while the CDP environment is not ready
+      ansible.builtin.fail:
+        msg: >-
+          CAI workspace {{ workshop_name }}-cai-ws cannot be deleted because CDP reports that
+          environment {{ cdp_env_name }} is not ready. Normal non-force deletion remains required;
+          parent CDP Terraform deletion is blocked to prevent orphaned AWS resources.
+      when:
+        - workspace_exists
+        - (ml_delete_workspace.rc | default(1)) != 0
+        - "'environment is not ready' in (ml_delete_workspace.stderr | default('') | lower)"
+
+    - name: Fail when CAI workspace delete request is rejected
+      ansible.builtin.fail:
+        msg: >-
+          CAI workspace {{ workshop_name }}-cai-ws delete request failed:
+          {{ ml_delete_workspace.stderr | default(ml_delete_workspace.msg) | default('unknown CDP ML error') | trim }}.
+      when:
+        - workspace_exists
+        - (ml_delete_workspace.rc | default(1)) != 0
 
     - name: Pause for 30 seconds after triggering deprovisioning workspace
       pause:
         seconds: 30
-      when: workspace_exists
+      when:
+        - workspace_exists
+        - (ml_delete_workspace.rc | default(1)) == 0
 
     - name: Poll until CAI workspace absent from list-workspaces
       ansible.builtin.shell: |
