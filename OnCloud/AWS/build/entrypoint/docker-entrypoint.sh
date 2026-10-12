@@ -72,8 +72,10 @@ provision)
             hol_warn "CDP environment status is ${cdp_environment_status}, but its Terraform-managed VPC or subnets are missing — refusing Terraform apply and destroy; manual environment recovery is required"
             hol_provision_failed "$workshop_name"
         fi
-        hol_skip "CDP environment '${workshop_name}-cdp-env' is healthy (${cdp_environment_status}) — skipping CDP Terraform"
-        hol_milestone "CDP Environment Reused" "☁️"
+        hol_milestone "Healthy CDP Environment Reused — Terraform Skipped" "🛡️"
+        hol_kv "Environment" "${workshop_name}-cdp-env"
+        hol_kv "Status" "${cdp_environment_status}"
+        hol_ok "Existing datalake, environment, VPC, and subnets were preserved; CDP Terraform was not run."
     elif [[ "$cdp_environment_status" =~ (FAILED|ERROR|UNHEALTHY|UNAVAILABLE|CORRUPT|NODE_FAILURE) ]]; then
         cdp_environment_preexisting=true
         hol_warn "CDP environment is explicitly unhealthy (status=${cdp_environment_status}) — allowing guarded Terraform reconciliation"
