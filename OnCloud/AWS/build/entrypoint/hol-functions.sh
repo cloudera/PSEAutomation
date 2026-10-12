@@ -3170,6 +3170,11 @@ disable_data_services() {
       fi
       services_to_disable+=("$token")
    done
+   if [[ "$provision_caii" == "yes" ]]; then
+      services_to_disable+=("cai")
+   else
+      hol_skip "CAII deletion disabled (PROVISION_CAII is not yes)"
+   fi
 
    if [ "${#services_to_disable[@]}" -eq 0 ]; then
       hol_info "No data services to disable"
@@ -3189,7 +3194,11 @@ disable_data_services() {
    done
 
    for service in "${services_to_disable[@]}"; do
-      disable_single_data_service "$service" &
+      if [[ "$service" == "cai" && "$provision_caii" == "yes" ]]; then
+         destroy_cai_inference &
+      else
+         disable_single_data_service "$service" &
+      fi
       pids+=($!)
    done
 
