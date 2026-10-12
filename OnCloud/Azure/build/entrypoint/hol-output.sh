@@ -276,7 +276,7 @@ hol_start_service_log_tailer() {
    touch "$log_file"
 
    (
-      tail -n 0 -F "$log_file" 2>/dev/null | while IFS= read -r line || [[ -n "$line" ]]; do
+      tail --pid="$BASHPID" -n 0 -F "$log_file" 2>/dev/null | while IFS= read -r line || [[ -n "$line" ]]; do
          hol_print_tagged_ansible_log_line "$tag" "$line"
       done
    ) &
@@ -289,7 +289,7 @@ hol_stop_service_log_tailers() {
       kill "$pid" 2>/dev/null || true
    done
    HOL_LOG_TAILER_PIDS=()
-   sleep 0.2
+   sleep 1.2
 }
 
 # Wait for every background data-service job (continue-on-failure). Nameref arrays:

@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Teardown stops promptly on terminal CDE deletion failures and retries a CDW cluster that remains `Running` after the Ansible delete request through one explicit non-force CLI request.
 - CDE teardown treats environment-scoped `ClusterDeletionCompleted` tombstones as deleted, matching the UI instead of polling a completed control-plane record.
 - Keycloak IP recovery logs no longer contaminate command-substitution results; destroy now blocks on failed IDP user/group cleanup and removes Keycloak only after parent CDP and cloud cleanup succeeds.
+- AWS Keycloak destroy supports both legacy `local_ip` and current `local_ips` persisted Terraform schemas; data-service log tailers now terminate their `tail` children so completed jobs cannot emit stale wait lines later in the pipeline.
 
 ## [4.0.0] - 2026-09-24
 

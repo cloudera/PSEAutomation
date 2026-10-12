@@ -923,13 +923,21 @@ destroy_keycloak() {
       hol_skip "No Keycloak IP or hosted zone — skipping Route53 cleanup"
    fi
 
-   local kc_cidrs
+   local kc_cidrs kc_ip
+   local -a kc_network_tf_arg=()
    kc_cidrs=$(jq -cn --arg cidrs "$local_ip" '
       $cidrs | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique
    ')
+   if grep -qE 'variable[[:space:]]+"local_ips"' variables.tf 2>/dev/null; then
+      kc_network_tf_arg=(-var "local_ips=$kc_cidrs")
+   elif grep -qE 'variable[[:space:]]+"local_ip"' variables.tf 2>/dev/null; then
+      kc_ip=$(jq -r '.[0]' <<<"$kc_cidrs")
+      hol_warn "Legacy Keycloak Terraform schema detected — using local_ip for destroy"
+      kc_network_tf_arg=(-var "local_ip=$kc_ip")
+   fi
    hol_terraform destroy -auto-approve \
       -var "workshop_name=$workshop_name" \
-      -var "local_ips=$kc_cidrs" \
+      "${kc_network_tf_arg[@]}" \
       -var "instance_keypair=$aws_key_pair" \
       -var "aws_region=$aws_region" \
       -var "kc_security_group=$sg_name" \
