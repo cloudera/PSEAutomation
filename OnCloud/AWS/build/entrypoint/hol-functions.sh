@@ -1566,30 +1566,88 @@ destroy_cai_inference() {
    USER_NAMESPACE=$workshop_name
    cd /userconfig/.$USER_NAMESPACE/CAII
 
-   # Delete ML Serving App first, extract CRN
-   serving_app_crn=$(cdp ml list-ml-serving-apps | jq -r --arg env_name "${workshop_name}-cdp-env" '
-     .apps[] | select(.environmentName == $env_name) | .appCrn
-   ')
+   local env_name="${workshop_name}-cdp-env"
+   local serving_app_list serving_app_json serving_app_crn serving_app_status delete_output
+   local serving_app_absent=0 status_disable=0
 
-   if [[ -n "$serving_app_crn" ]]; then
-     hol_step "Deleting ML Serving App: $serving_app_crn"
-     cdp ml delete-ml-serving-app --app-crn "$serving_app_crn"
-   else
-     hol_skip "No ML Serving App found"
+   if ! serving_app_list=$(cdp ml list-ml-serving-apps 2>&1); then
+      hol_warn "Unable to list AI Inference services: $serving_app_list"
+      return 1
    fi
-   
-   # Set the data service value for cleanup
+   if ! jq -e '.apps | arrays' >/dev/null 2>&1 <<<"$serving_app_list"; then
+      hol_warn "AI Inference service lookup returned an invalid response"
+      return 1
+   fi
+   serving_app_json=$(jq -c --arg env_name "$env_name" '
+     first(.apps[]? | select(.environmentName == $env_name)) // empty
+   ' <<<"$serving_app_list")
+   serving_app_crn=$(jq -r '.appCrn // empty' <<<"$serving_app_json")
+   serving_app_status=$(jq -r '.status // "unknown"' <<<"$serving_app_json")
+
+   if [[ -z "$serving_app_crn" ]]; then
+      hol_skip "No AI Inference service found"
+      serving_app_absent=1
+   elif [[ "$serving_app_status" == "deprovision:started" ]]; then
+      hol_step "AI Inference service deletion is already in progress; polling for absence"
+   else
+      hol_step "Deleting AI Inference service (status: ${serving_app_status}): $serving_app_crn"
+      if ! delete_output=$(cdp ml delete-ml-serving-app --app-crn "$serving_app_crn" --no-force 2>&1); then
+         if grep -qiE "deprovision:started|deletion.*already.*progress" <<<"$delete_output"; then
+            hol_step "AI Inference service entered deletion while the request was submitted; polling for absence"
+         else
+            hol_warn "AI Inference service delete request failed: $delete_output"
+            return 1
+         fi
+      fi
+   fi
+
+   # CAI workspace deletion is independent and can continue while the serving app is removed.
    disable_single_data_service cai &
    pid_disable=$!
-   sleep 30
-   
+
+   if [[ "$serving_app_absent" -eq 0 ]]; then
+      for attempt in $(seq 1 40); do
+         if ! serving_app_list=$(cdp ml list-ml-serving-apps 2>&1); then
+            hol_warn "AI Inference service deletion check ${attempt}/40 failed: $serving_app_list"
+            sleep 15
+            continue
+         fi
+         if ! jq -e '.apps | arrays' >/dev/null 2>&1 <<<"$serving_app_list"; then
+            hol_warn "AI Inference service deletion check ${attempt}/40 returned an invalid response"
+            sleep 15
+            continue
+         fi
+         serving_app_json=$(jq -c --arg env_name "$env_name" '
+           first(.apps[]? | select(.environmentName == $env_name)) // empty
+         ' <<<"$serving_app_list")
+         if [[ -z "$serving_app_json" ]]; then
+            hol_ok "AI Inference service deleted"
+            serving_app_absent=1
+            break
+         fi
+         serving_app_status=$(jq -r '.status // "unknown"' <<<"$serving_app_json")
+         if [[ "$serving_app_status" == *"failed"* ]]; then
+            hol_warn "AI Inference service deletion reached terminal status '${serving_app_status}'; registry and compute cleanup will not start"
+            break
+         fi
+         hol_step "AI Inference service deletion check ${attempt}/40: status=${serving_app_status}"
+         sleep 15
+      done
+   fi
+
+   if [[ "$serving_app_absent" -eq 0 ]]; then
+      wait "$pid_disable" || status_disable=$?
+      hol_warn "AI Inference service still exists; preserving registry, compute cluster, and parent infrastructure"
+      return 1
+   fi
+
    chmod +x ./destroy_caii_resources.sh
-   ./destroy_caii_resources.sh $workshop_name
+   ./destroy_caii_resources.sh "$workshop_name"
+   local status_resources=$?
    
-   wait $pid_disable
-   local status_disable=$?
-   if [[ $status_disable -ne 0 ]]; then
-      hol_warn "CAI disable playbook failed during CAII teardown"
+   wait "$pid_disable" || status_disable=$?
+   if [[ "$status_disable" -ne 0 || "$status_resources" -ne 0 ]]; then
+      hol_warn "CAI teardown failed (workspace=${status_disable}, inference dependencies=${status_resources})"
       return 1
    fi
    return 0
