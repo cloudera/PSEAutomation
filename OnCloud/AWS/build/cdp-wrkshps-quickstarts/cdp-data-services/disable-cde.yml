@@ -95,10 +95,25 @@
       cloudera.cloud.de_info:
         name: "{{ workshop_name }}-cde"
       register: serstatus
-      until: (serstatus.services | default([], true) | length) == 0
+      until: >
+        (serstatus.services | default([], true) | length) == 0 or
+        (
+          (serstatus.services[0].status | default('')) is
+          search('(?i)(deletionfailed|deletefailed|error|failed)')
+        )
       retries: "{{ ds_disable_wait_retries }}"
       delay: "{{ ds_disable_wait_delay }}"
-      failed_when: (serstatus.services | default([], true) | length) > 0
+      failed_when: false
+
+    - name: Fail immediately when CDE deletion reaches a terminal failure
+      ansible.builtin.fail:
+        msg: >-
+          CDE service {{ workshop_name }}-cde deletion stopped in terminal status
+          {{ serstatus.services[0].status }}. Parent CDP Terraform deletion remains blocked
+          to prevent orphaned cloud resources.
+      when:
+        - (serstatus.services | default([], true) | length) > 0
+        - (serstatus.services[0].status | default('')) is search('(?i)(deletionfailed|deletefailed|error|failed)')
 
     - name: Verify CDE service absent via list-services
       ansible.builtin.shell: |

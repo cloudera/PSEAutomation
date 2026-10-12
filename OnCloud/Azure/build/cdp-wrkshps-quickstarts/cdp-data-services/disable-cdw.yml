@@ -249,6 +249,32 @@
           Teardown will continue and the cluster may remain until dependencies are removed.
       when: cdw_cluster_delete.failed | default(false)
 
+    - name: Allow CDW cluster deletion request to transition
+      ansible.builtin.pause:
+        seconds: 30
+      when: not (cdw_cluster_delete.failed | default(false))
+
+    - name: Refresh CDW cluster state after delete request
+      cloudera.cloud.dw_cluster_info:
+        env: "{{ cdp_env_name }}"
+      register: cdw_delete_transition
+      failed_when: false
+
+    - name: Retry unchanged CDW cluster deletion with non-force CLI
+      ansible.builtin.command:
+        argv:
+          - cdp
+          - dw
+          - delete-cluster
+          - --cluster-id
+          - "{{ cdw_cluster_id }}"
+          - --no-force
+      register: cdw_cli_delete
+      changed_when: cdw_cli_delete.rc == 0
+      when:
+        - (cdw_delete_transition.clusters | default([], true) | length) > 0
+        - (cdw_delete_transition.clusters[0].status | default('')) == 'Running'
+
     - name: Poll until CDW cluster absent for environment
       cloudera.cloud.dw_cluster_info:
         env: "{{ cdp_env_name }}"
