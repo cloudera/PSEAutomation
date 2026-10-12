@@ -38,6 +38,8 @@
     cdf_enable_api_retries: 8
     cdf_enable_retry_delay: 90
     cdf_enable_initial_delay: 90
+    cdf_environment_ready_retries: 120
+    cdf_environment_ready_delay: 30
 
   tasks:
     - name: Check and print variable status
@@ -310,6 +312,22 @@
       when:
         - not cdf_skip_enable | default(false)
         - cdp_env_desc_enable.rc == 0
+
+    - name: Wait for CDP environment to accept CDF enablement
+      ansible.builtin.shell: |
+        set -o pipefail
+        cdp environments describe-environment --environment-name "{{ cdp_env_name }}" \
+          | jq -r '.environment.status // "UNKNOWN"'
+      args:
+        executable: /bin/bash
+      register: cdf_environment_ready
+      changed_when: false
+      until: >
+        cdf_environment_ready.rc == 0 and
+        (cdf_environment_ready.stdout | default('') | trim | upper) == 'AVAILABLE'
+      retries: "{{ cdf_environment_ready_retries }}"
+      delay: "{{ cdf_environment_ready_delay }}"
+      when: not cdf_skip_enable | default(false)
 
     - name: Pause for IAM sync after env admin role assignment
       ansible.builtin.pause:

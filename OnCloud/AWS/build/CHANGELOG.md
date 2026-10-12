@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDF enable retries temporary `environment is not ready` preconditions during concurrent service provisioning, while genuine `CANCEL_ENABLE` backend operations remain terminal.
 - Healthy reruns treat `COMPUTE_CLUSTER_CREATION_IN_PROGRESS` as an existing-environment child operation: VPC/subnets are verified and CDP Terraform is skipped.
 - CAI workbench creation may run with CDW/CDE/CDF, but CAII compute-cluster, registry, and serving-app provisioning waits until all selected data-service activations complete.
+- CDF waits up to one hour for the CDP environment to return to `AVAILABLE` before submitting `enable-service`, allowing concurrent CDW/CDE activation to finish without exhausting CDF API retries.
 
 ## [4.0.0] - 2026-09-24
 
