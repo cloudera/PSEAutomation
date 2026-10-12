@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keycloak IP recovery logs no longer contaminate command-substitution results; destroy now blocks on failed IDP user/group cleanup and removes Keycloak only after parent CDP and cloud cleanup succeeds.
 - AWS Keycloak destroy supports both legacy `local_ip` and current `local_ips` persisted Terraform schemas; data-service log tailers explicitly track and stop both processes so completed jobs cannot emit stale wait lines later in the pipeline.
 - IDP teardown refreshes its persisted Ansible content before execution, so reruns use the current idempotent CDP-group handling instead of failing on a stale playbook after the Keycloak group was already removed.
+- AWS CDP Terraform destroy uses the original single direct invocation again—without the custom timeout, attempt loop, `-refresh=false`, output parsing, or automatic retries—so Terraform can complete long-running CDP and AWS deletion normally.
 
 ## [4.0.0] - 2026-09-24
 

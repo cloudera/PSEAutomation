@@ -2362,49 +2362,6 @@ hol_aws_fail_if_vpc_igw_blockers_after_prep() {
    fi
 }
 
-run_cdp_terraform_destroy() {
-   local -n destroy_args=$1
-   local max_attempts="${HOL_CDP_TERRAFORM_DESTROY_MAX_ATTEMPTS:-12}" attempt=0 output status log
-   local attempt_sec="${HOL_CDP_TERRAFORM_DESTROY_ATTEMPT_SEC:-900}" vpc_id
-
-   vpc_id=$(hol_aws_resolve_workshop_vpc_id 2>/dev/null || true)
-
-   while [[ $attempt -lt $max_attempts ]]; do
-      attempt=$((attempt + 1))
-      log=$(mktemp)
-      hol_step "Running CDP Terraform destroy (${attempt}/${max_attempts}, max ${attempt_sec}s per attempt)..."
-      if command -v timeout >/dev/null 2>&1; then
-         hol_terraform_timed "$attempt_sec" destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log"
-         status=${PIPESTATUS[0]}
-         if [[ $status -eq 124 ]]; then
-            hol_warn "CDP Terraform destroy exceeded ${attempt_sec}s (no forward progress assumed) — checking VPC leaf blockers"
-            hol_warn_terraform_igw_subnet_stuck
-            status=1
-         fi
-      else
-         hol_terraform destroy -refresh=false --auto-approve "${destroy_args[@]}" 2>&1 | tee "$log"
-         status=${PIPESTATUS[0]}
-      fi
-      output=$(cat "$log")
-      rm -f "$log"
-      if [[ $status -eq 0 ]]; then
-         return 0
-      fi
-      if grep -qiE 'Still destroying.*(aws_internet_gateway|subnet)' <<<"$output"; then
-         hol_warn_terraform_igw_subnet_stuck
-      fi
-      if terraform_output_vpc_destroy_blocker "$output" || grep -qiE 'Still destroying.*(aws_internet_gateway|subnet)' <<<"$output"; then
-         hol_warn "VPC dependency blocked CDP Terraform destroy — retrying"
-         continue
-      fi
-      return $status
-   done
-   hol_warn "CDP Terraform destroy did not complete after ${max_attempts} attempts"
-   hol_aws_trace_vpc_destroy_blockers "${vpc_id:-}"
-   hol_aws_trace_vpc_destroy_dependencies "${vpc_id:-}"
-   return 1
-}
-
 #--------------------------------------------------------------------------------------------------#
 # Function to destroy CDP Environment.
 destroy_cdp() {
@@ -2426,17 +2383,14 @@ destroy_cdp() {
    # Data service teardown is enforced by disable_data_services (playbooks + entrypoint exit on failure).
    # CDP environment deletion is not invoked here — use CDP console/CLI separately if needed; HoL destroys the quickstart VPC via Terraform.
 
-   hol_terraform init
-   local cdp_tf_destroy_args=(
-      -var "env_prefix=${workshop_name}"
-      -var "aws_region=${aws_region}"
-      -var "aws_key_pair=${aws_key_pair}"
-      -var "deployment_template=${deployment_template}"
-      -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
-   )
-   export TF_INPUT=0
+   terraform init
    hol_info "Destroying CDP Terraform stack"
-   run_cdp_terraform_destroy cdp_tf_destroy_args
+   terraform destroy --auto-approve \
+      -var "env_prefix=${workshop_name}" \
+      -var "aws_region=${aws_region}" \
+      -var "aws_key_pair=${aws_key_pair}" \
+      -var "deployment_template=${deployment_template}" \
+      -var "ingress_extra_cidrs_and_ports={cidrs = [${cdp_cidr}],ports = [443, 22]}"
    cdp_destroy_status=$?
    if [ "${cdp_destroy_status:-1}" -eq 0 ]; then
       rm -rf /userconfig/.$USER_NAMESPACE/cdp-tf-quickstarts/
