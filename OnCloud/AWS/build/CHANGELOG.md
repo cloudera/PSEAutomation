@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Healthy reruns treat `COMPUTE_CLUSTER_CREATION_IN_PROGRESS` as an existing-environment child operation: VPC/subnets are verified and CDP Terraform is skipped.
 - CAI workbench creation may run with CDW/CDE/CDF, but CAII compute-cluster, registry, and serving-app provisioning waits until all selected data-service activations complete.
 - CDF waits up to one hour for the CDP environment to return to `AVAILABLE` before submitting `enable-service`, allowing concurrent CDW/CDE activation to finish without exhausting CDF API retries.
+- CAI workbench provisioning is tracked in the shared data-service heartbeat when CAII is enabled, so CDW/CDE/CDF/CAI progress and completion are reported together.
 
 ## [4.0.0] - 2026-09-24
 

@@ -99,24 +99,7 @@ provision)
         cdp_idp_setup_user || hol_provision_failed "$workshop_name"
     fi
 
-    parallel_pids=()
-    if [ "$provision_caii" == "yes" ]; then
-        sleep 30
-        hol_subsection "CAI workbench provisioning" "🧠"
-        deploy_single_data_service cai &
-        parallel_pids+=($!)
-    fi
-
-    hol_enable_data_services &
-    parallel_pids+=($!)
-
-    parallel_failed=0
-    for pid in "${parallel_pids[@]}"; do
-        wait "$pid" || parallel_failed=1
-    done
-    if [ "$parallel_failed" -ne 0 ]; then
-        hol_provision_failed "$workshop_name"
-    fi
+    hol_enable_data_services || hol_provision_failed "$workshop_name"
 
     if [ "$provision_caii" == "yes" ]; then
         hol_subsection "CAII compute and inference provisioning" "🧠"

@@ -3055,11 +3055,15 @@ hol_enable_data_services() {
       token=$(hol_normalize_data_service_token "$service")
       [[ -z "$token" ]] && continue
       if [[ "$token" == "cai" && "$provision_caii" == "yes" ]]; then
-         hol_skip "CAI skipped in data services list — provisioned by CAII"
+         hol_info "CAI selected with CAII — tracking it in the shared data-service phase"
          continue
       fi
       services_to_deploy+=("$token")
    done
+
+   if [[ "$provision_caii" == "yes" ]]; then
+      services_to_deploy+=("cai")
+   fi
 
    if [ "${#services_to_deploy[@]}" -eq 0 ]; then
       hol_info "No data services selected"
@@ -3085,7 +3089,11 @@ hol_enable_data_services() {
    hol_info "Services: ${services_to_deploy[*]} (live logs: /userconfig/.${workshop_name}/logs/)"
 
    for service in "${services_to_deploy[@]}"; do
-      deploy_single_data_service "$service" &
+      if [[ "$service" == "cai" && "$provision_caii" == "yes" ]]; then
+         (sleep 30; deploy_single_data_service "$service") &
+      else
+         deploy_single_data_service "$service" &
+      fi
       pids+=($!)
    done
 
