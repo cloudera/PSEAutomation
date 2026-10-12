@@ -192,6 +192,7 @@ hol_parallel_start() {
 }
 
 HOL_LOG_TAILER_PIDS=()
+HOL_LOG_TAILER_DIRS=()
 
 hol_service_log_file_by_tag() {
    local service_tag="$1"
@@ -271,25 +272,38 @@ PY
 
 hol_start_service_log_tailer() {
    local tag="$1"
-   local log_file
+   local log_file tail_dir fifo
    log_file="$(hol_service_log_file_by_tag "$tag")"
    touch "$log_file"
 
+   tail_dir=$(mktemp -d "/tmp/hol-${tag}-tail.XXXXXX")
+   fifo="${tail_dir}/stream"
+   mkfifo "$fifo"
+   tail -n 0 -F "$log_file" >"$fifo" 2>/dev/null &
+   HOL_LOG_TAILER_PIDS+=($!)
    (
-      tail --pid="$BASHPID" -n 0 -F "$log_file" 2>/dev/null | while IFS= read -r line || [[ -n "$line" ]]; do
+      while IFS= read -r line || [[ -n "$line" ]]; do
          hol_print_tagged_ansible_log_line "$tag" "$line"
-      done
+      done <"$fifo"
    ) &
    HOL_LOG_TAILER_PIDS+=($!)
+   HOL_LOG_TAILER_DIRS+=("$tail_dir")
 }
 
 hol_stop_service_log_tailers() {
-   local pid
+   local pid tail_dir
    for pid in "${HOL_LOG_TAILER_PIDS[@]}"; do
       kill "$pid" 2>/dev/null || true
    done
+   for pid in "${HOL_LOG_TAILER_PIDS[@]}"; do
+      wait "$pid" 2>/dev/null || true
+   done
+   for tail_dir in "${HOL_LOG_TAILER_DIRS[@]}"; do
+      rm -f "${tail_dir}/stream"
+      rmdir "$tail_dir" 2>/dev/null || true
+   done
    HOL_LOG_TAILER_PIDS=()
-   sleep 1.2
+   HOL_LOG_TAILER_DIRS=()
 }
 
 # Wait for every background data-service job (continue-on-failure). Nameref arrays:

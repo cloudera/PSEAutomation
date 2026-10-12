@@ -2557,6 +2557,9 @@ cdp_idp_user_teardown() {
    
    local kc_ansible_dir="/userconfig/.$USER_NAMESPACE/keycloak_ansible_config"
    local user_teardown_status=0
+   if [[ -d "$kc_ansible_dir" && -d "$KC_ANS_CONFIG_DIR" ]]; then
+      cp -R "$KC_ANS_CONFIG_DIR/." "$kc_ansible_dir/"
+   fi
    KEYCLOAK_SERVER_IP=$(resolve_keycloak_server_ip optional || true)
    if [[ -n "$KEYCLOAK_SERVER_IP" && -d "$kc_ansible_dir" && -f "$kc_ansible_dir/keycloak_hol_user_teardown.yml" ]]; then
       hol_info "Keycloak server IP: $KEYCLOAK_SERVER_IP"
