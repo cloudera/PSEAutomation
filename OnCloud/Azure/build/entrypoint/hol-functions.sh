@@ -95,7 +95,7 @@ resolve_keycloak_server_ip() {
    if [[ -f "$legacy" ]]; then
       ip=$(tr -d '[:space:]' <"$legacy")
       if [[ -n "$ip" ]]; then
-         hol_warn "Using legacy Keycloak IP from ${legacy}; saving per-workshop copy at ${path}"
+         hol_warn "Using legacy Keycloak IP from ${legacy}; saving per-workshop copy at ${path}" >&2
          hol_save_keycloak_ip "$ip"
          printf '%s\n' "$ip"
          return 0
@@ -104,7 +104,7 @@ resolve_keycloak_server_ip() {
 
    ip=$(hol_keycloak_ip_from_terraform 2>/dev/null || true)
    if [[ -n "$ip" ]]; then
-      hol_warn "Keycloak IP file missing — recovered from Terraform output in /userconfig/.${workshop_name}/keycloak_terraform_config"
+      hol_warn "Keycloak IP file missing — recovered from Terraform output in /userconfig/.${workshop_name}/keycloak_terraform_config" >&2
       hol_save_keycloak_ip "$ip"
       printf '%s\n' "$ip"
       return 0
@@ -2841,13 +2841,11 @@ destroy_hol_infra() {
    export HOL_CDP_DESTROY_STRICT=1
    keycloak_destroy_status=0
    cdp_destroy_status=0
-   if [[ "$provision_keycloak" == "yes" ]]; then
+   destroy_cdp
+   cdp_destroy_status=$?
+   if [[ "$cdp_destroy_status" -eq 0 && "$provision_keycloak" == "yes" ]]; then
       destroy_keycloak
       keycloak_destroy_status=$?
-   fi
-   if [[ "$keycloak_destroy_status" -eq 0 ]]; then
-      destroy_cdp
-      cdp_destroy_status=$?
    fi
 
    if [[ "$cdp_destroy_status" -eq 0 && "$keycloak_destroy_status" -eq 0 ]]; then
@@ -2940,17 +2938,22 @@ cdp_idp_user_teardown() {
    hol_subsection "Deleting IDP users & group" "👥"
    
    local kc_ansible_dir="/userconfig/.$USER_NAMESPACE/keycloak_ansible_config"
+   local user_teardown_status=0
    KEYCLOAK_SERVER_IP=$(resolve_keycloak_server_ip optional || true)
    if [[ -n "$KEYCLOAK_SERVER_IP" && -d "$kc_ansible_dir" && -f "$kc_ansible_dir/keycloak_hol_user_teardown.yml" ]]; then
       hol_info "Keycloak server IP: $KEYCLOAK_SERVER_IP"
       cd "$kc_ansible_dir"
-      hol_ansible_playbook keycloak_hol_user_teardown.yml --extra-vars \
+      if ! hol_ansible_playbook keycloak_hol_user_teardown.yml --extra-vars \
          "keycloak__admin_username=admin \
          keycloak__admin_password=$keycloak__admin_password \
          keycloak__domain=https://$KEYCLOAK_SERVER_IP \
          hol_keycloak_realm=master \
-         hol_session_name=$workshop_name-az-cdp-user-group"
-      sleep 10
+         hol_session_name=$workshop_name-az-cdp-user-group"; then
+         user_teardown_status=1
+         hol_warn "Keycloak user/group teardown failed; parent infrastructure and Keycloak will be preserved"
+      else
+         sleep 10
+      fi
    else
       hol_skip "Keycloak IDP not configured for this workshop — skipping user teardown playbook"
    fi
@@ -2961,6 +2964,7 @@ cdp_idp_user_teardown() {
    else
       hol_skip "SAML provider $workshop_name not found (already removed)"
    fi
+   return "$user_teardown_status"
 }
 #--------------------------------------------------------------------------------------------------#
 # Function to count elements in a JSON array variable

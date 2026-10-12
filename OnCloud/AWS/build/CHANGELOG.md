@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CAI workbench provisioning is tracked in the shared data-service heartbeat when CAII is enabled, so CDW/CDE/CDF/CAI progress and completion are reported together.
 - Teardown stops promptly on terminal CDE deletion failures and retries a CDW cluster that remains `Running` after the Ansible delete request through one explicit non-force CLI request.
 - CDE teardown treats environment-scoped `ClusterDeletionCompleted` tombstones as deleted, matching the UI instead of polling a completed control-plane record.
+- Keycloak IP recovery logs no longer contaminate command-substitution results; destroy now blocks on failed IDP user/group cleanup and removes Keycloak only after parent CDP and cloud cleanup succeeds.
 
 ## [4.0.0] - 2026-09-24
 

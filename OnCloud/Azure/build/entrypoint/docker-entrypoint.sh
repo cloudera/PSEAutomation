@@ -119,7 +119,10 @@ destroy)
         hol_destroy_failed "$workshop_name"
     fi
     if [ "$provision_keycloak" == "yes" ]; then
-        cdp_idp_user_teardown
+        if ! cdp_idp_user_teardown; then
+            hol_warn "IDP user/group teardown failed — preserving CDP, Azure, and Keycloak infrastructure for a safe retry"
+            hol_destroy_failed "$workshop_name"
+        fi
     fi
     destroy_hol_infra
     if [ $? -ne 0 ]; then
