@@ -117,8 +117,21 @@
 
     - name: Verify CDE service absent via list-services
       ansible.builtin.shell: |
-        cdp de list-services 2>/dev/null | jq -r --arg name "{{ workshop_name }}-cde" '
-          [.services[]? | select((.name // .serviceName // "") == $name)] | length'
+        cdp de list-services 2>/dev/null | jq -r \
+          --arg name "{{ workshop_name }}-cde" \
+          --arg env "{{ cdp_env_name }}" '
+          [
+            .services[]?
+            | select(
+                (.name // .serviceName // "") == $name
+                and (.environmentName // "") == $env
+                and (
+                  (.status // "" | ascii_downcase)
+                  | test("^(cluster)?deletioncompleted$|^deleted$")
+                  | not
+                )
+              )
+          ] | length'
       register: cde_list_count
       changed_when: false
       until: (cde_list_count.stdout | default('1') | trim | int) == 0

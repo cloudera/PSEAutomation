@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CDF waits up to one hour for the CDP environment to return to `AVAILABLE` before submitting `enable-service`, allowing concurrent CDW/CDE activation to finish without exhausting CDF API retries.
 - CAI workbench provisioning is tracked in the shared data-service heartbeat when CAII is enabled, so CDW/CDE/CDF/CAI progress and completion are reported together.
 - Teardown stops promptly on terminal CDE deletion failures and retries a CDW cluster that remains `Running` after the Ansible delete request through one explicit non-force CLI request.
+- CDE teardown treats environment-scoped `ClusterDeletionCompleted` tombstones as deleted, matching the UI instead of polling a completed control-plane record.
 
 ## [4.0.0] - 2026-09-24
 
