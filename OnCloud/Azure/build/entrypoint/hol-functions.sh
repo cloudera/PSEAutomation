@@ -3423,7 +3423,7 @@ deploy_single_data_service() {
       hol_init_service "cde"
       DEFAULT_CDE_INSTANCE_TYPE="Standard_D8s_v5"
       DEFAULT_CDE_MIN_INSTANCES=0
-      DEFAULT_CDE_MAX_INSTANCES=25
+      DEFAULT_CDE_MAX_INSTANCES=3
       DEFAULT_CDE_SPARK_VERSION="AUTO"
       DEFAULT_CDE_VC_TIER="CORE"
       if [[ -n "${cde_instance_type:-}" ]]; then
