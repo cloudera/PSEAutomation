@@ -5,6 +5,7 @@ env_name="${workshop_name}-cdp-env"
 cluster_name="${workshop_name}-compute-cluster"
 MAX_VERIFY_ATTEMPTS=40
 VERIFY_SLEEP_SECONDS=15
+COMPUTE_DELETE_POLL_ONLY=0
 
 echo "🔁 Starting cleanup for environment: $env_name"
 
@@ -22,6 +23,10 @@ get_ai_registry_status() {
     | select(.environmentName == $env_name)
     | .status
   ' | head -n 1
+}
+
+ai_registry_delete_in_progress() {
+  [[ "$(get_ai_registry_status)" == "deprovision:started" ]]
 }
 
 ai_registry_exists() {
@@ -43,6 +48,11 @@ delete_ai_registry() {
     return 0
   fi
 
+  if [[ "$ai_registry_status" == "deprovision:started" ]]; then
+    echo "⏳ AI Registry deletion is already in progress (status: $ai_registry_status); polling for absence."
+    return 0
+  fi
+
   echo "🗑️ Deleting AI Registry (status: ${ai_registry_status:-unknown}): $ai_registry_crn"
   delete_output=$(cdp ml delete-model-registry --model-registry-crn "$ai_registry_crn" --no-force 2>&1)
   delete_status=$?
@@ -51,11 +61,16 @@ delete_ai_registry() {
     return 0
   fi
 
-  printf '%s\n' "$delete_output"
+  if grep -qi "cannot be deleted when it is in the status: 'deprovision:started'" <<<"$delete_output"; then
+    echo "⏳ AI Registry entered deprovision:started while deletion was requested; polling for absence."
+    return 0
+  fi
   if grep -qi 'environment is not ready' <<<"$delete_output"; then
+    printf '%s\n' "$delete_output"
     echo "❌ AI Registry deletion is blocked because the CDP environment is transitioning. Retry destroy after the environment is ready."
     return 2
   fi
+  printf '%s\n' "$delete_output"
   echo "⚠️ AI Registry delete command failed for CRN: $ai_registry_crn"
   return 1
 }
@@ -77,11 +92,17 @@ delete_compute_cluster() {
       echo "✅ Compute Cluster delete request submitted."
       return 0
     fi
-    printf '%s\n' "$delete_output"
+    if grep -qiE 'error taking PG advisory lock|lock err' <<<"$delete_output"; then
+      COMPUTE_DELETE_POLL_ONLY=1
+      echo "⏳ Compute Cluster deletion operation is already active (backend lock held); polling for absence."
+      return 0
+    fi
     if grep -qi 'environment is not ready' <<<"$delete_output"; then
+      printf '%s\n' "$delete_output"
       echo "❌ Compute Cluster deletion is blocked because the CDP environment is transitioning. Retry destroy after the environment is ready."
       return 2
     fi
+    printf '%s\n' "$delete_output"
     echo "⚠️ Compute Cluster delete command failed for CRN: $compute_cluster_crn"
     return 1
   fi
@@ -122,7 +143,7 @@ for attempt in $(seq 1 "$MAX_VERIFY_ATTEMPTS"); do
     still_exists=1
 
     # Re-trigger delete if registry is still present after the first attempt
-    if [[ "$attempt" -gt 1 && $((attempt % 4)) -eq 0 ]]; then
+    if [[ "$attempt" -gt 1 && $((attempt % 4)) -eq 0 ]] && ! ai_registry_delete_in_progress; then
       echo "🔁 Re-attempting AI Registry deletion..."
       delete_ai_registry
       delete_status=$?
@@ -137,7 +158,7 @@ for attempt in $(seq 1 "$MAX_VERIFY_ATTEMPTS"); do
     echo "⏳ Attempt ${attempt}/${MAX_VERIFY_ATTEMPTS}: Compute Cluster still exists..."
     still_exists=1
 
-    if [[ "$attempt" -gt 1 && $((attempt % 4)) -eq 0 ]]; then
+    if [[ "$attempt" -gt 1 && $((attempt % 4)) -eq 0 && "$COMPUTE_DELETE_POLL_ONLY" -eq 0 ]]; then
       echo "🔁 Re-attempting Compute Cluster deletion..."
       delete_compute_cluster
       delete_status=$?

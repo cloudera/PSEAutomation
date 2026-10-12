@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IDP teardown refreshes its persisted Ansible content before execution, so reruns use the current idempotent CDP-group handling instead of failing on a stale playbook after the Keycloak group was already removed.
 - AWS CDP Terraform destroy uses the original single direct invocation again—without the custom timeout, attempt loop, `-refresh=false`, output parsing, or automatic retries—so Terraform can complete long-running CDP and AWS deletion normally.
 - CAII teardown is tracked as `CAI` by the shared data-service manager, so workspace, registry, compute-cluster, and serving cleanup appears alongside CDW/CDE/CDF in destroy heartbeats and final status.
+- CAII teardown treats AI Registry `deprovision:started` and compute advisory-lock responses as accepted in-progress deletion states: it polls quietly instead of reissuing invalid requests or printing expected backend errors.
 
 ## [4.0.0] - 2026-09-24
 
