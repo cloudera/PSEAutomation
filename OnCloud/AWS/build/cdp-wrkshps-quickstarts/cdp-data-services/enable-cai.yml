@@ -185,7 +185,20 @@
         msg: "Successfully provisioned workspace {{ workshop_name }}-cai-ws in environment {{ cdp_env_name }}."
       when: ml_ws_status.stdout is defined and ml_ws_status.stdout in ["installation:finished", "modify:finished", "provision:finished"]
 
+    - name: Get CAI workspace provisioning failure details
+      ansible.builtin.shell: |
+        cdp ml describe-workspace \
+          --environment-name "{{ cdp_env_name }}" \
+          --workspace-name "{{ workshop_name }}-cai-ws" 2>/dev/null \
+          | jq -r '.workspace.failureMessage // "CDP did not return a workspace failure message."'
+      register: workspace_failure_details
+      changed_when: false
+      failed_when: false
+      when: ml_ws_status.stdout is defined and ml_ws_status.stdout is search('failed')
+
     - name: Fail task on Workspace Creation Failed
       fail:
-        msg: "Workspace Provisioning Got Failed."
+        msg: >-
+          Workspace provisioning failed (status: {{ ml_ws_status.stdout }}):
+          {{ workspace_failure_details.stdout | default('CDP did not return a workspace failure message.') }}
       when: ml_ws_status.stdout is defined and ml_ws_status.stdout not in ["installation:finished", "modify:finished", "provision:finished"]

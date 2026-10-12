@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CAII teardown is tracked as `CAI` by the shared data-service manager, so workspace, registry, compute-cluster, and serving cleanup appears alongside CDW/CDE/CDF in destroy heartbeats and final status.
 - CAII teardown treats AI Registry `deprovision:started` and compute advisory-lock responses as accepted in-progress deletion states: it polls quietly instead of reissuing invalid requests or printing expected backend errors.
 - AI Inference teardown now verifies the serving app is absent before deleting its registry and named compute cluster; terminal removal failures preserve dependencies and parent infrastructure for a safe retry, while independent CAI workspace cleanup continues in parallel.
+- Failed CAI workspace provisioning now reports CDP's detailed `failureMessage` (for example, unavailable GPU instance types by subnet AZ) instead of only a generic playbook failure.
 
 ## [4.0.0] - 2026-09-24
 
