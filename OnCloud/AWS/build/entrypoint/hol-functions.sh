@@ -2671,7 +2671,7 @@ deploy_cde() {
    number_vc_to_create=$((($number_of_workshop_users / 10) + ($number_of_workshop_users % 10 > 0)))
    DEFAULT_CDE_INSTANCE_TYPE="m5.2xlarge"
    DEFAULT_CDE_MIN_INSTANCES=0
-   DEFAULT_CDE_MAX_INSTANCES=3
+   DEFAULT_CDE_MAX_INSTANCES=40
    if [ -z "${CDE_INSTANCE_TYPE+x}" ] || [ -z "$CDE_INSTANCE_TYPE" ]; then
       cde_instance_type=$DEFAULT_CDE_INSTANCE_TYPE
    else
@@ -2957,7 +2957,7 @@ deploy_single_data_service() {
       hol_init_service "cde"
       DEFAULT_CDE_INSTANCE_TYPE="m5.2xlarge"
       DEFAULT_CDE_MIN_INSTANCES=0
-      DEFAULT_CDE_MAX_INSTANCES=3
+      DEFAULT_CDE_MAX_INSTANCES=40
       DEFAULT_CDE_SPARK_VERSION="AUTO"
       DEFAULT_CDE_VC_TIER="CORE"
       DEFAULT_CDE_INITIAL_INSTANCES=1

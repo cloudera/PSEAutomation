@@ -37,11 +37,11 @@ DATALAKE_VERSION:7.3.2
 #CDW_TRINO_INSTANCE_TYPE:AUTO
 #CDW_AUTOSUSPEND:true
 #CDW_AUTOSUSPEND_TIMEOUT_SECONDS:300
-# CDE (cdp de enable-service): sizing applies to CORE or ALLP per CDE_VC_TIER; inactive tier is 0/0/0 in enable-cde.yml.
+# CDE (cdp de enable-service): CDE_MAX_INSTANCES sets max for both Core and All Purpose pools; min/initial apply only to active CDE_VC_TIER (inactive tier min/initial 0).
 #CDE_INSTANCE_TYPE:m5.2xlarge
 #CDE_INITIAL_INSTANCES:1
 #CDE_MIN_INSTANCES:0
-#CDE_MAX_INSTANCES:3
+#CDE_MAX_INSTANCES:40
 #CDE_SPARK_VERSION:AUTO
 #CDE_VC_TIER:CORE
 #CAI_WS_INSTANCE_TYPE:m5.2xlarge

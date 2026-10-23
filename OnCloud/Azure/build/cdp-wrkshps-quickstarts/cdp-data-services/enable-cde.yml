@@ -12,7 +12,7 @@
       - "Standard_D16s_v5"
     initial_instances: 1
     minimum_instances: 0
-    maximum_instances: 25
+    maximum_instances: 40
     spark_version: "SPARK3_5_4"
     spark_version_requested: "AUTO"
     datalake_version: ""
@@ -136,14 +136,12 @@
       ansible.builtin.set_fact:
         cde_core_minimum_instances: >-
           {{ (minimum_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
-        cde_core_maximum_instances: >-
-          {{ (maximum_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
+        cde_core_maximum_instances: "{{ maximum_instances | int }}"
         cde_core_initial_instances: >-
           {{ (initial_instances | int) if (vc_tier | default('CORE') | upper) == 'CORE' else 0 }}
         cde_allp_minimum_instances: >-
           {{ (minimum_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
-        cde_allp_maximum_instances: >-
-          {{ (maximum_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
+        cde_allp_maximum_instances: "{{ maximum_instances | int }}"
         cde_allp_initial_instances: >-
           {{ (initial_instances | int) if (vc_tier | default('CORE') | upper) == 'ALLP' else 0 }}
       when: not cde_service_present

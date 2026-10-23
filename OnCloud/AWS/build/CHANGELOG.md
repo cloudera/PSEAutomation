@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CDE Core and All Purpose max instances default 40 (was 3) in `enable-cde.yml`, `hol-functions.sh`, Jenkins DeployHoL/PollSCM, and `configfile.example`; `CDE_MAX_INSTANCES` applies to both instance groups; min/initial still follow active `CDE_VC_TIER` (inactive tier min/initial 0).
+
 ### Added
 - Trino Virtual Warehouses are created alongside Hive and Impala, using a live-validated CDP instance type; auto-suspend is enabled for all three engines by default and is configurable.
 

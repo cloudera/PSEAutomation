@@ -37,7 +37,7 @@ pipeline {
         string(name: 'CDE_INSTANCE_TYPE', defaultValue: 'Standard_D8s_v5', description: 'CDE Instance type (e.g., Standard_D8s_v5)')
         string(name: 'CDE_INITIAL_INSTANCES', defaultValue: '1', description: 'Initial number of CDE instances to deploy')
         string(name: 'CDE_MIN_INSTANCES', defaultValue: '0', description: 'Minimum number of CDE instances to scale down to')
-        string(name: 'CDE_MAX_INSTANCES', defaultValue: '3', description: 'Maximum number of CDE instances to scale up to')
+        string(name: 'CDE_MAX_INSTANCES', defaultValue: '40', description: 'Max instances for both Core and All Purpose CDE pools (min/initial follow CDE_VC_TIER)')
         string(name: 'CAI_WS_INSTANCE_TYPE', defaultValue: 'Standard_D8s_v5', description: 'CAI Workspace Instance Type')
         string(name: 'CAI_MIN_INSTANCES', defaultValue: '1', description: 'Minimum number of CAI instances')
         string(name: 'CAI_MAX_INSTANCES', defaultValue: '10', description: 'Maximum number of CAI instances')
