@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "scope": {"provider": "aws", "account": "fixture-account", "tags": {"Workshop": "fixture"}},
+  "source": "fixture://synthetic-CUR-NOT-A-BILL",
+  "as_of": "2026-10-25T00:00:00Z",
+  "currency": "USD",
+  "period": {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"},
+  "metric": "unblended_cost",
+  "complete": true,
+  "coverage_note": "Complete only for this synthetic scoped fixture.",
+  "credits_policy": "separate_lines",
+  "lines": [
+    {
+      "line_id": "charge-1", "resource_id": "i-fixture", "meter": "compute",
+      "region": "us-east-1", "kind": "charge", "amount": "2.5",
+      "period": {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"}
+    },
+    {
+      "line_id": "credit-1", "charge_id": "charge-1",
+      "resource_id": "i-fixture", "meter": "compute",
+      "region": "us-east-1", "kind": "credit", "amount": "-0.5",
+      "period": {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"}
+    }
+  ]
+}

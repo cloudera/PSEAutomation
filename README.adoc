@@ -11,6 +11,9 @@ This repository is structured into distinct modules that provide building blocks
 
 == Documentation
 
+Offline infrastructure estimates and separate billed actuals: link:CostReporting/README.adoc[Cost reporting].
+This opt-in tool consumes exported evidence; it never provisions resources or queries cloud credentials.
+
 Each module includes a concise runbook-style `README.adoc` for day-to-day use. Long-form reference material lives in link:docs/README.adoc[`docs/`].
 
 |===

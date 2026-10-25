@@ -1,0 +1,335 @@
+= Offline infrastructure cost reports
+:toc:
+:toclevels: 2
+
+Python 3.9+ standard library only. Additive, opt-in reporting; no deployment entrypoint,
+container, configuration key, existing Jenkins stage, or existing artifact name is changed.
+No credentials, cloud SDKs, API requests, Terraform execution, provisioning, or service
+commands are used. No rates are bundled for production. Test prices are *synthetic*.
+
+== Audited repository scope
+
+|===
+| Workflow / source | Infrastructure-backed scope | Boundaries
+
+| `OnCloud/AWS/build/entrypoint/hol-functions.sh`, `cdp-wrkshps-quickstarts/cdp-kc-config/keycloak_terraform_config/main.tf`
+| CDP environment/data lake and CAI/CDW/CDE/CDF infrastructure; optional Keycloak EC2/root EBS/public IPv4; storage/networking
+| The scripts fetch external quickstarts and call managed services. Their repositories were not accessed.
+Service booleans, AUTO sizes, min/max/autoscaling counts and user counts are not inventory.
+Use actual provider inventory/usage exports for managed children, or exported local Terraform resources where present.
+
+| `OnCloud/Azure/build/entrypoint/hol-functions.sh`, Keycloak Terraform in the corresponding Azure directory
+| Managed CDP children, VM/disks/public IP, storage/NFS, networking
+| Linux VM compute is recognized. Disk tier/transactions, public IP, Azure Files and other resources remain unpriced
+unless normalized provider evidence is supplied. Identity/RBAC/storage lifecycle configuration is not a second infrastructure charge.
+
+| `PvC-InfraDeployer/terraform-code/cloudera-pvc-terraform/modules/ec2-instance/main.tf`, `modules/elastic-ip`, `modules/s3-backend`, `UI-webapp/infra/terraform/main.tf`
+| Actual master/worker/data-service instances, EBS, EIPs; state S3/DynamoDB; UI deployment infrastructure
+| Walk expanded Terraform resources and child modules, not default counts or tfvars guesses.
+The wrapper clones external automation; no coverage of that missing repository is claimed.
+S3/DynamoDB usage and unrecognized infrastructure are explicit unknowns.
+
+| `Utilities/terraform/ec2/main.tf`, `K8SOperators/overrides`, `k8s-operators-demos`
+| Optional operator EC2 host and storage; underlying existing Kubernetes nodes/control plane/PVs/LBs
+| Manifests, replicas, Helm releases, LDAP/configuration/upload/cleanup utilities are not separate VMs.
+Do not add Kubernetes requests on top of the same node cost. EKS/existing clusters require provider inventory.
+
+| `ClusterValidation/launcher/container/launcher.py`
+| Temporary EC2 runner/storage while it exists
+| Import its provider/Terraform inventory if available. No launcher invocation by this tool.
+Participant AMPs and TPCDS scripts can consume existing compute/storage but are not separate infrastructure.
+|===
+
+All reports cover *one provider, account (Azure subscription), tag filter, currency and half-open UTC
+report period*. Create separate reports for other scopes/periods/currencies; never sum overlapping windows
+or treat this tool as a currency converter. Within that scope use each physical resource + canonical meter
+once, including shared resources. Use a single owner for shared costs; allocations/markups are unsupported.
+Plan addresses are not physical IDs and must never be merged with inventory rows for the same resource.
+
+== Output contract and meaning
+
+`report.json` has integer `schema_version=1`, `metadata`, `resources`, `estimates`, `actuals`,
+`coverage`, `warnings`, `groups`, and `evidence`. Monetary/quantity values are decimal strings or JSON `null`,
+not floating-point numbers. Timestamp inputs require ISO 8601 with timezone; use UTC `Z` consistently.
+Periods are `[start,end)`; billing lines must fit wholly inside the report period, with no clipping/proration.
+
+* *ESTIMATE:* actual inventoried or explicitly planned usage quantities multiplied by matching exported provider
+prices. Matching requires region + service + SKU + billing unit + commercial terms; OS/tenancy/offer must not be inferred
+from a VM size or AMI. Every rate has source, currency, as-of timestamp and a declared validity period covering the entire report.
+This is a pinned-price scenario, not a live quote, negotiated bill or forecast of autoscaling usage.
+* *BILLED actuals:* independently supplied provider export, same declared scope/currency/report period,
+one metric (`unblended_cost`, `net_unblended_cost` or Azure `actual_cost`), source, as-of, freshness age,
+completeness note, and credits policy. Amortized, forecast, reservation allocation and blended metrics are unsupported.
+No export means `unavailable`, with null amounts; it does not trigger credential discovery.
+* Unknown price or quantity is `null`, not zero. `priced_subtotal` sums only priced rows; `total` is null if any meter is
+unknown or an exclusion exists. No priced rows means null subtotal. Count-based coverage is *not spend coverage*.
+An inventory can be complete only by the evidence owner's explicit declaration; the tool cannot prove discovery is exhaustive.
+The Terraform adapter always adds a full-cloud-coverage exclusion.
+* Decimal arithmetic uses precision 80. Each monetary line is rounded half-even to six fractional currency units,
+then subtotals sum those displayed lines. This is reconciliation precision, not invoice minor-unit rounding.
+Inputs allow up to 18 integer and 12 fractional digits; scientific notation/nonfinite/negative estimate usage/rates are errors.
+Terraform-derived usage is rounded half-even to 12 fractional digits, stated in assumptions.
+* TXT is a tabular ledger plus full scope/evidence/coverage/actuals-summary metadata; CSV uses the same ledger.
+`ESTIMATE_*` and `BILLED_*` summary rows are not additional charges. Never sum summary rows or estimates with actuals.
+CSV empty numeric cells and TXT `null` mean unknown. JSON is the authoritative full evidence format.
+* Duplicate resource/meters, ambiguous prices, duplicate billing line IDs, overlapping charge windows for a canonical
+resource/meter, out-of-period billing, mixed scope/currency and invalid credit references fail explicitly with exit 2.
+Different SKU/unit/commercial meters must have distinct canonical meter names. Do not rename a meter to bypass overlap detection.
+
+=== Infrastructure detail and reconciling rollups
+
+Each ledger row includes resource identity, role (if evidenced), instance type/SKU, period hours,
+usage unit/quantity, unit price, period amount and optional monthly-scenario amount.
+Optional `specs` keys are `role`, `vcpu`, `memory_gib`, `disk_type`, `disk_gb`, `iops`,
+`throughput_mbps`, and `source`; numeric specs are decimal strings. Non-null specs require a source.
+CPU/RAM are never guessed from a size name; absent specs stay null. Disk capacity/specs do not imply
+that extra IOPS/throughput charges were priced: those need distinct usage meters and price evidence.
+LB/NAT/public IP/network resources use their own evidenced hourly, GB, request, or other meters;
+the normalized contract accepts those units, but there is no native network discovery/price adapter.
+
+`groups` partition the estimate ledger by role/specs, region, service, SKU, unit, terms and meter.
+Each group contains distinct `resource_count`, `node_count` only for canonical `compute` meters,
+per-node vCPU/RAM, group vCPU/RAM where known, summed usage, unit price, subtotal/nullable total and
+individual member amounts. Groups sum to the period `priced_subtotal`; they are not extra charges.
+Coverage counts physical resources separately from resource-meters and compute nodes. Never sum
+storage counts/usage quantities into node counts, nor sum GB and hour quantities across groups.
+JSON preserves member detail; CSV/TXT have separate `ESTIMATE_GROUP` rollup rows.
+
+Monthly figures exist *only* with explicit `metadata.monthly_hours` (positive decimal string) and
+`metadata.monthly_assumption` (nonempty explanation). For each priced row the scenario is
+`rate * period_usage * monthly_hours / period_hours`, rounded once. The assumption must justify
+uniform usage at that intensity for the specified hours; this is not a calendar-month bill.
+Each compute member's `monthly_amount` is its per-node projection; group monthly sums reconcile to
+`estimates.monthly_scenario.priced_subtotal`. Unknowns/exclusions still make the scenario total null.
+CSV/TXT keep `monthly_amount`, `monthly_hours` and `MONTHLY_SCENARIO_*` summaries separate from
+period `amount`, `period_hours` and actual billed lines. Do not add these different-period figures.
+
+Credits are negative/zero rows referencing an included charge with identical resource, meter, region and period.
+`credits_policy` is `separate_lines`, `included_in_amounts` (no additional credit lines permitted), or
+`excluded_or_unknown` (billing must be incomplete). Do not net credits into a charge and also submit them separately.
+Incomplete empty billing has null subtotal; a complete empty provider export can establish a genuine zero.
+Account-level/unallocated credits, tax or purchases without identifiable attribution cannot be guessed:
+use a separate appropriately scoped billing analysis or mark billing incomplete/unavailable.
+
+== Private input paths and editing checklist
+
+Run from the repository root. Obtain already exported files through your authorized offline evidence process;
+this runbook deliberately supplies no cloud API/credential/deployment commands.
+Never copy state, plans, credential-bearing exports, reports or private account details into Git/shared logs.
+Raw Terraform show JSON can contain secrets even when marked sensitive. Keep it private; the adapter emits only allowlisted fields.
+`private-cost-inputs/` and `cost-report-*/` at repository root are ignored. Other output paths are not automatically ignored.
+
+[source,bash]
+----
+umask 077
+mkdir -m 700 private-cost-inputs
+# Skeletons only: replace every fixture value before using real evidence.
+cp CostReporting/tests/fixtures/terraform-context.json private-cost-inputs/terraform-context.json
+cp CostReporting/tests/fixtures/price-context.json private-cost-inputs/price-context.json
+cp CostReporting/tests/fixtures/inventory.json private-cost-inputs/inventory.json
+cp CostReporting/tests/fixtures/pricing.json private-cost-inputs/pricing.json
+cp CostReporting/tests/fixtures/billing.json private-cost-inputs/billing.json
+vi private-cost-inputs/terraform-context.json
+vi private-cost-inputs/price-context.json
+vi private-cost-inputs/inventory.json
+vi private-cost-inputs/pricing.json
+vi private-cost-inputs/billing.json
+----
+
+In `vi`: `i` edits, `Esc`, `:wq`, Enter saves; `Esc`, `:q!`, Enter discards.
+These are *reporting inputs*, not edits to deployment configfiles or generated deployment state.
+For real reports, use either normalized inventory or adapter output, not both; remove unused fixture files
+(especially billing) from your private input directory so Jenkins cannot pick up synthetic actuals.
+Adapter outputs must be new paths: an existing skeleton is not overwritten.
+
+|===
+| File | Required review
+| `inventory.json`
+| `schema_version`, `metadata.generated_at`, `metadata.scope.provider/account/tags`, `metadata.currency`,
+`metadata.period.start/end`; repeated top-level `scope` must match exactly; `source`, `as_of`, `basis`
+(`planned`/`inventoried`), nonempty `assumptions`, explicit `exclusions` array, `resources`.
+Each resource has exactly `resource_id`, `meter`, `workflow`, `source`, `region`, `service`, `sku`, `unit`,
+`terms`, `quantity` (usage in that exact unit for the *entire declared period*, or null), and optional `specs`.
+Include unsupported/unpriced resources, not only those with prices.
+Use provider exports for actual counts/size/runtime; normalized rows require traceable source pointers.
+Do not label a point-in-time count as a known historical runtime without documenting that assumption.
+
+| `pricing.json`
+| `schema_version`, `scope`, `source`, `as_of`, `rates`.
+Each rate has exact `region/service/sku/unit/terms`, `rate` decimal string, `currency`, `source`, `as_of`,
+`valid_period.start/end`. Normalize from saved AWS Price List or Azure Retail Prices/contract evidence.
+Record the provider SKU/meter/offer/dimension in the source pointer. Tiered, spot, reservations, savings plans,
+minimum fees, free allowances and negotiated conditional rates require external normalization/evidence;
+do not pretend a flat multiplication models them. No live rates or USD assumptions are inserted.
+
+| `billing.json` (optional)
+| `schema_version`, exact `scope/currency/period`, `source`, `as_of`, `metric`, boolean `complete`,
+`coverage_note`, `credits_policy`, `lines`. Charges have exactly `line_id/resource_id/meter/region/period/amount/kind`;
+credits also require `charge_id`. Scope is the actually filtered account/subscription/tag export, not an arbitrary display label.
+Azure Cost Details exports must be normalized to this contract (billing currency, ActualCost, usage windows, charge/refund attribution);
+there is no native Azure billing adapter. Absent access/evidence: omit this file; do not create zero actuals.
+|===
+
+As-of dates are evidence freshness, not validity guarantees or authentication. The program validates consistency
+and hashes report inputs but cannot authenticate exports, confirm provider provenance, detect intentionally duplicated
+credits with new identities, or independently verify manually normalized scope, metering and completeness.
+Review source records and invoice semantics. Never use synthetic fixtures for a budget.
+
+== Import actual Terraform resource quantities
+
+Stage an *already exported* `terraform show -json` document as `private-cost-inputs/terraform.json`.
+Do not pass binary plans, raw tfstate, or tfvars. No Terraform command is run by these scripts.
+The adapter walks expanded resources/child modules in `values.root_module` (`inventoried`) or
+`planned_values.root_module` (`planned`), never both. It ignores data resources and known non-independently
+charged IAM/RBAC/key/security/VPC/subnet configuration. Other managed resources are retained as unpriced.
+
+Edit `terraform-context.json`: the shared metadata block, actual snapshot `source/as_of`, `region`, `basis`,
+explicit `month_hours` divisor, exclusions, runtime assumptions, and `terms`.
+Term bindings use `Terraform-address/meter` (including index/module paths), not a fabricated provider price.
+Missing terms remain unknown; unused bindings fail. `compute` SKU comes from actual instance type/VM size.
+AWS root/embedded EBS gets its own physical volume ID and canonical `storage` meter; missing volume identity
+in inventoried snapshots leaves storage unknown. Do not add the same volume again through another inventory.
+Multiple embedded disks on one address must share pricing terms or be normalized separately.
+The optional context `specs` object uses the same address/meter bindings for sourced role/CPU/RAM/spec
+enrichment, for example:
+
+[source,json]
+----
+{
+  "module.ec2_instances.aws_instance.group_instances[\"worker-0\"]/compute": {
+    "role": "worker",
+    "vcpu": "2",
+    "memory_gib": "8",
+    "source": "file:///private/evidence/instance-types.json#exact-provider-record"
+  }
+}
+----
+
+The example is a shape, not verified specs for any real instance type. Use the actual provider export.
+Terraform CPU core/thread options, disk GB/type/IOPS/throughput are copied only when present.
+Context enrichment conflicting with those exported specs fails. Unused spec bindings also fail.
+RAM is normally absent from Terraform exports and remains null without independent evidence.
+
+For hourly resources usage = resource count represented by expanded rows times period hours.
+For EBS usage = provisioned GB times period hours / declared `month_hours`; no universal 730-hour month is assumed.
+This uniform-runtime estimate does *not* infer stopped time or historic autoscaling. Azure VM compute is supported;
+Azure disk tiers and public IPs deliberately remain unknown. AWS EIPs require explicit pricing terms.
+Location/AZ conflicts fail where the snapshot exposes them; otherwise region/account/tags remain the evidence owner's declaration.
+
+[source,bash]
+----
+# New output path; leave existing normalized skeleton untouched.
+python3 CostReporting/terraform_inventory.py \
+  --terraform private-cost-inputs/terraform.json \
+  --context private-cost-inputs/terraform-context.json \
+  --workflow PvC-InfraDeployer \
+  --output private-cost-inputs/terraform-inventory.json
+----
+
+Workflow labels: `OnCloud/AWS`, `OnCloud/Azure`, `PvC-InfraDeployer`, `Utilities`, `ClusterValidation`.
+They are provenance labels, not additional cost allocations.
+
+== Import provider price exports (no network)
+
+`provider_prices.py` reads *native saved exports*, never looks up or invents amounts:
+
+* AWS Price List catalog JSON with `products` and `terms.OnDemand` (not GetProducts string arrays).
+The bounded native adapter supports EC2 Compute Instance, one flat dimension (`0..Inf`, no conditional appliesTo).
+Bindings specify `provider_sku`, `offer_id`, `dimension_id`, canonical `region/service/sku/unit/terms`.
+Terms must equal `operatingSystem/tenancy/preInstalledSw/capacitystatus` from the provider product.
+EBS/IPv4/other prices can be supplied through the evidenced normalized pricing contract, not this adapter.
+* Azure Retail Prices JSON with `Items` and no outstanding `NextPageLink`.
+Capture/merge all relevant pages offline before import. A binding specifies `provider_sku` (= `skuId`),
+`meter_id`, canonical region/service/ARM SKU/unit, and terms exactly `productName/skuName/meterName`.
+Only a unique primary-region `Consumption` row, flat tier, without reservation/savings-plan variants is accepted.
+Ambiguous Windows/Linux/Spot rows fail instead of choosing the cheapest.
+* Supported native units: AWS `Hrs`/`GB-Mo`, Azure `1 Hour`/`1 GB/Month`, mapped to `hour`/`GB-month`.
+No implicit per-1000, disk-tier, GB-to-GiB or currency conversion.
+
+Edit `price-context.json` with metadata, actual provider export `source/as_of`, bindings, `valid_period`,
+and `validity_assumption`: the reviewed assumption pinning that exported quote across the reporting window.
+Provider effective date must precede validity start; quote validity must cover the full report.
+Historical unchanged-price validity is an explicit assumption, not fabricated live evidence.
+
+[source,bash]
+----
+python3 CostReporting/provider_prices.py \
+  --export private-cost-inputs/provider-prices.json \
+  --context private-cost-inputs/price-context.json \
+  --output private-cost-inputs/imported-pricing.json
+----
+
+== Import AWS billed actuals (optional)
+
+Stage an authorized, already filtered AWS CUR CSV as `private-cost-inputs/cur.csv`.
+Create/edit `vi private-cost-inputs/billing-context.json` with `metadata` copied from inventory, `source`,
+`as_of`, boolean `complete`, `coverage_note`, `credits_policy`, and `credit_references` (object mapping
+credit/refund line IDs to included charge IDs; empty object if none).
+The importer uses `lineItem/UnblendedCost` only, not estimates/amortization.
+
+Required CUR columns: `identity/LineItemId`, `lineItem/UsageAccountId`, `lineItem/CurrencyCode`,
+`lineItem/ResourceId`, `product/region`, `lineItem/UsageType`, `lineItem/Operation`,
+`lineItem/LineItemType`, `lineItem/UsageStartDate`, `lineItem/UsageEndDate`,
+`lineItem/UnblendedCost`, and `resourceTags/user:<key>` for every scoped tag.
+Recognized types: Usage, DiscountedUsage, Fee, RIFee, Tax, Credit, Refund.
+Unexpected types, missing attribution, mixed accounts/currencies/tags, duplicate/overlapping windows
+and unmatched credits fail; no records are silently filtered or dropped. Real exports with unsupported
+fees/discounts/account credits need a reviewed normalization and incomplete coverage, not a fake complete bill.
+The importer constructs canonical meters from usage type/operation/charge type; credits reference the charge meter.
+
+[source,bash]
+----
+python3 CostReporting/aws_cur.py \
+  --cur private-cost-inputs/cur.csv \
+  --context private-cost-inputs/billing-context.json \
+  --output private-cost-inputs/imported-billing.json
+----
+
+== Generate all three formats
+
+[source,bash]
+----
+# Use normalized files OR imported equivalents from above. Add --billing only with real evidence.
+python3 CostReporting/report.py \
+  --inventory private-cost-inputs/terraform-inventory.json \
+  --pricing private-cost-inputs/imported-pricing.json \
+  --output cost-report-review-001
+
+# Independent synthetic fixture smoke example (not real costs):
+python3 CostReporting/report.py \
+  --inventory CostReporting/tests/fixtures/inventory.json \
+  --pricing CostReporting/tests/fixtures/pricing.json \
+  --billing CostReporting/tests/fixtures/billing.json \
+  --output cost-report-fixture-001
+----
+
+For actual billed evidence add `--billing private-cost-inputs/imported-billing.json` to the first command.
+All three files are produced in a *new* private directory (0700, files 0600). Existing paths are never overwritten.
+Exit 0 means valid report generation, not complete cost coverage; consumers must inspect statuses/totals.
+Exit 2 is an explicit input/output failure. Disk/write failure can leave a partial output directory: do not publish it;
+use a new directory for retry. There are no implicit failure/success-shaped fallbacks.
+
+== Explicit Jenkins job and artifacts
+
+Select `CostReporting/Jenkinsfile` as a *separate* Pipeline-from-SCM job.
+It is not included by AWS/Azure deploy jobs or any other existing entrypoint.
+Use a restricted agent/workspace and ACL-controlled artifact retention; reports contain private account/resource/cost data.
+Pre-stage reviewed, normalized `inventory.json`, `pricing.json`, optional `billing.json` in the single directory
+named by `EVIDENCE_DIR` (default `private-cost-inputs`). Jenkins does not normalize or fetch evidence.
+No credentials binding or extra package installation is required. Evidence must exist after the SCM checkout.
+The stage generates `cost-report-$BUILD_NUMBER/report.json`, `.csv`, `.txt`, then archives only those files.
+Missing/invalid evidence or existing output fails the reporting job and skips archive; deployment jobs are unaffected.
+Do not archive raw state/configfiles/exports. Groovy execution requires Jenkins and is not claimed as locally tested.
+
+== Offline checks
+
+[source,bash]
+----
+python3 -m unittest discover -s CostReporting/tests -v
+git diff --check
+----
+
+Fixtures cover Decimal reconciliation/rounding, unknowns/zero/exclusions, duplicates, overlap/adjacent periods,
+currencies/scopes, credits, unavailable/partial actuals, provider native shapes, nested Terraform quantities,
+native-to-report CLI artifacts, permissions and overwrite prevention. No live provisioning or invoice accuracy
+validation is performed. Existing deployment behavior is preserved by leaving deployment code unmodified.

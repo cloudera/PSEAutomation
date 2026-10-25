@@ -1,0 +1,32 @@
+// Select this job explicitly; no deploy pipeline includes or invokes it.
+pipeline {
+    agent any
+    parameters {
+        string(name: 'EVIDENCE_DIR', defaultValue: 'private-cost-inputs',
+               description: 'Workspace-relative directory staged by an authorized operator: inventory.json, pricing.json, optional billing.json. No credentials.')
+    }
+    stages {
+        stage('Offline cost report') {
+            steps {
+                script {
+                    if (!(params.EVIDENCE_DIR ==~ /[A-Za-z0-9_-]+/)) {
+                        error('EVIDENCE_DIR must be a single workspace directory name')
+                    }
+                }
+                withEnv(["COST_INPUTS=${params.EVIDENCE_DIR}"]) {
+                    sh '''
+                        set -eu
+                        umask 077
+                        set -- --inventory "$COST_INPUTS/inventory.json" --pricing "$COST_INPUTS/pricing.json"
+                        if [ -f "$COST_INPUTS/billing.json" ]; then
+                            set -- "$@" --billing "$COST_INPUTS/billing.json"
+                        fi
+                        python3 CostReporting/report.py "$@" --output "cost-report-$BUILD_NUMBER"
+                    '''
+                }
+                archiveArtifacts artifacts: "cost-report-${env.BUILD_NUMBER}/report.*",
+                                 allowEmptyArchive: false
+            }
+        }
+    }
+}

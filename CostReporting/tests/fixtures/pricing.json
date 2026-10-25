@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "scope": {"provider": "aws", "account": "fixture-account", "tags": {"Workshop": "fixture"}},
+  "source": "fixture://synthetic-prices-NOT-PROVIDER-PRICES",
+  "as_of": "2026-10-01T00:00:00Z",
+  "rates": [
+    {
+      "region": "us-east-1", "service": "AmazonEC2", "sku": "t3.medium",
+      "unit": "hour", "terms": "fixture-linux-shared-ondemand",
+      "rate": "0.12345678", "currency": "USD",
+      "source": "fixture://synthetic-compute-NOT-PROVIDER-PRICE",
+      "as_of": "2026-10-01T00:00:00Z",
+      "valid_period": {"start": "2026-10-01T00:00:00Z", "end": "2026-11-01T00:00:00Z"}
+    },
+    {
+      "region": "us-east-1", "service": "AmazonEBS", "sku": "gp3",
+      "unit": "GB-month", "terms": "fixture-storage",
+      "rate": "0.08", "currency": "USD",
+      "source": "fixture://synthetic-storage-NOT-PROVIDER-PRICE",
+      "as_of": "2026-10-01T00:00:00Z",
+      "valid_period": {"start": "2026-10-01T00:00:00Z", "end": "2026-11-01T00:00:00Z"}
+    }
+  ]
+}

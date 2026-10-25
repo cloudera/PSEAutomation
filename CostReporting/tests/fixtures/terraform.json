@@ -1,0 +1,26 @@
+{
+  "format_version": "1.0",
+  "terraform_version": "1.5.0",
+  "values": {
+    "root_module": {
+      "child_modules": [
+        {
+          "address": "module.ec2_instances",
+          "resources": [
+            {
+              "address": "module.ec2_instances.aws_instance.group_instances[\"worker-0\"]",
+              "mode": "managed", "type": "aws_instance",
+              "values": {
+                "id": "i-fixture", "instance_type": "t3.medium",
+                "availability_zone": "us-east-1a",
+                "root_block_device": [
+                  {"volume_id": "vol-fixture", "volume_size": 30, "volume_type": "gp3"}
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

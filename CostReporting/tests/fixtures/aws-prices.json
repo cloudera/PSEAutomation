@@ -1,0 +1,30 @@
+{
+  "formatVersion": "v1.0",
+  "disclaimer": "SYNTHETIC TEST FIXTURE - NOT AWS PRICES",
+  "products": {
+    "FAKE-SKU": {
+      "sku": "FAKE-SKU",
+      "productFamily": "Compute Instance",
+      "attributes": {
+        "regionCode": "us-east-1", "servicecode": "AmazonEC2",
+        "instanceType": "t3.medium", "operatingSystem": "Linux",
+        "tenancy": "Shared", "preInstalledSw": "NA", "capacitystatus": "Used"
+      }
+    }
+  },
+  "terms": {
+    "OnDemand": {
+      "FAKE-SKU": {
+        "FAKE-OFFER": {
+          "effectiveDate": "2026-10-01T00:00:00Z",
+          "priceDimensions": {
+            "FAKE-DIMENSION": {
+              "beginRange": "0", "endRange": "Inf", "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.12345678"}, "appliesTo": []
+            }
+          }
+        }
+      }
+    }
+  }
+}

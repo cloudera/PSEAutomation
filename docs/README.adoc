@@ -17,6 +17,8 @@ link:oncloud/README.adoc[OnCloud documentation index]
 
 == Other modules
 
+* link:../CostReporting/README.adoc[Cost reporting] — offline Terraform inventory, provider-price estimates, separate billed actuals, JSON/CSV/TXT, and opt-in Jenkins artifacts
+
 These modules document themselves in place; see the root link:../README.adoc[README.adoc] for the repository map.
 
 * link:../ClusterValidation/README.adoc[ClusterValidation] — smoke testing

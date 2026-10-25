@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "generated_at": "2026-10-25T12:00:00Z",
+    "scope": {"provider": "aws", "account": "fixture-account", "tags": {"Workshop": "fixture"}},
+    "currency": "USD",
+    "period": {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"}
+  },
+  "source": "fixture://synthetic-AWS-price-export-NOT-REAL",
+  "as_of": "2026-10-01T00:00:00Z",
+  "valid_period": {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"},
+  "validity_assumption": "Synthetic fixture quote pinned for one day, NOT a real price.",
+  "bindings": [
+    {
+      "provider_sku": "FAKE-SKU", "offer_id": "FAKE-OFFER", "dimension_id": "FAKE-DIMENSION",
+      "region": "us-east-1", "service": "AmazonEC2", "sku": "t3.medium",
+      "unit": "hour", "terms": "Linux/Shared/NA/Used"
+    }
+  ]
+}

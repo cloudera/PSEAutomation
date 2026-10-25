@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "generated_at": "2026-10-25T12:00:00Z",
+    "scope": {"provider": "aws", "account": "fixture-account", "tags": {"Workshop": "fixture"}},
+    "currency": "USD",
+    "period": {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"}
+  },
+  "scope": {"provider": "aws", "account": "fixture-account", "tags": {"Workshop": "fixture"}},
+  "source": "fixture://synthetic-inventory-NOT-REAL",
+  "as_of": "2026-10-02T00:00:00Z",
+  "basis": "inventoried",
+  "assumptions": "Synthetic 24-hour constant runtime; not a real deployment or price quote.",
+  "exclusions": [],
+  "resources": [
+    {
+      "resource_id": "i-fixture",
+      "meter": "compute",
+      "workflow": "PvC-InfraDeployer",
+      "source": "fixture://terraform#aws_instance.worker",
+      "region": "us-east-1",
+      "service": "AmazonEC2",
+      "sku": "t3.medium",
+      "unit": "hour",
+      "quantity": "24",
+      "terms": "fixture-linux-shared-ondemand"
+    },
+    {
+      "resource_id": "vol-fixture",
+      "meter": "storage",
+      "workflow": "PvC-InfraDeployer",
+      "source": "fixture://terraform#aws_instance.worker",
+      "region": "us-east-1",
+      "service": "AmazonEBS",
+      "sku": "gp3",
+      "unit": "GB-month",
+      "quantity": "1",
+      "terms": "fixture-storage"
+    }
+  ]
+}

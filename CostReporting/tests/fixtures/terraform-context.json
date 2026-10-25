@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "generated_at": "2026-10-25T12:00:00Z",
+    "scope": {"provider": "aws", "account": "fixture-account", "tags": {"Workshop": "fixture"}},
+    "currency": "USD",
+    "period": {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"}
+  },
+  "region": "us-east-1",
+  "source": "fixture://synthetic-terraform-NOT-REAL",
+  "as_of": "2026-10-02T00:00:00Z",
+  "basis": "inventoried",
+  "month_hours": "720",
+  "assumptions": "Synthetic fixed runtime; 30-day storage month declared explicitly.",
+  "exclusions": [],
+  "terms": {
+    "module.ec2_instances.aws_instance.group_instances[\"worker-0\"]/compute": "fixture-linux-shared-ondemand",
+    "module.ec2_instances.aws_instance.group_instances[\"worker-0\"]/storage": "fixture-storage"
+  }
+}

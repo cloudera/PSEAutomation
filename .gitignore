@@ -71,3 +71,7 @@ venv/
 *.bak
 *.backup
 *.old
+
+# Private cost evidence and reports (fixtures are synthetic and tracked)
+/private-cost-inputs/
+/cost-report-*/
