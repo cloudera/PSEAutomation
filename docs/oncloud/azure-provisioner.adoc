@@ -101,9 +101,12 @@ docker pull clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest
 ----
 mkdir -p ~/hol-userconfig
 cp OnCloud/Azure/build/configuration/configfile.example ~/hol-userconfig/configfile
+chmod 700 ~/hol-userconfig
+chmod 600 ~/hol-userconfig/configfile
+vi ~/hol-userconfig/configfile
 ----
 
-Edit `~/hol-userconfig/configfile`:
+From the repository root, copy only for a new workshop; do not overwrite an existing config. Complete the link:configfile-reference.adoc#operator-checklist[operator checklist] before provisioning. Edit `~/hol-userconfig/configfile`:
 
 * The file must be named exactly `configfile` (no extension).
 * Use `KEY:value` format — no quotes, no blank line after the last entry.

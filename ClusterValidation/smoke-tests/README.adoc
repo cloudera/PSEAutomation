@@ -18,6 +18,26 @@ Teardown always runs, even on failure, using the identifiers in the handoff.
 podman build -t cloudera-smoke-tests:latest container/
 ----
 
+Use `ClusterValidation/` as the working directory for `./smoke-tests/run.sh` commands; the `container/` build context above assumes you are inside `smoke-tests/`. For build-only from `ClusterValidation/` use `podman build -t cloudera-smoke-tests:latest smoke-tests/container/`. `run.sh --build` builds *and runs*, not just builds.
+
+== Prepare operator configuration
+
+From `ClusterValidation/`, create the supported local config (the advertised `.smoke.env.example` is not shipped):
+
+[source,bash]
+----
+umask 077
+vi smoke-tests/.smoke.env
+----
+
+Use trusted shell `KEY=value` assignments. *Required:* `AWS_REGION`, `AWS_PROFILE`, `CM_HOST`, and `CLUSTER_NAME`; supply `CM_PASS` through the secret mechanisms below (prefer the hidden prompt or a protected password file, never a command-line literal).
+*Optional/defaulted:* verify `CM_PORT` (7183), `CM_USER` (admin), `SERVICES_TO_TEST` (`all`), `OUTPUT_FORMATS` (`nagios,prom,json,html`). Set `DATA_SERVICES_CLUSTER` only for additional ECS/PvC cluster names; set `SSH_KEY_FILE` and `SSH_USER` only for optional host disk diagnostics. The SSH key must already exist, be readable, and have mode 600/400. Use `--output-dir` for a custom report directory; there is no `OUTPUT_DIR` config key in the documented key list.
+
+CLI flags and existing nonempty environment values override file settings. Configs are sourced shell code, so inspect/trust them first. Replace every sample host, cluster name and path. In `vi`, use `i`, then `Esc`, `:wq`, Enter to save/quit (`:q!` to discard).
+Keep configs, credentials, and reports private/untracked, and never edit the generated handoff or reports to configure a run.
+
+Before any runner is launched, check both configs; `bash -n smoke-tests/.smoke.env` and `bash smoke-tests/run.sh --help` are local, non-executing checks, not connectivity tests. Confirm the handoff is from your intended fresh launcher run before using it; smoke-tests always attempts to tear down those resources. Do not use `--cm-pass-stdin` with a handoff also coming from stdin.
+
 == Run 
 
 === Correct invocations
@@ -83,13 +103,15 @@ check that you actually piped a handoff in. `./run.sh` with no stdin and no
 `CM_PASS` must never appear on the command line. Accepted sources, in order:
 
 . `CM_PASS` env var
-. `--cm-pass-file PATH`  (refuses files whose mode isn't 600/400 when they contain `CM_PASS=`)
+. `--cm-pass-file PATH` (raw password contents, not `CM_PASS=`; protect with mode 600/400)
 . `--cm-pass-stdin`
 . Interactive prompt
 
 `run.sh` passes the password into the container via a mode-600 temp env-file
 that is removed on exit. `entrypoint.sh` also accepts `/run/cm_pass` as a
 read-only mount.
+
+Configs containing `CM_PASS=` are refused unless mode 600/400; raw password files currently produce only a warning for other modes, so secure them yourself before running.
 
 == Cluster SSH key (optional)
 
@@ -177,5 +199,5 @@ container/
   entrypoint.sh
   requirements.txt   # boto3, requests, urllib3
 run.sh               # host-side runner with 5-tier config precedence
-.smoke.env.example
+.smoke.env          # operator-created local file; no example is shipped
 ----

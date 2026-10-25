@@ -27,7 +27,7 @@ launcher ──▶ handoff.json ──▶ smoke-tests ──▶ Nagios line on s
 == Quick start
 
 Both containers build and run through their own `run.sh`. Typical end-to-end
-invocation from the repo root:
+invocation from `ClusterValidation/` (first run `cd ClusterValidation` from the repository root). Prepare both configuration files using the linked per-container checklists before launching:
 
 [source,bash]
 ----
@@ -47,6 +47,8 @@ Or piped, if you prefer not to materialize the handoff:
 ----
 
 Individual Builds should be run before running the above commands. See the per-container READMEs for build flags, config precedence, secret handling, and output details.
+
+WARNING: `run.sh --build` builds *and then runs*; it is not a build-only or validation mode. For build-only, use the explicit container build commands in the per-container guides. `bash launcher/run.sh --help` and `bash smoke-tests/run.sh --help` show options without launching anything. A smoke test is also destructive to its runner: it always attempts teardown. Never edit generated handoff IDs to point at other resources.
 
 == Lifecycle and re-run semantics
 

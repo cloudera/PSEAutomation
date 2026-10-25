@@ -59,6 +59,14 @@ Optional PollSCM jobs use `Jenkinsfile.PollSCM` and trigger the build/deploy job
 
 Supporting scripts live under `OnCloud/{AWS,Azure}/build/jenkins/` (for example `assignCdpEnvAdminRoles.sh`, `provisionFailureParser.groovy`).
 
+== Operator input review
+
+Jenkins generates `configfile` from job parameters and bound credentials; there is no operator `.env` to edit in this workflow. Never `vi` the generated workspace/userconfig files, Terraform state, or access report to change a run.
+Before starting a deploy job, verify `ACTION`, `WORKSHOP_NAME`, `OWNER`, `LOCAL_MACHINE_IP`, `NUMBER_OF_WORKSHOP_USERS`, `WORKSHOP_USER_PREFIX`, `WORKSHOP_USER_DEFAULT_PASSWORD`, `PROVISION_KEYCLOAK`, conditional `KEYCLOAK_ADMIN_PASSWORD`, `PROVISION_CAII`, `DOMAIN`, `HOSTEDZONEID`, `CDP_DEPLOYMENT_TYPE`, `DATALAKE_VERSION`, `ENABLE_DATA_SERVICES`, `DELETE_DATAHUBS`, and the provider region (`AWS_REGION` or `AZURE_REGION`). Check the link:../docs/oncloud/configfile-reference.adoc#operator-checklist[shared checklist] for constraints and optional service sizing.
+Review `IMAGE_TAG` or the conditional local-build parameters below; use the same workshop/state for destroy. Bind credentials in Jenkins, not in committed files or console commands.
+Treat archived/emailed `configfile` and workshop access artifacts as sensitive: the current jobs can attach them, so restrict artifact/email access rather than assuming Jenkins password masking sanitizes generated files.
+`REFRESH_JENKINSFILE` refreshes job definitions and exits; it does not validate cloud access or prove a deployment plan safe.
+
 == Image build jobs (`Jenkinsfile.Build`)
 
 Build and push provisioner images to Docker Hub.

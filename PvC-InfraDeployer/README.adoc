@@ -41,6 +41,37 @@ Before running this automation, ensure:
 
 == Setup Steps
 
+=== Configuration review for this checkout
+
+There are distinct workflows here; do not treat their inputs as interchangeable.
+The infrastructure wrapper `clone_and_run_terraform.sh` clones the external `kuldeepsahu1105/pvc-automation` repository and then sources `.tfvars.env` *inside* `pvc-automation/terraform-code/cloudera-pvc-terraform/`. Editing only the `.tfvars.env` beside the wrapper in this checkout does not make it the runtime input.
+
+From this repository root, review the shipped source settings:
+
+[source,bash]
+----
+vi PvC-InfraDeployer/.tfvars.env
+vi PvC-InfraDeployer/terraform-code/cloudera-pvc-terraform/terraform.tfvars
+vi PvC-InfraDeployer/terraform-code/cloudera-pvc-terraform/terraform.tf
+----
+
+The first file is trusted Bash configuration (`KEY=value` and the `TF_VARS` array), not a Docker env-file. The second is HCL for *manual Terraform use in this checkout*, not the wrapper's shell input. `terraform.tf` is the backend source configuration, not generated state. In `vi`, use `i`, then `Esc`, `:wq`, Enter to save/quit (`:q!` to discard).
+
+* *Wrapper settings:* verify `AWS_REGION`, `OWNER`, `ENVIRONMENT` (workspace), `TERRAFORM_VERSION`, and every `-var` entry in `TF_VARS`. `TERRAFORM_VERSION` is consulted during tool installation before the wrapper sources the file, so setting it only in that file does not control that earlier step.
+* *Terraform inputs:* verify `aws_region`, required `keypair_name` and `cldr_eip_name`, `pvc_cluster_tags`, `create_vpc`, `create_new_sg`, `create_keypair`, and `create_eip`. The name variables have no defaults even if creation is disabled. For a new VPC, review `vpc_name`, `vpc_cidr_block`, `azs`, `public_subnets_cidr`, `private_subnets_cidr`, `enable_nat_gateway`, `enable_vpn_gateway`. Otherwise the module uses the default VPC.
+* *Conditional existing resources:* when `create_new_sg=false`, set `existing_sg` in the intended VPC; otherwise review `sg_name`, `allowed_cidrs` and `allowed_ports`. When `create_keypair=false`, set `existing_keypair_name` and have its private key available. Do not assume the shell template's sample IDs exist in your account.
+* *Capacity:* review every `instance_groups` entry's `count`, region-specific `ami`, `instance_type`, `volume_size`, `tags`, and optional `user_data`. Replace sample owners, environments and AMIs. Review `allowed_ports` and `allowed_cidrs` deliberately; do not assume the examples restrict access appropriately.
+* *Backend:* review `backend "s3"` keys `bucket`, `key`, `region`, `use_lockfile` in `terraform.tf` for the manual workflow. They are separate from `aws_region`; do not use a shared example state location. Coordinate existing-state/backend changes with its owner rather than moving state by editing generated files.
+
+For local syntax/format checks only, use `bash -n PvC-InfraDeployer/.tfvars.env` and `terraform -chdir=PvC-InfraDeployer/terraform-code/cloudera-pvc-terraform fmt -check`. These do not authenticate, validate cloud IDs, or approve a plan. The wrapper installs tools, clones, selects/creates a workspace and applies `tfplan.out` automatically; it is *not* a validation command. Do not execute it just to check configuration.
+Never edit generated `tfplan.out`, `terraform.tfstate`, `ansible_inventory.ini`, copied inventory, or generated private keys to change inputs. Protect all credentials/state and editor backups; use AWS CLI credential configuration, not secrets in tracked files.
+
+[WARNING]
+====
+The wrapper's external checkout, `.tfvars.env` placement, `generate_inventory.sh`, and `ansible-test` paths must be verified against that external repository before running; those assumptions are not satisfied by merely editing this checkout. No external code was fetched to validate them.
+The separate link:UI-webapp/README.md[UI prototype] has its own YAML input, not this shell file. Its application/launcher files referenced by that guide are not present in this checkout.
+====
+
 === 1. Clone the Repository
 
 ```bash
@@ -376,8 +407,8 @@ cd pvc-automation
 
 
 To run the terraform automation, you need to have the following prerequisites:
-Download or create .tfvars.env file and clone_and_run_terraform.sh file from the repository.
-Update the .tfvars.env file with your configuration variables.
+Review .tfvars.env and clone_and_run_terraform.sh from the repository, including the actual external runtime path described above.
+Update the configuration used by your chosen workflow, not a generated artifact.
 Make sure you have the necessary permissions to run the script.
 Make sure you are logged in to the AWS account where you want to create the resources.
 Run the clone_and_run_terraform.sh script to clone the repository and run the terraform automation.

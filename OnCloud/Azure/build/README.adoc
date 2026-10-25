@@ -31,10 +31,14 @@ docker pull clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest
 [source,bash]
 ----
 mkdir -p ~/hol-userconfig
-cp configuration/configfile.example ~/hol-userconfig/configfile
-# Edit required keys: AZURE_REGION, WORKSHOP_NAME, DOMAIN, HOSTEDZONEID, etc.
+cp OnCloud/Azure/build/configuration/configfile.example ~/hol-userconfig/configfile
+chmod 700 ~/hol-userconfig
+chmod 600 ~/hol-userconfig/configfile
+vi ~/hol-userconfig/configfile
 # Optional: place <SSH_KEY_NAME>.pem in the same directory
 ----
+
+Run the copy command from the repository root, only for a *new* workshop directory; do not overwrite an existing workshop's inputs. Complete the link:../../../docs/oncloud/configfile-reference.adoc#operator-checklist[operator checklist] before step 3, including `AZURE_REGION`, subscription/authentication, passwords, workshop identity, access CIDR, service choices, and DNS values. This is a colon-delimited file, not a shell `.env`; do not source it. See the root link:../../../README.adoc[README] for `vi` save/quit guidance.
 
 === 3. Provision
 

@@ -230,7 +230,28 @@ md C:\Users\<username>\k8soperators
 
 ==== Edit the Configuration File
 
-Navigate to `k8soperators` directory and edit the `configfile` with the help of an editor of your choice. **Don't add any quotes(single or double) in values and no 'new line' after the last entry in the file.** Refer to below table for defining values of the parameters.
+From the repository root, copy the actual input for a *new* run, then open it:
+
+[source,bash]
+----
+cp Utilities/configuration/configfile ~/k8soperators/configfile
+chmod 700 ~/k8soperators
+chmod 600 ~/k8soperators/configfile
+vi ~/k8soperators/configfile
+----
+
+This is the host file mounted at `/k8soperators/configfile`, not a shell `.env`. Do not source it. In `vi`, press `i`, edit, then `Esc`, `:wq`, Enter to save/quit (`:q!` to discard).
+
+Before provisioning, verify the exact keys consumed by `Utilities/run.sh`:
+
+* *Required:* `LOCAL_MACHINE_IP` (restrict access to your operator CIDR), `AWS_REGION`, `K8S_DISTRIBUTION` (`minikube`/`eks`), `ADMIN_PASSWORD`, `CLOUDERA_USERNAME`, `CLOUDERA_PASSWORD`, and `INSTALL_OPERATORS` (`CFM`, `CSA`, `CSM`, combinations, or `ALL`). Replace sample hosts, credentials and passwords and place `cloudera_license.txt` in the mounted directory.
+* *Provisioning choice:* set `PROVISION_EC2` explicitly. For EKS, use `NO` and provide `INSTALLATION_HOST` (existing Ubuntu host) and `SSH_KEY_PAIR`; the remote host needs AWS access. For Minikube on an existing host, use `NO` with the same host/key settings. For a new EC2 Minikube host, use `YES`; omit the existing host/key entries if generating them.
+* *Conditional key:* use `SSH_KEY_PAIR` without `.pem` and place the matching protected `<name>.pem` beside `configfile`. The `configfile.minikubeexample` uses `AWS_KEY_PAIR`, but this script does *not* parse that alias; use `SSH_KEY_PAIR` instead.
+* *Optional overrides:* `INSTANCE_TYPE`, `CLUSTER_NAME`. Review region capacity and unique names rather than accepting sample values blindly.
+
+There is no validation-only action: `provision` and `destroy` perform resource operations. Review the file and required/conditional tables before invoking Docker; do not run `Utilities/run.sh` directly to validate, since it copies files and dispatches deployment operations. Never edit generated Terraform state, keys, or deployment artifacts to change inputs. Keep passwords/license/key material and editor backups out of Git and logs.
+
+Navigate to `k8soperators` directory and edit the `configfile` with the help of an editor of your choice. **Don't add quotes (single or double) to values or an empty line after the last entry; terminate the last entry with a newline.** Refer to below table for defining values of the parameters.
 
 [%header,cols="1,1,1"]
 |===

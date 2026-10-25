@@ -30,10 +30,14 @@ docker pull clouderapartners/cdp-public-cloud-hol-provisioner-aws:latest
 [source,bash]
 ----
 mkdir -p ~/hol-userconfig
-cp configuration/configfile.example ~/hol-userconfig/configfile
-# Edit required keys: AWS_REGION, WORKSHOP_NAME, DOMAIN, HOSTEDZONEID, etc.
+cp OnCloud/AWS/build/configuration/configfile.example ~/hol-userconfig/configfile
+chmod 700 ~/hol-userconfig
+chmod 600 ~/hol-userconfig/configfile
+vi ~/hol-userconfig/configfile
 # Optional: place <AWS_KEY_PAIR>.pem in the same directory
 ----
+
+Run the copy command from the repository root, only for a *new* workshop directory; do not overwrite an existing workshop's inputs. Complete the link:../../../docs/oncloud/configfile-reference.adoc#operator-checklist[operator checklist] before step 3, including `AWS_REGION`, passwords, workshop identity, access CIDR, service choices, and DNS values. This is a colon-delimited file, not a shell `.env`; do not source it. See the root link:../../../README.adoc[README] for `vi` save/quit guidance.
 
 === 3. Provision
 
@@ -127,7 +131,7 @@ Use the same optional `-d` / `docker logs -f` pattern as provision (replace the 
 | Default `pse-apac@cloudera.com`; cannot use `owner` (CDP reserved tag)
 
 | Credentials
-| Mount `~/.cdp` and `~/.aws`, or pass keys via configfile (see link:../../../docs/oncloud/configfile-reference.adoc[configfile reference])
+| Mount `~/.cdp` and `~/.aws`. The AWS configfile credential handlers are commented out; do not rely on credential entries in that file (see link:../../../docs/oncloud/configfile-reference.adoc[configfile reference]).
 |===
 
 [[developer-guide-build-tag-and-push]]
