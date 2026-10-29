@@ -7,10 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-10-29
+
 ### Added
 - Trino Virtual Warehouses are created alongside Hive and Impala, using a live-validated CDP instance type; auto-suspend is enabled for all three engines by default and is configurable.
 
+### Changed
+- Environment role assignment avoids redundant CDP lookups and runs only at the lifecycle stages that require it.
+- The provisioner image now uses Terraform 1.16.4.
+- AWS operator and configuration documentation now clarifies pre-run validation, credential handling, sensitive artifacts, and Jenkins inputs.
+
 ### Fixed
+- Environment teardown can delete Data Hubs before infrastructure destruction, supports retaining them with `DELETE_DATAHUBS=false`, and remains idempotent when the CDP environment is already absent.
 - Keycloak EC2 provisioning no longer uses unused SSH file provisioners that could crash Terraform when the instance public DNS was still unknown.
 
 ## [4.0.0] - 2026-09-24
