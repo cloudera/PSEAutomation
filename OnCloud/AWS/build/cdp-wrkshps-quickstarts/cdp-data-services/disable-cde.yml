@@ -53,7 +53,7 @@
         cdp de delete-vc
         --cluster-id "{{ item.clusterId }}"
         --vc-id "{{ item.vcId }}"
-      loop: "{{ vc_ids }}"
+      loop: "{{ vc_ids | default([], true) }}"
       async: "{{ cde_async_timeout }}"
       poll: 0
       register: vc_delete_async

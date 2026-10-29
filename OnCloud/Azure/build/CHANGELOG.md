@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Trino Virtual Warehouses are created alongside Hive and Impala, using a live-validated CDP instance type; auto-suspend is enabled for all three engines by default and is configurable.
 
 ### Fixed
+- CDE teardown now handles an empty virtual cluster list with Ansible 2.16.
 - Keycloak VM provisioning no longer uses unused SSH file provisioners, avoiding apply-time connection failures and Terraform crashes.
 
 ## [1.0.0] - 2026-09-24
