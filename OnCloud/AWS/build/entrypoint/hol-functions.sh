@@ -248,13 +248,13 @@ validating_variables() {
    hol_subsection "Validating configfile & input parameters" "📋"
    delete_datahubs="${delete_datahubs:-true}"
    sleep 10
-   if [ ! -f "/userconfig/configfile" ]; then
+   if [ ! -f "$USER_CONFIG_FILE" ]; then
       hol_fail "Config file 'configfile' not found in /userconfig.
 Please mount your config directory with -v and create a file named 'configfile' (no extension).
 On Windows, use C:/Users/<Your_User>/ and try again." 9999
    fi
-   # Cleaning up 'configfile' to remove ^M characters.
-   sed -i 's/^M//g' $USER_CONFIG_FILE
+   local config_text
+   config_text=$(tr -d '\r' < "$USER_CONFIG_FILE") || hol_fail "Could not read the config file."
 
    #--------------------------------------------------------------------------------------------------#
 
@@ -310,12 +310,12 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
 
       # Function to check if a key exists in the config file
       key_exists() {
-         grep -q "^$1:" "$USER_CONFIG_FILE"
+         grep -q "^$1:" <<< "$config_text"
       }
 
       # Function to check if a key has a non-empty value in the config file
       key_has_value() {
-         local value=$(grep "^$1:" "$USER_CONFIG_FILE" | cut -d ':' -f2- | sed 's/ //g')
+         local value=$(grep "^$1:" <<< "$config_text" | cut -d ':' -f2- | sed 's/ //g')
          [ -n "$value" ]
       }
 
@@ -550,7 +550,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          # Can Add more cases if required.
          esac
       fi
-   done <"$USER_CONFIG_FILE"
+   done <<< "$config_text"
 
    while IFS= read -r line; do
       [[ -z "$line" || "$line" =~ ^# ]] && continue
@@ -562,7 +562,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          export env_tags
          break
       fi
-   done < "$USER_CONFIG_FILE"
+   done <<< "$config_text"
 
    # Call the function with the user-provided config file as an argument
    check_config "$USER_CONFIG_FILE"

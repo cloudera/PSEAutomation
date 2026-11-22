@@ -249,13 +249,13 @@ validating_variables() {
    hol_subsection "Validating configfile & input parameters" "📋"
    delete_datahubs="${delete_datahubs:-true}"
    sleep 10
-   if [ ! -f "/userconfig/configfile" ]; then
+   if [ ! -f "$USER_CONFIG_FILE" ]; then
       hol_fail "Config file 'configfile' not found in /userconfig.
 Please mount your config directory with -v and create a file named 'configfile' (no extension).
 On Windows, use C:/Users/<Your_User>/ and try again." 9999
    fi
-   # Cleaning up 'configfile' to remove ^M characters.
-   sed -i 's/^M//g' $USER_CONFIG_FILE
+   local config_text
+   config_text=$(tr -d '\r' < "$USER_CONFIG_FILE") || hol_fail "Could not read the config file."
 
    #--------------------------------------------------------------------------------------------------#
 
@@ -311,12 +311,12 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
 
       # Function to check if a key exists in the config file
       key_exists() {
-         grep -q "^$1:" "$USER_CONFIG_FILE"
+         grep -q "^$1:" <<< "$config_text"
       }
 
       # Function to check if a key has a non-empty value in the config file
       key_has_value() {
-         local value=$(grep "^$1:" "$USER_CONFIG_FILE" | cut -d ':' -f2- | sed 's/ //g')
+         local value=$(grep "^$1:" <<< "$config_text" | cut -d ':' -f2- | sed 's/ //g')
          [ -n "$value" ]
       }
 
@@ -572,7 +572,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          # Can Add more cases if required.
          esac
       fi
-   done <"$USER_CONFIG_FILE"
+   done <<< "$config_text"
 
    while IFS= read -r line; do
       [[ -z "$line" || "$line" =~ ^# ]] && continue
@@ -584,7 +584,7 @@ On Windows, use C:/Users/<Your_User>/ and try again." 9999
          export env_tags
          break
       fi
-   done < "$USER_CONFIG_FILE"
+   done <<< "$config_text"
 
    export provision_caii="${provision_caii:-no}"
    export azure_client_id="${azure_client_id:-${AZURE_CLIENT_ID:-}}"
@@ -695,6 +695,8 @@ ensure_aws_cli_for_dns() {
 # Function to verify Azure pre-requisites
 azure_prereq() {
    setup_azure_cli_auth
+   hol_subsection "Azure region preflight" "🌍"
+   azure_postgres_flexible_server_region_supported
    hol_subsection "Checking Azure subscription quotas" "☁️"
    subscription_name=$(az account show --query name -o tsv 2>/dev/null)
    subscription_id=$(az account show --query id -o tsv 2>/dev/null)
@@ -1747,8 +1749,6 @@ EOF
       hol_info "NFS is provisioned with CDP infra (same RG/VNet) — premium FileStorage, one private endpoint in the first CDP subnet, secure transfer disabled"
       patch_cdp_quickstart_for_cai_nfs "${azure_tf_dir}"
    fi
-   hol_subsection "Azure region preflight" "🌍"
-   azure_postgres_flexible_server_region_supported
    hol_terraform init
    if should_provision_cai_nfs; then
       patch_cdp_prereqs_nfs_single_private_endpoint "${azure_tf_dir}"
@@ -3084,22 +3084,75 @@ count_elements() {
    echo "$count"
 }
 #--------------------------------------------------------------------------------------------------#
-azure_postgres_flexible_server_region_supported() {
-   local region="${azure_region:-}"
-
-   [[ -n "$region" ]] || hol_fail "AZURE_REGION is not set in configfile."
-   if ! command -v az >/dev/null 2>&1; then
-      hol_warn "Azure CLI not available — skipping PostgreSQL Flexible Server region preflight for ${region}"
+azure_postgres_region_capability() {
+   local region="$1" subscription="$2" capabilities
+   if ! capabilities=$(az postgres flexible-server list-skus --subscription "$subscription" --location "$region" \
+      --query "[?name=='FlexibleServerCapabilities'].{versions:supportedServerVersions[].name,skus:supportedServerEditions[].supportedServerSkus[].name,restrictions:supportedFeatures[?name=='OfferRestricted'].status,restricted:restricted,reason:reason}" \
+      -o json --only-show-errors 2>&1); then
+      local failure="${capabilities%%$'\n'*}"
+      hol_warn "PostgreSQL capability query failed for ${region}: ${failure:0:500}" >&2
+      return 2
+   fi
+   if ! jq -e 'type == "array" and length == 1 and
+      (.[0].versions | type == "array") and (.[0].skus | type == "array") and
+      (.[0].restrictions == null or (.[0].restrictions | type == "array")) and
+      (.[0].restricted == null or (.[0].restricted | type == "boolean"))' \
+      >/dev/null <<< "$capabilities"; then
+      hol_warn "Unexpected PostgreSQL capability response for ${region}" >&2
+      return 2
+   fi
+   if jq -e '.[0] | any(.versions[]; type == "string" and length > 0) and
+      any(.skus[]; type == "string" and length > 0) and
+      ((.restrictions // []) | index("Enabled") | not) and (.restricted != true)' \
+      >/dev/null <<< "$capabilities"; then
       return 0
    fi
+   local reason
+   reason=$(jq -r '.[0].reason // empty' <<< "$capabilities")
+   [[ -z "$reason" ]] || hol_warn "${region}: ${reason}" >&2
+   return 1
+}
 
-   local count
-   count=$(az postgres flexible-server list-skus --location "$region" \
-      --query "length(@)" -o tsv 2>/dev/null || echo 0)
-   if [[ "${count:-0}" -eq 0 ]]; then
-      hol_fail "AZURE_REGION '${region}' returned no PostgreSQL Flexible Server SKUs for this subscription (az postgres flexible-server list-skus). CDP datalake Terraform often fails with ARM 'Version should be in: []'. Try westus2 or another region with quota, or request region access in Azure Portal."
+azure_postgres_flexible_server_region_supported() {
+   local region="${azure_region:-}" subscription status regions candidate
+   local available=() unverified=()
+   [[ -n "$region" ]] || hol_fail "AZURE_REGION is not set in configfile."
+   if ! subscription=$(az account show --query id -o tsv --only-show-errors) || [[ -z "$subscription" ]]; then
+      hol_fail "Could not determine the active Azure subscription for PostgreSQL region preflight."
    fi
-   hol_ok "PostgreSQL Flexible Server SKUs available in ${region} (preflight count=${count})"
+   if azure_postgres_region_capability "$region" "$subscription"; then
+      hol_ok "PostgreSQL Flexible Server versions and SKUs are available in ${region}"
+      return 0
+   else
+      status=$?
+   fi
+   if [[ "$status" -ne 1 ]]; then
+      hol_fail "Could not verify PostgreSQL Flexible Server availability in ${region}; check Azure CLI access and retry."
+   fi
+   hol_warn "PostgreSQL Flexible Server provisioning is unavailable in ${region}; checking other Azure regions."
+   if ! regions=$(az rest --method get \
+      --url "https://management.azure.com/subscriptions/${subscription}/locations?api-version=2022-12-01" \
+      --query "value[?metadata.regionType=='Physical'].name" -o tsv --only-show-errors) || [[ -z "$regions" ]]; then
+      hol_fail "Could not list Azure regions for subscription ${subscription}; choose a verified region and retry."
+   fi
+   while IFS= read -r candidate; do
+      [[ -z "$candidate" || "$candidate" == "$region" ]] && continue
+      if azure_postgres_region_capability "$candidate" "$subscription"; then
+         available+=("$candidate")
+      else
+         status=$?
+         [[ "$status" -ne 2 ]] || unverified+=("$candidate")
+      fi
+   done <<< "$regions"
+   if (( ${#available[@]} )); then
+      hol_info "Regions with PostgreSQL Flexible Server versions and SKUs: ${available[*]}"
+   else
+      hol_warn "No available PostgreSQL Flexible Server regions were found among the successfully checked regions."
+   fi
+   if (( ${#unverified[@]} )); then
+      hol_warn "Could not verify these regions: ${unverified[*]}"
+   fi
+   hol_fail "AZURE_REGION '${region}' is unavailable for PostgreSQL Flexible Server in the active subscription. Choose a verified region and retry, or request Azure region access."
 }
 
 azure_vm_sku_available() {

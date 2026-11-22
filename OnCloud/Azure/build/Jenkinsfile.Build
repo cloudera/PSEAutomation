@@ -13,6 +13,7 @@ pipeline {
     parameters {
         booleanParam(name: 'REFRESH_JENKINSFILE', defaultValue: false, description: 'Reload changes from Jenkinsfile and exit.')
         string(name: 'PRIMARY_TAG', defaultValue: 'testmain', description: 'Primary tag (e.g. 2.4.1 or latest) for the Docker image')
+        string(name: 'PROMOTE_SOURCE_TAG', defaultValue: '', description: 'If set, promote this existing registry tag to PRIMARY_TAG instead of building an image')
         booleanParam(name: 'PUSH_SECONDARY_TAG', defaultValue: true, description: 'Push secondary tag for this Docker Image?')
         string(name: 'SECONDARY_TAG', defaultValue: new Date().format('yyyyMMdd') + '-${BUILD_NUMBER}', description: 'Secondary tag for the Docker image')
         choice(name: 'DELETE_WORKDIR', choices: ['false', 'true'], description: 'Delete the Work directory at the end of the job.')
@@ -30,6 +31,7 @@ pipeline {
 
     stages {
         stage('Checkout') {
+            when { expression { return !params.PROMOTE_SOURCE_TAG?.trim() } }
             steps {
                 script {
                     def branch = params.BUILD_BRANCH?.trim() ?: 'main'
@@ -70,7 +72,7 @@ pipeline {
         }
 
         stage('Buildx Setup') {
-            when { expression { return params.MULTI_PLATFORM_BUILD } }
+            when { expression { return params.MULTI_PLATFORM_BUILD && !params.PROMOTE_SOURCE_TAG?.trim() } }
             steps {
                 script {
                     echo "Stage :: Buildx Setup"
@@ -84,6 +86,7 @@ pipeline {
         }
 
         stage('Build and Push Docker Image') {
+            when { expression { return !params.PROMOTE_SOURCE_TAG?.trim() } }
             steps {
                 script {
                     echo "Stage :: Build and Push Docker Image"
@@ -104,7 +107,7 @@ pipeline {
                     } else {
                         echo "Regular build and push."
                         dir(env.DOCKERFILE_DIR) {
-                            sh "docker build --no-cache --build-arg TF_QUICKSTART_VERSION=${params.TF_QS_VER} -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${primaryTag} ."
+                            sh "docker build --platform linux/amd64 --no-cache --build-arg TF_QUICKSTART_VERSION=${params.TF_QS_VER} -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${primaryTag} ."
                         }
                         withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
                             sh 'docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD'
@@ -115,6 +118,28 @@ pipeline {
                             }
                         }
                     }
+
+                }
+            }
+        }
+
+        stage('Promote Docker Image') {
+            when { expression { return params.PROMOTE_SOURCE_TAG?.trim() } }
+            steps {
+                script {
+                    def sourceTag = params.PROMOTE_SOURCE_TAG.trim()
+                    def targetTag = params.PRIMARY_TAG?.trim()
+                    if (!(sourceTag ==~ /[\w][\w.-]{0,127}/) || !(targetTag ==~ /[\w][\w.-]{0,127}/) || sourceTag == targetTag) {
+                        error('PROMOTE_SOURCE_TAG and PRIMARY_TAG must be distinct valid Docker tags.')
+                    }
+                    withEnv(["SOURCE_IMAGE=${env.DOCKER_REGISTRY}/${env.IMAGE_NAME}:${sourceTag}", "TARGET_IMAGE=${env.DOCKER_REGISTRY}/${env.IMAGE_NAME}:${targetTag}"]) {
+                        withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+                            sh '''
+                                echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+                                docker buildx imagetools create --tag "$TARGET_IMAGE" "$SOURCE_IMAGE"
+                            '''
+                        }
+                    }
                 }
             }
         }
@@ -122,34 +147,50 @@ pipeline {
 
     post {
         success {
-            emailext (
-                to: "${env.RECIPIENTS}",
-                subject: "✅ Build Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: """
-                <div style='font-family: Arial, sans-serif; padding: 20px; border: 2px solid #d4edda; background-color: #d4edda; color: #155724;'>
-                    <h2>✅ Build Completed Successfully!</h2>
-                    <p>The build has succeeded.</p>
-                    <p>Primary Tag: ${params.PRIMARY_TAG}</p>
-                    <p>Secondary Tag: ${params.PUSH_SECONDARY_TAG ? params.SECONDARY_TAG : 'N/A'}</p>
-                    <p><a href='${env.BUILD_URL}'>View Build Details</a></p>
-                </div>
-                """,
-                mimeType: 'text/html', from: 'psejenkins@cloudera.com'
-            )
+            script {
+                def promoting = params.PROMOTE_SOURCE_TAG?.trim()
+                def subject = promoting
+                    ? "✅ Image Promotion Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
+                    : "✅ Candidate Image Build Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
+                def details = promoting
+                    ? "<p>Verified candidate <strong>${params.PROMOTE_SOURCE_TAG}</strong> was promoted to <strong>${params.PRIMARY_TAG}</strong>.</p>"
+                    : "<p>Candidate image <strong>${params.PRIMARY_TAG}</strong> was built and pushed. PollSCM must complete its integration tests before this candidate is promoted.</p><p>Secondary Tag: ${params.PUSH_SECONDARY_TAG ? params.SECONDARY_TAG : 'N/A'}</p>"
+                emailext (
+                    to: "${env.RECIPIENTS}",
+                    subject: subject,
+                    body: """
+                    <div style='font-family: Arial, sans-serif; padding: 20px; border: 2px solid #d4edda; background-color: #d4edda; color: #155724;'>
+                        <h2>✅ ${promoting ? 'Image Promotion Completed' : 'Candidate Image Build Completed'}</h2>
+                        ${details}
+                        <p><a href='${env.BUILD_URL}'>View Build Details</a></p>
+                    </div>
+                    """,
+                    mimeType: 'text/html', from: 'psejenkins@cloudera.com'
+                )
+            }
         }
         failure {
-            emailext (
-                to: "${env.RECIPIENTS}",
-                subject: "❌ Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: """
-                <div style='font-family: Arial, sans-serif; padding: 20px; border: 2px solid #f8d7da; background-color: #f8d7da; color: #721c24;'>
-                    <h2>❌ Build Failed</h2>
-                    <p>The build has failed.</p>
-                    <p><a href='${env.BUILD_URL}'>View Build Details</a></p>
-                </div>
-                """,
-                mimeType: 'text/html', from: 'psejenkins@cloudera.com'
-            )
+            script {
+                def promoting = params.PROMOTE_SOURCE_TAG?.trim()
+                def subject = promoting
+                    ? "❌ Image Promotion Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
+                    : "❌ Candidate Image Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
+                def details = promoting
+                    ? "<p>Failed to promote <strong>${params.PROMOTE_SOURCE_TAG}</strong> to <strong>${params.PRIMARY_TAG}</strong>.</p>"
+                    : "<p>Failed to build or push candidate image <strong>${params.PRIMARY_TAG}</strong>.</p>"
+                emailext (
+                    to: "${env.RECIPIENTS}",
+                    subject: subject,
+                    body: """
+                    <div style='font-family: Arial, sans-serif; padding: 20px; border: 2px solid #f8d7da; background-color: #f8d7da; color: #721c24;'>
+                        <h2>❌ ${promoting ? 'Image Promotion Failed' : 'Candidate Image Build Failed'}</h2>
+                        ${details}
+                        <p><a href='${env.BUILD_URL}'>View Build Details</a></p>
+                    </div>
+                    """,
+                    mimeType: 'text/html', from: 'psejenkins@cloudera.com'
+                )
+            }
         }
     }
 }
