@@ -27,6 +27,30 @@ The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operato
 
 == Installation
 
+=== Review editable inputs before installing
+
+This manual workflow uses YAML overrides and shell credentials, not a local `.env` file. From the repository root, after copying `K8SOperators/overrides` into your private `~/k8soperators/` working directory as described below, edit only the inputs for the products you intend to deploy:
+
+[source,bash]
+----
+cd ~/k8soperators
+vi overrides/openldap-values.yaml
+vi overrides/nifi_overrides.yaml
+vi overrides/nifiregistry.yaml
+vi overrides/flink-deployment.yaml
+vi overrides/kafka.yaml
+vi overrides/nodepool-broker.yaml
+vi overrides/nodepool-controller.yaml
+----
+
+* *LDAP/CFM:* replace every `<admin_password>` in `global.adminPassword` and `customLdifFiles.nifi.ldif` (`userpassword` / `userPassword`); review `phpldapadmin.ingress.hosts`. Keep the password consistent with the later `openldap-creds` Secret's `managerPassword`. Verify NiFi `spec.hostName`, `spec.image.repository`, `spec.image.tag`, `spec.image.pullSecret`, `spec.tiniImage`, `spec.security.ldap` settings, `spec.security.initialAdminIdentity`, `spec.security.nodeCertGen.issuerRef`, `spec.replicas`, resource requests/limits and persistence sizes. Review the Registry's corresponding image/security settings in its own manifest.
+* *CSA:* verify Flink `metadata.name`, `spec.image`, `spec.podTemplate.spec.imagePullSecrets`, `spec.jobManager.resource`, and `spec.taskManager.resource`. If using the optional session job later, its `spec.deploymentName` must match this deployment.
+* *CSM:* verify Kafka `metadata.name`, `spec.kafka.version`, `spec.kafka.listeners`, replication settings in `spec.kafka.config`, and both node pools' `metadata.labels.strimzi.io/cluster`, `spec.replicas`, `spec.roles`, and `spec.storage`. Labels must match the Kafka name, and replication factors must fit the broker count.
+* *Required credentials/context:* verify the intended Kubernetes context and the namespaces in the commands below, `cloudera_license.txt`, registry Secret names (`docker-pull-secret`), and shell variables `cloudera_username`, `cloudera_password`. Use private credential entry rather than typing real passwords into saved command history. Keep license, populated YAML, Secrets, and editor backups private/untracked.
+
+In `vi`, press `i` to edit, then `Esc`, `:wq`, Enter to save/quit (`:q!` discards edits).
+Review these source manifests before the install/apply steps. The status commands later in this guide are *post-install* checks, not configuration-only validation; no offline validation script is shipped. Do not edit generated certificates, live operator-managed resources, or generated output to substitute for source configuration.
+
 [NOTE]
 ====
 📝 All `**yaml**` files used for deploying various resources are located in the link:./overrides[`**overrides**`] folder.
@@ -37,16 +61,17 @@ The canonical documentation is https://docs.cloudera.com/?tab=kubernetes-operato
 +
 [source, bash]
 ----
-mkdir ~/k8soperators
-git clone --depth 1 --branch main https://github.com/cloudera/cloudera-partners.git /tmp/repo && \
-    cp -r /tmp/repo/K8SOperators/overrides ~/k8soperators/ && \
-    rm -rf /tmp/repo
+# From the PSEAutomation repository root, for a new working directory only:
+mkdir -p ~/k8soperators
+cp -R K8SOperators/overrides ~/k8soperators/
 
 #Similarly copy the cloudera_license file to this directory.
 
 # Run all commands from below location.
 cd ~/k8soperators/
 ----
+
+Do not repeat the copy over already customized overrides. Complete the configuration review above before continuing with installation.
 
 .. Verify the content
 +

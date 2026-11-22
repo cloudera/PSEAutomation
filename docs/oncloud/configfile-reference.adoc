@@ -13,6 +13,37 @@ Both AWS and Azure provisioners read a flat `configfile` mounted at `/userconfig
 * One key per line: `KEY:value` — no quotes, no blank line after the last entry.
 * Lines starting with `#` are comments (ignored when copying; remove for production).
 
+[[operator-checklist]]
+== Operator checklist before provision or destroy
+
+Use the provider's runbook to copy its example into a private host directory, then edit the actual mounted input:
+
+[source,bash]
+----
+vi ~/hol-userconfig/configfile
+----
+
+This path is the host file mounted as `/userconfig/configfile`; it is not an `.env` file and must not be sourced. In `vi`, use `i` to edit, then `Esc`, `:wq`, Enter to save/quit (`:q!` instead discards edits).
+The parser removes whitespace from values: use whitespace-free values, no shell quoting, and one unique entry per key. Keep the final entry newline-terminated without adding an empty trailing line.
+
+* *Required on both providers:* verify `PROVISION_KEYCLOAK` (`yes`/`no`), `CDP_DEPLOYMENT_TYPE` (`public`, `private`, or `semi-private`), `WORKSHOP_NAME` (lowercase letters/digits/hyphens, at most 12 characters), `NUMBER_OF_WORKSHOP_USERS`, `WORKSHOP_USER_PREFIX`, `WORKSHOP_USER_DEFAULT_PASSWORD`, `LOCAL_MACHINE_IP`, `ENABLE_DATA_SERVICES`, `DOMAIN`, `HOSTEDZONEID`, and `DATALAKE_VERSION` (`latest` or `X.Y.Z`, supported by your entitlement). Select `CDW,CAI,CDE,CDF` as needed, or `NONE`; prefer a restrictive operator/VPN CIDR.
+* *Provider required:* set `AWS_REGION` for AWS or `AZURE_REGION` for Azure. For Azure, verify the authenticated subscription (or `AZURE_SUBSCRIPTION_ID` when selecting it explicitly) and regional PostgreSQL Flexible Server availability. `AWS_REGION` in an Azure config is for Keycloak DNS, not the CDP region.
+* *Conditional:* `KEYCLOAK_ADMIN_PASSWORD` is required when `PROVISION_KEYCLOAK:yes`. `DOMAIN` and `HOSTEDZONEID` are still required by both validators even when Keycloak is disabled; when enabled they must identify a domain/Route53 zone you control. Azure also needs AWS DNS credentials when Keycloak is enabled.
+* *Explicit choices:* set `PROVISION_CAII` to `yes`/`no`; `yes` forbids `LOCAL_MACHINE_IP:0.0.0.0/0`. Review `DELETE_DATAHUBS` (default `true`); `false` is not a way to destroy infrastructure while attached Data Hubs remain.
+* *Optional existing key:* AWS `AWS_KEY_PAIR` or Azure `SSH_KEY_NAME` (alias `AWS_KEY_PAIR`) must match the private `<name>.pem` in the mounted directory; otherwise the workflow generates a key. Protect supplied private keys with mode 600/400.
+* *Optional overrides only for selected services:* review the sizing tables below (`CDW_*`, `CDE_*`, `CAI_*`, `CDF_*`), GPU settings only when enabled, and Azure `CAI_NFS_VERSION` for CAI/CAII. Do not copy AWS instance types into Azure. Leave quota overrides `CDP_SAML_PROVIDER_LIMIT`, `CDP_USER_LIMIT`, `CDP_GROUP_LIMIT` unset unless intentionally overriding the checks.
+* *Tags and placeholders:* set `ENV_TAGS` with your `pse-owner` cost-tracking tag. Replace `changeme`, `example.com`, `Z1234567890ABC`, `203.0.113.10/32`, sample owner/IDs, and any enabled credential/key placeholders; these are not usable deployment values.
+
+Prefer mounted CLI credentials configured through the provider/CDP tools. Never add secrets to tracked examples, paste them into tickets, or print the full config for review. Keep config files mode 600 and their directory mode 700, including editor backups.
+
+=== Validation sequence and generated files
+
+. Review the checklist and confirm the correct provider example, host mount, credentials, region/subscription, and existing workshop identity. Do not overwrite inputs or change `WORKSHOP_NAME` when resuming or destroying an existing workshop.
+. There is *no standalone validate/dry-run action* in either container entrypoint; valid actions are `provision` and `destroy`. Their config validation precedes resource operations, but invoking them is not a safe configuration-only test. Do not source `hol-functions.sh` as a validator.
+. If authorized to perform read-only cloud checks, existing guides use `aws sts get-caller-identity` for AWS identity and `az postgres flexible-server list-skus --location <region>` for Azure regional availability (replace `<region>`). These contact cloud APIs and do not validate every input. Only after configuration review and authorization proceed to the runbook's provisioning command.
+
+Edit only the host `configfile` for workshop inputs. Jenkins generates its config from job parameters/credentials; change those sources instead (link:../../OnCloud/JENKINS-PIPELINES.adoc[Jenkins guide]). Never edit generated `/userconfig/.<WORKSHOP_NAME>/` Terraform/state/key/log artifacts or `/userconfig/<WORKSHOP_NAME>.txt` access output to configure a run. Preserve that directory for subsequent teardown and protect it as sensitive.
+
 == Core settings (required)
 
 |===
@@ -24,13 +55,13 @@ Both AWS and Azure provisioners read a flat `configfile` mounted at `/userconfig
 | `yes` or `no` — provision Keycloak for SSO workshop access
 
 | `KEYCLOAK_ADMIN_PASSWORD`
-| yes
-| yes
+| conditional
+| conditional
 | Keycloak admin password
 
 | `PROVISION_CAII`
-| yes
-| yes
+| optional; set explicitly
+| optional; set explicitly
 | `yes` or `no` — provision Cloudera AI Inference. When `yes`, `LOCAL_MACHINE_IP` cannot be `0.0.0.0/0`
 
 | `AWS_REGION` / `AZURE_REGION`
@@ -264,9 +295,13 @@ cdp dw describe-allowed-instance-types \
 | Tag map for deployed resources, for example `{pse-owner=you@cloudera.com,apn-id=12345}`. `pse-owner` is required for cost tracking.
 |===
 
-== Cloud credentials (optional alternatives to volume mounts)
+== Cloud credentials
 
-=== AWS
+CDP credentials are supplied through the configured `~/.cdp` mount, not invented `CDP_ACCESS_KEY_ID` / `CDP_PRIVATE_KEY` configfile keys.
+On *AWS*, the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` configfile handlers and setup function in `entrypoint/hol-functions.sh` are commented out despite their appearance in the example. Use the documented `~/.aws` mount/authentication workflow; do not treat those config entries as a working alternative.
+On *Azure*, the parser accepts the service-principal keys below and AWS keys for Route53; configured CLI mounts are the preferred way to avoid secrets in the config.
+
+=== AWS keys accepted by the Azure provisioner for DNS
 
 |===
 | Key | Description

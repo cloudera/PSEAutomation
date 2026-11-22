@@ -10,10 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - CDE Core and All Purpose max instances default 40 (was 3) in `enable-cde.yml`, `hol-functions.sh`, Jenkins DeployHoL/PollSCM, and `configfile.example`; `CDE_MAX_INSTANCES` applies to both instance groups; min/initial still follow active `CDE_VC_TIER` (inactive tier min/initial 0).
 
+## [5.0.1] - 2026-10-29
+
+### Fixed
+- CDE teardown now handles an empty virtual cluster list with Ansible 2.16.
+
+## [5.0.0] - 2026-10-29
+
 ### Added
 - Trino Virtual Warehouses are created alongside Hive and Impala, using a live-validated CDP instance type; auto-suspend is enabled for all three engines by default and is configurable.
 
+### Changed
+- Environment role assignment avoids redundant CDP lookups and runs only at the lifecycle stages that require it.
+- The provisioner image now uses Terraform 1.16.4.
+- AWS operator and configuration documentation now clarifies pre-run validation, credential handling, sensitive artifacts, and Jenkins inputs.
+
 ### Fixed
+- Environment teardown can delete Data Hubs before infrastructure destruction, supports retaining them with `DELETE_DATAHUBS=false`, and remains idempotent when the CDP environment is already absent.
 - Keycloak EC2 provisioning no longer uses unused SSH file provisioners that could crash Terraform when the instance public DNS was still unknown.
 - Repeated or whitespace-padded `LOCAL_MACHINE_IP` CIDRs are normalized before Terraform, preventing duplicate CDP security-group rule failures.
 - Existing Keycloak deployments reconcile Terraform changes on reruns; all explicit specific CIDRs receive unrestricted ingress, while `0.0.0.0/0` receives only ports 22, 80, 443, and 5000.

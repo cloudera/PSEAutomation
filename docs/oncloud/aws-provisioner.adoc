@@ -92,7 +92,7 @@ See link:configfile-reference.adoc[configfile reference] for all supported keys.
 
 The provisioner supports three authentication mechanisms:
 
-a) *Access key* — `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (via `~/.aws` mount or configfile)
+a) *Access key* — configured through the AWS CLI and supplied via the `~/.aws` mount. The current AWS configfile credential handlers are commented out; do not rely on credential entries in that file.
 
 b) *AWS SSO* — via Okta/SAML profile in `~/.aws`
 

@@ -31,6 +31,11 @@ Each module includes a concise runbook-style `README.adoc` for day-to-day use. L
 
 == Repository Structure
 
+Before running a module, follow its configuration checklist in the linked runbook; there is no repository-wide `.env` file. OnCloud and the Utilities operator container use `KEY:value` files, ClusterValidation uses sourced shell assignments, and other modules use Terraform/YAML inputs or script settings.
+
+For the `vi filename` commands in these guides, press `i` to edit, then `Esc` and `:wq` followed by Enter to save and quit; `Esc`, `:q!`, Enter discards unsaved edits.
+Replace all example hosts, IDs, usernames, passwords, paths, and angle-bracket placeholders before running. Keep local credentials, licenses, private keys, state, reports, and editor swap/backup files out of Git and shared logs. Use restrictive file permissions and the workflow's credential prompts/mounts rather than putting secrets in command history. Never edit generated state, plans, inventories, handoffs, or reports to change configuration; update the source inputs instead.
+
 === CDP_Validation_TPCDS
 
 This folder contains instructions to perform benchmarking of Cloudera Data Platform (CDP) environments through TPC-DS and Terasuite performance testing. It generates benchmark datasets at a chosen scale, executes engine-specific query suites, and produces result sheets to validate cluster performance and readiness for certification.
@@ -101,4 +106,3 @@ This folder contains general-purpose scripts, helper tools, and reusable automat
 **Copyright Notice**  
 All material is Copyright (c) 2020-2025 Cloudera, Inc. unless stated otherwise.  
 ====
-

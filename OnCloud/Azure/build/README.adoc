@@ -31,10 +31,14 @@ docker pull clouderapartners/cdp-public-cloud-hol-provisioner-azure:latest
 [source,bash]
 ----
 mkdir -p ~/hol-userconfig
-cp configuration/configfile.example ~/hol-userconfig/configfile
-# Edit required keys: AZURE_REGION, WORKSHOP_NAME, DOMAIN, HOSTEDZONEID, etc.
+cp OnCloud/Azure/build/configuration/configfile.example ~/hol-userconfig/configfile
+chmod 700 ~/hol-userconfig
+chmod 600 ~/hol-userconfig/configfile
+vi ~/hol-userconfig/configfile
 # Optional: place <SSH_KEY_NAME>.pem in the same directory
 ----
+
+Run the copy command from the repository root, only for a *new* workshop directory; do not overwrite an existing workshop's inputs. Complete the link:../../../docs/oncloud/configfile-reference.adoc#operator-checklist[operator checklist] before step 3, including `AZURE_REGION`, subscription/authentication, passwords, workshop identity, access CIDR, service choices, and DNS values. This is a colon-delimited file, not a shell `.env`; do not source it. See the root link:../../../README.adoc[README] for `vi` save/quit guidance.
 
 === 3. Provision
 
@@ -214,11 +218,13 @@ If Terraform fails creating `cdp_datalake_azure_datalake` with `The value of the
 
 * Confirm `DATALAKE_VERSION` is set in the job/configfile (provisioner logs `Datalake version:` before Terraform apply).
 * In Azure Portal, open the failed deployment **Operations** for the datalake resource group and read the underlying ARM error.
-* Try another region (PollSCM and deploy jobs default to `westus2`; `eastus` may return empty SKU lists on some subscriptions) or open an Azure **Quota / region access** request if SKU lists are empty for your subscription.
+* Try another region using the PollSCM or deploy job's `AZURE_REGION` parameter (default `westus2`) or request Azure region access. Before provisioning, the deploy job checks subscription-specific PostgreSQL Flexible Server versions, SKUs and restrictions. If the region is unavailable, it reports verified alternatives and fails without changing regions or creating resources. Availability can change and does not guarantee that the datalake's particular version, SKU or quota is sufficient; inspect the deployment operation for the exact error.
 
 == Jenkins pipelines
 
 Workshop **provision** / **destroy** jobs: `Jenkinsfile.DeployHoL` and `Jenkinsfile.TestDeployHoL`.
+
+The PollSCM job builds a uniquely tagged registry candidate for each selected cloud, uses that image for provision and destroy, and promotes it to `latest` only after both succeed for that cloud. Clouds are evaluated independently; the overall job fails if any selected cloud fails. The AWS and Azure build jobs must load the updated `Jenkinsfile.Build` before PollSCM can use their `PROMOTE_SOURCE_TAG` parameter, and their agents need Docker Buildx for promotion.
 
 * link:../../JENKINS-PIPELINES.adoc[Jenkins pipelines guide] — all jobs, parameters, stages, local image build (`BUILD_LOCAL_IMAGE`, `BUILD_IMAGE_TAG`), and CDP role assignment
 * Image build job: `Jenkinsfile.Build` (default branch `main`)

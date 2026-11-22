@@ -68,6 +68,20 @@ image::Disable_Reset_Password.png[Disable Reset Password on First Login]
 == Run Bulk AMP creation
 In this step you will run an automation script that launches an AMP for each paricipant. First, a few configuration steps:
 
+From the repository root, edit the actual source inputs (there is no `.env` loader):
+
+[source,bash]
+----
+cd Participant_amps/amplifier
+vi amplifier.py
+vi participants.csv
+----
+
+Verify required `SSO_URL` (replace `<SSO_URL>`), `WORKSPACE_URL` (replace the previous workshop URL), and `AMP_NAME` (exact catalog display name). Check that `participants.csv` has the exact `username,password` headers and only the intended users. Optional tuning in `amplifier.py` is `ADD_DELAY` and `batch_size`; verify `chrome_driver_path` points at the matching local driver.
+Use `i` to edit in `vi`, then `Esc`, `:wq`, Enter to save/quit (`:q!` discards edits). Do not commit the populated CSV or editor backups. The current script prints participant passwords and writes login screenshots, so run only in a private terminal and do not capture/share its stdout, screenshots, or logs. No secret-safe logging change is implied by this guide.
+
+There is no dry-run mode: running or importing `amplifier.py` starts browser automation and creates projects. Review the source settings/CSV first, complete the ChromeDriver test above, then run from this directory. Login screenshots are generated output, not configuration. Configure any AMP-specific environment fields in the workbench/catalog as required by that AMP, not in an invented local env file.
+
 .. Make sure all of the participant credentials are listed properly in ```./amplifier/participants.csv```. These are the Keycloak credentials for all the users.
 .. Open up ```./amplifier/amplifier.py``` and edit three global variables at the top:
     * **SSO_URL** - set it to the URL you use to get to the SSO interface of your CDP tenant (e.g. sandbox or marketing tenant)

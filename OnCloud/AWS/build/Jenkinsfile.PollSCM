@@ -19,14 +19,14 @@ pipeline {
             choices: ['BOTH', 'AWS', 'AZURE'],
             description: 'Run integration deploy/destroy on AWS, Azure, or both in parallel'
         )
-        string(name: 'AWS_BUILD_BRANCH', defaultValue: 'main', description: 'Git branch for AWS local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
-        string(name: 'AZURE_BUILD_BRANCH', defaultValue: 'main', description: 'Git branch for Azure local image build (IMAGE_BUILD_BRANCH on deploy jobs)')
-        string(name: 'BUILD_IMAGE_TAG', defaultValue: 'testbuildimage', description: 'Local Docker image tag passed to deploy/destroy when BUILD_LOCAL_IMAGE=true')
+        string(name: 'AWS_BUILD_BRANCH', defaultValue: 'main', description: 'Git branch for the AWS candidate image')
+        string(name: 'AZURE_BUILD_BRANCH', defaultValue: 'main', description: 'Git branch for the Azure candidate image')
+        string(name: 'AWS_REGION', defaultValue: 'ap-southeast-1', description: 'AWS region for provision and destroy')
+        string(name: 'AZURE_REGION', defaultValue: 'westus2', description: 'Azure region with PostgreSQL Flexible Server capacity for this subscription')
         string(name: 'DOMAIN', defaultValue: 'clouderapartners.click', description: 'Route53 domain for Keycloak/DNS (passed to deploy/destroy jobs)')
         string(name: 'HOSTEDZONEID', defaultValue: '', description: 'Route53 hosted zone ID for DOMAIN (set on Jenkins job; not stored in repo)')
         string(name: 'DATALAKE_VERSION', defaultValue: '7.3.2', description: 'CDP datalake runtime passed to deploy/destroy (e.g. 7.3.2)')
         booleanParam(name: 'DELETE_DATAHUBS', defaultValue: true, description: 'Delete environment Data Hubs during destroy.')
-        booleanParam(name: 'BUILD_LOCAL_IMAGE', defaultValue: false, description: 'Build image on deploy agents; when false, pull IMAGE_TAG from registry')
     }
     
     triggers {
@@ -56,35 +56,51 @@ pipeline {
                 script {
                     def runAws = params.CLOUD_TARGET in ['BOTH', 'AWS']
                     def runAzure = params.CLOUD_TARGET in ['BOTH', 'AZURE']
+                    if (!runAws && !runAzure) {
+                        error("CLOUD_TARGET '${params.CLOUD_TARGET}' did not select any cloud")
+                    }
                     echo "CLOUD_TARGET=${params.CLOUD_TARGET} (AWS=${runAws}, Azure=${runAzure})"
-                    echo 'Deploy/destroy use registry image by default (BUILD_LOCAL_IMAGE=false). Enable BUILD_LOCAL_IMAGE or uncomment registry build below.'
-                    // Registry image build (re-enable to push to Docker Hub before deploy):
-                    /*
+                    env.CANDIDATE_TAG = "candidate-${java.util.UUID.randomUUID()}"
                     def buildBranches = [:]
                     if (runAws) {
                         buildBranches['AWS'] = {
                             echo "Triggering ${BUILD_JOB_AWS}..."
-                            build job: BUILD_JOB_AWS,
+                            def result = build job: BUILD_JOB_AWS,
                                 parameters: [
-                                    string(name: 'BUILD_BRANCH', value: "${params.AWS_BUILD_BRANCH}")
+                                    string(name: 'BUILD_BRANCH', value: "${params.AWS_BUILD_BRANCH}"),
+                                    string(name: 'PRIMARY_TAG', value: env.CANDIDATE_TAG),
+                                    string(name: 'PROMOTE_SOURCE_TAG', value: ''),
+                                    string(name: 'TF_QS_VER', value: 'main'),
+                                    booleanParam(name: 'PUSH_SECONDARY_TAG', value: false),
+                                    booleanParam(name: 'MULTI_PLATFORM_BUILD', value: false),
+                                    booleanParam(name: 'REFRESH_JENKINSFILE', value: false)
                                 ],
-                                propagate: true
+                                propagate: false
+                            env.AWS_BUILD_OK = (result.result == 'SUCCESS').toString()
+                            echo "AWS candidate build: ${result.result}"
                         }
                     }
                     if (runAzure) {
                         buildBranches['Azure'] = {
                             echo "Triggering ${BUILD_JOB_AZURE}..."
-                            build job: BUILD_JOB_AZURE,
+                            def result = build job: BUILD_JOB_AZURE,
                                 parameters: [
-                                    string(name: 'BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}")
+                                    string(name: 'BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
+                                    string(name: 'PRIMARY_TAG', value: env.CANDIDATE_TAG),
+                                    string(name: 'PROMOTE_SOURCE_TAG', value: ''),
+                                    string(name: 'TF_QS_VER', value: 'main'),
+                                    booleanParam(name: 'PUSH_SECONDARY_TAG', value: false),
+                                    booleanParam(name: 'MULTI_PLATFORM_BUILD', value: false),
+                                    booleanParam(name: 'REFRESH_JENKINSFILE', value: false)
                                 ],
-                                propagate: true
+                                propagate: false
+                            env.AZURE_BUILD_OK = (result.result == 'SUCCESS').toString()
+                            echo "Azure candidate build: ${result.result}"
                         }
                     }
                     if (!buildBranches.isEmpty()) {
                         parallel buildBranches
                     }
-                    */
                 }
             }
         }
@@ -105,7 +121,7 @@ pipeline {
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'DOMAIN', value: "${params.DOMAIN}"),
                         string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
-                        string(name: 'AWS_REGION', value: 'ap-southeast-1'),
+                        string(name: 'AWS_REGION', value: "${params.AWS_REGION}"),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
                         string(name: 'WORKSHOP_NAME', value: awsWorkshopName),
@@ -137,9 +153,8 @@ pipeline {
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'DATALAKE_VERSION', value: "${params.DATALAKE_VERSION}"),
                         string(name: 'ACTION', value: 'provision'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain'),
-                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: params.BUILD_LOCAL_IMAGE),
-                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_TAG', value: env.CANDIDATE_TAG),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: false),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AWS_BUILD_BRANCH}"),
                         string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
@@ -152,7 +167,7 @@ pipeline {
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'DOMAIN', value: "${params.DOMAIN}"),
                         string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
-                        string(name: 'AZURE_REGION', value: 'westus2'),
+                        string(name: 'AZURE_REGION', value: "${params.AZURE_REGION}"),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
                         string(name: 'WORKSHOP_NAME', value: azureWorkshopName),
@@ -184,9 +199,8 @@ pipeline {
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'DATALAKE_VERSION', value: "${params.DATALAKE_VERSION}"),
                         string(name: 'ACTION', value: 'provision'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain'),
-                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: params.BUILD_LOCAL_IMAGE),
-                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_TAG', value: env.CANDIDATE_TAG),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: false),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
                         string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
@@ -194,22 +208,25 @@ pipeline {
                     def runAws = params.CLOUD_TARGET in ['BOTH', 'AWS']
                     def runAzure = params.CLOUD_TARGET in ['BOTH', 'AZURE']
                     def deployBranches = [:]
-                    if (runAws) {
+                    if (runAws && env.AWS_BUILD_OK == 'true') {
                         deployBranches['AWS'] = {
                             echo 'Triggering AWS deploy job...'
-                            build job: REMOTE_JOB_AWS, parameters: awsDeployParams
+                            def result = build job: REMOTE_JOB_AWS, parameters: awsDeployParams, propagate: false
+                            env.AWS_DEPLOY_OK = (result.result == 'SUCCESS').toString()
+                            echo "AWS deploy: ${result.result}"
                         }
                     }
-                    if (runAzure) {
+                    if (runAzure && env.AZURE_BUILD_OK == 'true') {
                         deployBranches['Azure'] = {
                             echo 'Triggering Azure deploy job...'
-                            build job: REMOTE_JOB_AZURE, parameters: azureDeployParams
+                            def result = build job: REMOTE_JOB_AZURE, parameters: azureDeployParams, propagate: false
+                            env.AZURE_DEPLOY_OK = (result.result == 'SUCCESS').toString()
+                            echo "Azure deploy: ${result.result}"
                         }
                     }
-                    if (deployBranches.isEmpty()) {
-                        error("CLOUD_TARGET '${params.CLOUD_TARGET}' did not select any cloud")
+                    if (!deployBranches.isEmpty()) {
+                        parallel deployBranches
                     }
-                    parallel deployBranches
                 }
             }
             post {
@@ -267,7 +284,7 @@ pipeline {
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'DOMAIN', value: "${params.DOMAIN}"),
                         string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
-                        string(name: 'AWS_REGION', value: 'ap-southeast-1'),
+                        string(name: 'AWS_REGION', value: "${params.AWS_REGION}"),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
                         string(name: 'WORKSHOP_NAME', value: awsWorkshopName),
@@ -299,9 +316,8 @@ pipeline {
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'DATALAKE_VERSION', value: "${params.DATALAKE_VERSION}"),
                         string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain'),
-                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: params.BUILD_LOCAL_IMAGE),
-                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_TAG', value: env.CANDIDATE_TAG),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: false),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AWS_BUILD_BRANCH}"),
                         string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
@@ -314,7 +330,7 @@ pipeline {
                         string(name: 'KEYCLOAK_ADMIN_PASSWORD', value: 'admin'),
                         string(name: 'DOMAIN', value: "${params.DOMAIN}"),
                         string(name: 'HOSTEDZONEID', value: "${params.HOSTEDZONEID}"),
-                        string(name: 'AZURE_REGION', value: 'westus2'),
+                        string(name: 'AZURE_REGION', value: "${params.AZURE_REGION}"),
                         string(name: 'CDP_DEPLOYMENT_TYPE', value: 'public'),
                         string(name: 'LOCAL_MACHINE_IP', value: '0.0.0.0/0'),
                         string(name: 'WORKSHOP_NAME', value: azureWorkshopName),
@@ -346,9 +362,8 @@ pipeline {
                         booleanParam(name: 'CDF_USE_PUBLIC_LB', value: true),
                         string(name: 'DATALAKE_VERSION', value: "${params.DATALAKE_VERSION}"),
                         string(name: 'ACTION', value: 'destroy'),  // Set action for deploy
-                        string(name: 'IMAGE_TAG', value: 'testmain'),
-                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: params.BUILD_LOCAL_IMAGE),
-                        string(name: 'BUILD_IMAGE_TAG', value: "${params.BUILD_IMAGE_TAG}"),
+                        string(name: 'IMAGE_TAG', value: env.CANDIDATE_TAG),
+                        booleanParam(name: 'BUILD_LOCAL_IMAGE', value: false),
                         string(name: 'IMAGE_BUILD_BRANCH', value: "${params.AZURE_BUILD_BRANCH}"),
                         string(name: 'IMAGE_BUILD_TF_QS_VER', value: 'main')
                     ]
@@ -356,22 +371,25 @@ pipeline {
                     def runAws = params.CLOUD_TARGET in ['BOTH', 'AWS']
                     def runAzure = params.CLOUD_TARGET in ['BOTH', 'AZURE']
                     def destroyBranches = [:]
-                    if (runAws) {
+                    if (runAws && env.AWS_DEPLOY_OK == 'true') {
                         destroyBranches['AWS'] = {
                             echo 'Triggering AWS destroy job...'
-                            build job: REMOTE_JOB_AWS, parameters: awsDestroyParams
+                            def result = build job: REMOTE_JOB_AWS, parameters: awsDestroyParams, propagate: false
+                            env.AWS_DESTROY_OK = (result.result == 'SUCCESS').toString()
+                            echo "AWS destroy: ${result.result}"
                         }
                     }
-                    if (runAzure) {
+                    if (runAzure && env.AZURE_DEPLOY_OK == 'true') {
                         destroyBranches['Azure'] = {
                             echo 'Triggering Azure destroy job...'
-                            build job: REMOTE_JOB_AZURE, parameters: azureDestroyParams
+                            def result = build job: REMOTE_JOB_AZURE, parameters: azureDestroyParams, propagate: false
+                            env.AZURE_DESTROY_OK = (result.result == 'SUCCESS').toString()
+                            echo "Azure destroy: ${result.result}"
                         }
                     }
-                    if (destroyBranches.isEmpty()) {
-                        error("CLOUD_TARGET '${params.CLOUD_TARGET}' did not select any cloud")
+                    if (!destroyBranches.isEmpty()) {
+                        parallel destroyBranches
                     }
-                    parallel destroyBranches
                 }
             }
             post {
@@ -412,37 +430,134 @@ pipeline {
                 }
             }
         }
+
+        stage('Promote Verified Images') {
+            steps {
+                script {
+                    def promotionBranches = [:]
+                    if (env.AWS_DESTROY_OK == 'true') {
+                        promotionBranches['AWS'] = {
+                            def result = build job: BUILD_JOB_AWS, parameters: [
+                                string(name: 'PRIMARY_TAG', value: 'latest'),
+                                string(name: 'PROMOTE_SOURCE_TAG', value: env.CANDIDATE_TAG),
+                                booleanParam(name: 'PUSH_SECONDARY_TAG', value: false),
+                                booleanParam(name: 'REFRESH_JENKINSFILE', value: false)
+                            ], propagate: false
+                            env.AWS_PROMOTE_OK = (result.result == 'SUCCESS').toString()
+                            echo "AWS promotion: ${result.result}"
+                        }
+                    }
+                    if (env.AZURE_DESTROY_OK == 'true') {
+                        promotionBranches['Azure'] = {
+                            def result = build job: BUILD_JOB_AZURE, parameters: [
+                                string(name: 'PRIMARY_TAG', value: 'latest'),
+                                string(name: 'PROMOTE_SOURCE_TAG', value: env.CANDIDATE_TAG),
+                                booleanParam(name: 'PUSH_SECONDARY_TAG', value: false),
+                                booleanParam(name: 'REFRESH_JENKINSFILE', value: false)
+                            ], propagate: false
+                            env.AZURE_PROMOTE_OK = (result.result == 'SUCCESS').toString()
+                            echo "Azure promotion: ${result.result}"
+                        }
+                    }
+                    if (!promotionBranches.isEmpty()) {
+                        parallel promotionBranches
+                    }
+                    def failedClouds = []
+                    if (params.CLOUD_TARGET in ['BOTH', 'AWS'] && env.AWS_PROMOTE_OK != 'true') {
+                        failedClouds.add('AWS')
+                    }
+                    if (params.CLOUD_TARGET in ['BOTH', 'AZURE'] && env.AZURE_PROMOTE_OK != 'true') {
+                        failedClouds.add('Azure')
+                    }
+                    if (failedClouds) {
+                        error("Candidate build, deploy, destroy, or promotion failed for: ${failedClouds.join(', ')}")
+                    }
+                }
+            }
+        }
     }
 
     post {
         success {
-            // Send email when both deploy and destroy succeed
-            emailext (
-                to: EMAIL_RECIPIENTS,
-                subject: "✅ Pipeline Status: Deploy and Destroy Success",
-                body: """
-                <div style="font-family: Arial, sans-serif; padding: 20px; border: 2px solid #d4edda; background-color: #d4edda; color: #155724;">
-                    <h2 style="color: #155724;">✅ Pipeline Completed Successfully!</h2>
-                    <p>Both Deploy and Destroy stages have succeeded.</p>
-                    <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
-                        <tr>
-                            <th style="background-color: #c3e6cb; padding: 10px; border: 1px solid #e0e0e0; text-align: left;">Job Name</th>
-                            <th style="background-color: #c3e6cb; padding: 10px; border: 1px solid #e0e0e0; text-align: left;">Job URL</th>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px; border: 1px solid #e0e0e0;">${JOB_NAME}</td>
-                            <td style="padding: 10px; border: 1px solid #e0e0e0;"><a href="${env.BUILD_URL}" style="text-decoration: none; color: #337ab7;">${env.BUILD_URL}</a></td>
-                        </tr>
-                    </table>
-                </div>
-                """,
-                mimeType: 'text/html',
-                from: 'psejenkins@cloudera.com'
-            )
+            script {
+                def statusText = { value ->
+                    value == 'true' ? 'SUCCESS' : value == 'false' ? 'FAILED' : 'NOT RUN'
+                }
+                def cloudRow = { String cloud, boolean selected ->
+                    if (!selected) {
+                        return ''
+                    }
+                    """
+                    <tr>
+                        <td>${cloud}</td>
+                        <td>${statusText(env["${cloud.toUpperCase()}_BUILD_OK"])}</td>
+                        <td>${statusText(env["${cloud.toUpperCase()}_DEPLOY_OK"])}</td>
+                        <td>${statusText(env["${cloud.toUpperCase()}_DESTROY_OK"])}</td>
+                        <td>${statusText(env["${cloud.toUpperCase()}_PROMOTE_OK"])}</td>
+                    </tr>
+                    """
+                }
+                def results = cloudRow('AWS', params.CLOUD_TARGET in ['BOTH', 'AWS']) +
+                    cloudRow('Azure', params.CLOUD_TARGET in ['BOTH', 'AZURE'])
+                emailext (
+                    to: EMAIL_RECIPIENTS,
+                    subject: "✅ PollSCM: ${params.CLOUD_TARGET} images promoted to latest",
+                    body: """
+                    <div style="font-family: Arial, sans-serif; padding: 20px; border: 2px solid #d4edda; background-color: #d4edda; color: #155724;">
+                        <h2>✅ Verified image promotion succeeded</h2>
+                        <p>The selected cloud images passed candidate build, provision and destroy, then were promoted to <strong>latest</strong>.</p>
+                        <p>Candidate tag: ${env.CANDIDATE_TAG ?: 'N/A'}</p>
+                        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+                            <tr><th>Cloud</th><th>Candidate build</th><th>Provision</th><th>Destroy</th><th>Promotion</th></tr>
+                            ${results}
+                        </table>
+                        <p>Job: ${JOB_NAME} — <a href="${env.BUILD_URL}">View build details</a></p>
+                    </div>
+                    """,
+                    mimeType: 'text/html',
+                    from: 'psejenkins@cloudera.com'
+                )
+            }
         }
         failure {
             script {
-                echo "Pipeline has failed"
+                def statusText = { value ->
+                    value == 'true' ? 'SUCCESS' : value == 'false' ? 'FAILED' : 'NOT RUN'
+                }
+                def cloudRow = { String cloud, boolean selected ->
+                    if (!selected) {
+                        return ''
+                    }
+                    """
+                    <tr>
+                        <td>${cloud}</td>
+                        <td>${statusText(env["${cloud.toUpperCase()}_BUILD_OK"])}</td>
+                        <td>${statusText(env["${cloud.toUpperCase()}_DEPLOY_OK"])}</td>
+                        <td>${statusText(env["${cloud.toUpperCase()}_DESTROY_OK"])}</td>
+                        <td>${statusText(env["${cloud.toUpperCase()}_PROMOTE_OK"])}</td>
+                    </tr>
+                    """
+                }
+                def results = cloudRow('AWS', params.CLOUD_TARGET in ['BOTH', 'AWS']) +
+                    cloudRow('Azure', params.CLOUD_TARGET in ['BOTH', 'AZURE'])
+                emailext (
+                    to: EMAIL_RECIPIENTS,
+                    subject: "❌ PollSCM: ${params.CLOUD_TARGET} image verification or promotion failed",
+                    body: """
+                    <div style="font-family: Arial, sans-serif; padding: 20px; border: 2px solid #f8d7da; background-color: #f8d7da; color: #721c24;">
+                        <h2>❌ Candidate verification or image promotion failed</h2>
+                        <p>A failed or unrun step prevents that cloud's candidate from being promoted. A successful cloud may still have been promoted independently.</p>
+                        <p>Candidate tag: ${env.CANDIDATE_TAG ?: 'N/A'}</p>
+                        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+                            <tr><th>Cloud</th><th>Candidate build</th><th>Provision</th><th>Destroy</th><th>Promotion</th></tr>
+                            ${results}
+                        </table>
+                        <p>Job: ${JOB_NAME} — <a href="${env.BUILD_URL}">View build details</a></p>
+                    </div>
+                    """,
+                    mimeType: 'text/html',
+                    from: 'psejenkins@cloudera.com'
+                )
             }
         }
         always {

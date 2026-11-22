@@ -51,6 +51,39 @@ If you need to run at a higher scale, that is fine, but be aware you may need to
 
 == How to Run the Tests
 
+=== Review configuration before generating data or running queries
+
+There is no suite-wide `.env`. Engine guides set shell variables and/or edit the actual scripts below. Run the following `vi` commands from the repository root against your working copies; do not run benchmark scripts as a configuration test.
+
+[cols="1,2,3",options="header"]
+|===
+| Workflow | Actual edit command | Checklist
+| Terasuite
+| `vi CDP_Validation_TPCDS/Terasuite/parameters.sh`
+| Verify `DATA_VOL`, `OUTPUT_DIR_PREFIX`, `REPLICATION`, `BLOCK_SIZE`, `MAP_CPU`, `REDUCE_CPU`, `MAP_MEMORY`, `REDUCE_MEMORY`, `NUM_MAPPERS`, `NUM_REDUCERS`. `S3A_PREFIX` is optional for object storage; otherwise HDFS paths are used. Match volume/output labels and available capacity.
+| Hive (Base or Data Services)
+| `vi CDP_Validation_TPCDS/hive-tpcds-kit/tpcds-gen.sh` +
+`vi CDP_Validation_TPCDS/hive-tpcds-kit/tpcds-setup.sh` +
+`vi CDP_Validation_TPCDS/hive-tpcds-kit/util_internalRunQuery.sh`
+| Review `HIVE` in each script that uses it; set the endpoint, database interpolation, transport/HTTP path, Kerberos principal/realm and TLS truststore for your Base or Virtual Warehouse connection using the engine guide. Replace old host/realm/truststore values rather than reusing embedded examples. Verify `SCALE_FACTOR`, `ZK_HOSTS`/`VW_HOST`, `REALM`, and `TRUSTSTORE_PASS` in the guide's shell commands before substitution.
+| Impala (Base or Data Services)
+| `vi CDP_Validation_TPCDS/impala-tpcds-kit/util_internalRunQuery_impala.sh`
+| Review the `impala-shell` command's endpoint (`-i`), protocol, TLS and Kerberos options. Guide variables `IMPALA_HOST` (Base) or `IMPALA_COORD` / `ECS_ENV` (Data Services) are shell substitution inputs, not env-file keys. Verify `SCALE_FACTOR`/format for the selected dataset.
+| Trino
+| `vi CDP_Validation_TPCDS/trino-tpcds-kit/query_runner_trino.sh` +
+`vi CDP_Validation_TPCDS/trino-tpcds-kit/util_internalRunQuery_trino.sh`
+| Verify `TRINO_URL`, `DATABASE`, `START`, `END`, `REPEAT`, and the helper's `--user` argument. Supply `TRINO_PASSWORD` only in the private current session; check the runner's `SCALE`/`FORMAT` arguments against the Hive-generated schema.
+| Spark
+| link:spark-tpcds-kit/spark-tpcds.adoc[Guide shell commands, not an env file]
+| Verify `NAMENODE_HOST`, `SPARK_DATAGEN_VERSION`, `QUERY_EXEC_VERSION`, `SCALE_FACTOR`, `DB_NAME`, Kerberos realm, HDFS artifact/query paths, queue, executor/driver resources. This documented flow passes settings to `spark3-submit`; it does not load the kit's `config.yaml` automatically.
+|===
+
+In `vi`, press `i` to edit, then `Esc`, `:wq`, Enter to save/quit (`:q!` discards edits). Keep populated JDBC credentials/truststore passwords out of Git, logs, and editor backups. Do not type real passwords into saved history. For Trino in Bash, use `read -r -s -p 'Trino password: ' TRINO_PASSWORD; printf '\n'; export TRINO_PASSWORD` instead of a password literal, then unset it when finished.
+
+Follow each engine guide's prerequisites/authentication and connection checks before data generation, loading, query execution, then report collection. No suite-wide dry-run is provided. `bash -n` on edited shell scripts checks syntax only without executing them; do not source `parameters.sh` or other untrusted scripts as a validator. Never edit generated query SQL, datasets, CSV result sheets, ZIPs or logs to configure a run; change the source scripts/guide command parameters. Benchmark runs can create/overwrite data and reports.
+
+=== Execution sequence
+
 1. Pick the engine(s) you want to validate and open the corresponding kit folder from the table above.
 2. Follow the instructions inside that folder to:
    .. Generate the TPC-DS dataset at your chosen scale factor.

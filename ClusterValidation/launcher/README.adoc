@@ -18,7 +18,7 @@ back its own partial resources and exits non-zero.
 
 == Build
 
-Run from the repo root (paths are written that way throughout this README so
+Run from `ClusterValidation/` (paths are written that way throughout this README so
 each snippet is copy-pasteable):
 
 [source,bash]
@@ -29,6 +29,22 @@ podman build -t ephemeral-ec2-launcher:latest launcher/container/
 ----
 
 == Run
+
+=== Create and review operator configuration
+
+The script supports `launcher/.launcher.env`, but the `.launcher.env.example` listed below is not shipped in this checkout. Create the actual local input from `ClusterValidation/`:
+
+[source,bash]
+----
+umask 077
+vi launcher/.launcher.env
+----
+
+Use trusted shell assignments (`KEY=value`, not `KEY:value`), one per line. Set *all required* keys: `ENV_NAME` (runner label), `AWS_REGION`, `AWS_PROFILE` (host profile), `VPC_ID`, `SUBNET_ID` (in that VPC), and `CM_HOST` (cluster CM private IP used to discover security groups). `INSTANCE_TYPE` is optional (default `t3.micro`). Replace sample IDs/hosts; verify region, profile, VPC/subnet membership and SSM connectivity before launching. CM credentials do not belong here. CLI flags and existing nonempty environment values override file settings.
+
+This file is sourced as shell code: do not source untrusted downloads. In `vi`, press `i` to edit, then `Esc`, `:wq`, Enter to save/quit (`:q!` to discard). Keep the file private and untracked.
+
+For local syntax/options checks only, use `bash -n launcher/.launcher.env` and `bash launcher/run.sh --help`. These do not validate cloud IDs or authorization. There is no launcher dry-run; even `--build` continues into provisioning. Build-only is the explicit `podman build` command above.
 
 Before running, ensure your AWS SSO session is valid on the host:
 
@@ -63,7 +79,7 @@ Separate the build from the run (cleanest for repeated invocations):
 
 [source,bash]
 ----
-./launcher/run.sh -c ./launcher/.launcher.env --build -q 2>/dev/null || true   # just build
+podman build -t ephemeral-ec2-launcher:latest launcher/container/             # build only
 ./launcher/run.sh -c ./launcher/.launcher.env > /tmp/handoff.json              # run, capture JSON
 ----
 
@@ -83,6 +99,8 @@ After a successful run:
 ----
 jq . /tmp/handoff.json    # should pretty-print the handoff object
 ----
+
+Treat this JSON as generated output, never as operator configuration; do not edit resource IDs. Preserve it for the downstream smoke test/teardown. Syntax inspection with `jq` does not prove the resources are safe to delete.
 
 If the file is empty, the launcher died on argv parsing or AWS; check your
 terminal's stderr.
@@ -137,5 +155,5 @@ container/
   entrypoint.sh
   requirements.txt  # boto3
 run.sh              # host-side runner with 5-tier config precedence
-.launcher.env.example
+.launcher.env         # operator-created local file; no example is shipped
 ----

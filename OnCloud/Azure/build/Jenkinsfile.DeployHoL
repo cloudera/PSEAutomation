@@ -71,7 +71,7 @@
         LANG = "C.UTF-8"
         HOL_AUTO_EXEC_DIR = "/home/holautosa/HOL_AUTO_EXEC_DIR"
         CONFIG_DIR = "${HOL_AUTO_EXEC_DIR}/userconfig"
-        CONFIG_FILE = "${CONFIG_DIR}/configfile"
+        CONFIG_FILE = "${WORKSPACE}@tmp/hol-config-${BUILD_NUMBER}/configfile"
         REPO_URL = "https://github.com/cloudera/PSEAutomation.git"
         //BRANCH_NAME = ""
         REPO_DIR = "${HOL_AUTO_EXEC_DIR}/hol-automation"
@@ -162,11 +162,12 @@
                     def domainRegex = /^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$|^(?:[a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+$/
                     def hostedZoneRegex = /^[a-zA-Z0-9_-]+$/
                     def versionRegex = /^\d+\.\d+\.\d+$/
+                    def hostedZoneId = params.HOSTEDZONEID?.trim()
 
                     if (!params.DOMAIN?.trim() || !params.DOMAIN.matches(domainRegex)) {
                         printError("DOMAIN is invalid! Please provide a valid domain name or subdomain (e.g., sub.example.com).")
                     }
-                    if (!params.HOSTEDZONEID?.trim() || !params.HOSTEDZONEID.matches(hostedZoneRegex)) {
+                    if (!hostedZoneId || !hostedZoneId.matches(hostedZoneRegex)) {
                         printError("HOSTEDZONEID is invalid! Please provide a valid hosted zone ID.")
                     }
 
@@ -228,8 +229,7 @@
                 script {
                     // Create userconfig directory and change to that directory
                     sh '''
-                        mkdir -p ${CONFIG_DIR}
-                        cd ${CONFIG_DIR} 
+                        mkdir -p "$CONFIG_DIR" "$(dirname "$CONFIG_FILE")"
                     '''
                 }
             }
@@ -297,7 +297,7 @@ CDF_USE_PUBLIC_LB:${params.CDF_USE_PUBLIC_LB}
 DATALAKE_VERSION:${params.DATALAKE_VERSION}
 
 DOMAIN:${params.DOMAIN}
-HOSTEDZONEID:${params.HOSTEDZONEID}
+HOSTEDZONEID:${params.HOSTEDZONEID?.trim()}
 ENV_TAGS:${envTags}
 """
                     sh """
@@ -385,6 +385,22 @@ ENV_TAGS:${envTags}
             }
         }
 
+        stage('Validate Azure PostgreSQL Region') {
+            when { expression { return params.ACTION == 'provision' } }
+            steps {
+                script {
+                    def status = sh(script: """#!/bin/bash
+                        set -o pipefail
+                        docker run --rm -v '${env.CONFIG_DIR}:/userconfig' -v '${env.CONFIG_FILE}:/userconfig/configfile:ro' -v '${env.AZURE_CONFIG_DIR}:/root/.azure' ${env.DOCKER_IMAGE} preflight 2>&1 | tee '${env.WORKSPACE}/hol-provisioner-azure-${env.BUILD_NUMBER}.log'
+                    """, returnStatus: true)
+                    if (status != 0) {
+                        currentBuild.description = "Azure PostgreSQL region preflight failed. See the attached log for details."
+                        error(currentBuild.description)
+                    }
+                }
+            }
+        }
+
         stage('Assign CDP env admin roles for pipeline') {
             when {
                 expression { params.ACTION == 'destroy' }
@@ -425,7 +441,7 @@ ENV_TAGS:${envTags}
                         echo "Using locally built image: ${env.DOCKER_IMAGE}"
                     }
                     // Non-zero container exit (including ansible-playbook propagated via hol_enable_data_services) fails this stage.
-                    sh "docker run --name hol-provisioner-azure-${BUILD_NUMBER} -i -e BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' -e BUILD_URL='${env.BUILD_URL ?: ''}' -v ${env.CONFIG_DIR}:/userconfig -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp -v ${env.AZURE_CONFIG_DIR}:/root/.azure -v ${env.AWS_CONFIG_DIR}:/root/.aws ${env.DOCKER_IMAGE} ${params.ACTION}"
+                    sh "docker run --name hol-provisioner-azure-${BUILD_NUMBER} -i -e BUILD_USER_ID='${env.BUILD_USER_ID ?: ''}' -e BUILD_URL='${env.BUILD_URL ?: ''}' -v '${env.CONFIG_DIR}:/userconfig' -v '${env.CONFIG_FILE}:/userconfig/configfile:ro' -v ${REPO_DIR}:/repo -v ~/.cdp/:/root/.cdp -v ${env.AZURE_CONFIG_DIR}:/root/.azure -v ${env.AWS_CONFIG_DIR}:/root/.aws ${env.DOCKER_IMAGE} ${params.ACTION}"
                 }
             }
         }
@@ -516,8 +532,8 @@ ENV_TAGS:${envTags}
                 env.WORKSHOP_NAME_LOWER = params.WORKSHOP_NAME.toLowerCase()
                 if (params.ACTION == 'provision') {
                     sh """
-                        cd /home/holautosa/HOL_AUTO_EXEC_DIR/userconfig/ && sudo chown -R jenkins:jenkins . && \
-                        sudo cp -p ${env.WORKSHOP_NAME_LOWER}.txt configfile .${env.WORKSHOP_NAME_LOWER}/${env.WORKSHOP_NAME_LOWER}-keypair.pem ${WORKSPACE} 2>/dev/null || true
+                        if [ -f "\$CONFIG_FILE" ]; then cp -p "\$CONFIG_FILE" "\$WORKSPACE/configfile"; fi
+                        cd "\$CONFIG_DIR" && sudo cp -p ${env.WORKSHOP_NAME_LOWER}.txt .${env.WORKSHOP_NAME_LOWER}/${env.WORKSHOP_NAME_LOWER}-keypair.pem "\$WORKSPACE" 2>/dev/null || true
                     """
                 }
                 archiveArtifacts artifacts: "${env.WORKSHOP_NAME_LOWER}.txt,configfile", allowEmptyArchive: true
@@ -645,8 +661,8 @@ ENV_TAGS:${envTags}
                 env.WORKSHOP_NAME_LOWER = params.WORKSHOP_NAME.toLowerCase()
                 if (params.ACTION == 'provision') {
                     sh """
-                        cd /home/holautosa/HOL_AUTO_EXEC_DIR/userconfig/ && sudo chown -R jenkins:jenkins . && \
-                        sudo cp -p ${env.WORKSHOP_NAME_LOWER}.txt configfile .${env.WORKSHOP_NAME_LOWER}/${env.WORKSHOP_NAME_LOWER}-keypair.pem ${WORKSPACE} 2>/dev/null || true
+                        if [ -f "\$CONFIG_FILE" ]; then cp -p "\$CONFIG_FILE" "\$WORKSPACE/configfile"; fi
+                        cd "\$CONFIG_DIR" && sudo cp -p ${env.WORKSHOP_NAME_LOWER}.txt .${env.WORKSHOP_NAME_LOWER}/${env.WORKSHOP_NAME_LOWER}-keypair.pem "\$WORKSPACE" 2>/dev/null || true
                     """
                 }
                 archiveArtifacts artifacts: "${env.WORKSHOP_NAME_LOWER}.txt,configfile", allowEmptyArchive: true
@@ -749,6 +765,7 @@ ENV_TAGS:${envTags}
         cleanup {
             sh "rm -f ${WORKSPACE}/hol-provisioner-azure-${BUILD_NUMBER}.log"
             sh 'echo "CLEANUP: Docker : "; docker rm -f hol-provisioner-azure-${BUILD_NUMBER} || true'
+            sh 'rm -f -- "$CONFIG_FILE"; if [ -d "$(dirname "$CONFIG_FILE")" ]; then rmdir -- "$(dirname "$CONFIG_FILE")"; fi'
         }
     }
 }

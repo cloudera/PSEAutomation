@@ -25,6 +25,12 @@ A Flask web UI + Terraform + Ansible toolchain to provision EC2 clusters (master
 
 ##  Installation
 
+**Configuration in this checkout:** From the repository root, run `vi PvC-InfraDeployer/UI-webapp/config/deployments.yml`. This is YAML, not an `.env` file. Verify `deployments[].name`, `ami_id`, `instance_count`, `vpc_id`, `required_elastic_ip`, and each included `master`, `worker`, or `data_service` block's `count`, `prefix`, and `type`. Replace sample AMIs/VPC IDs for the selected account/region; review optional role counts and Elastic IP choices. Do not assume the comment about an empty `vpc_id` proves how a missing application will handle it.
+
+In `vi`, press `i` to edit, then `Esc`, `:wq`, Enter to save/quit (`:q!` discards changes). Do not put AWS secrets or private keys in the YAML or commit editor backups. The intended UI collects credentials/key-pair information separately; its backend behavior cannot be verified here.
+
+**Blocked prototype:** The `webapp` application and `run.sh` referenced below are absent from this checkout. The YAML and Terraform/Ansible assets exist, but there is no runnable UI entrypoint or verified preflight sequence here. Do not create an invented env file, run Terraform as a "check", or edit generated state/logs to compensate. The instructions below describe the prototype layout, not a complete installation available in this tree.
+
 1. **Clone the repo**
 
    ```bash

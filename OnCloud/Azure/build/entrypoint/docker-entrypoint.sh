@@ -12,6 +12,12 @@ USER_ACTION=$1
 hol_startup_banner
 # Handling the User Action ('provision' or 'destroy').
 case $USER_ACTION in
+preflight)
+    validating_variables
+    setup_azure_cli_auth
+    hol_subsection "Azure region preflight" "🌍"
+    azure_postgres_flexible_server_region_supported
+    ;;
 provision)
     hol_banner "HoL Provision Pipeline" "🚀"
     validating_variables
@@ -132,7 +138,7 @@ destroy)
     hol_ok "Workshop '${workshop_name}' teardown completed"
     ;;
 *)
-    hol_fail "Invalid action '${USER_ACTION}'. Valid values: provision, destroy"
+    hol_fail "Invalid action '${USER_ACTION}'. Valid values: preflight, provision, destroy"
     ;;
 
 esac
