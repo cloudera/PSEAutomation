@@ -162,11 +162,12 @@
                     def domainRegex = /^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$|^(?:[a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+$/
                     def hostedZoneRegex = /^[a-zA-Z0-9_-]+$/
                     def versionRegex = /^\d+\.\d+\.\d+$/
+                    def hostedZoneId = params.HOSTEDZONEID?.trim()
 
                     if (!params.DOMAIN?.trim() || !params.DOMAIN.matches(domainRegex)) {
                         printError("DOMAIN is invalid! Please provide a valid domain name or subdomain (e.g., sub.example.com).")
                     }
-                    if (!params.HOSTEDZONEID?.trim() || !params.HOSTEDZONEID.matches(hostedZoneRegex)) {
+                    if (!hostedZoneId || !hostedZoneId.matches(hostedZoneRegex)) {
                         printError("HOSTEDZONEID is invalid! Please provide a valid hosted zone ID.")
                     }
 
@@ -302,7 +303,7 @@ CDF_USE_PUBLIC_LB:${params.CDF_USE_PUBLIC_LB}
 DATALAKE_VERSION:${params.DATALAKE_VERSION}
 
 DOMAIN:${params.DOMAIN}
-HOSTEDZONEID:${params.HOSTEDZONEID}
+HOSTEDZONEID:${params.HOSTEDZONEID?.trim()}
 ENV_TAGS:${envTags}
 """
                     sh """
