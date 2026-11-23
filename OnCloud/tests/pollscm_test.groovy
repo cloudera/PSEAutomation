@@ -126,6 +126,7 @@ def runCase = { String file, String target, Set failures ->
 }
 
 ['OnCloud/AWS/build/Jenkinsfile.PollSCM', 'OnCloud/Azure/build/Jenkinsfile.PollSCM'].each { file ->
+    assert !new File(file).text.contains('env["${cloud.toUpperCase()}_')
     runCase(file, 'AWS', [] as Set)
     runCase(file, 'AZURE', [] as Set)
     runCase(file, 'BOTH', [] as Set)
