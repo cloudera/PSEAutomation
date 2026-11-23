@@ -169,6 +169,8 @@ docker images | grep hol-azure
 
 `TF_QUICKSTART_VERSION` pins the `cdp-tf-quickstarts` tag baked into the image (see `Dockerfile`). Override it when testing a newer quickstart release.
 
+The image pins `community.general` 9.5.0 for compatibility with `ansible-core` 2.16.8 and the Keycloak modules. Rebuild the image when changing these dependencies; an existing image retains its installed collection.
+
 === Log in to Docker Hub
 
 [source,bash]

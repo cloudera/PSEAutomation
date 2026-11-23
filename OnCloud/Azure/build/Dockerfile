@@ -32,9 +32,13 @@ RUN python3 -m pip config set global.break-system-packages true && \
     pip3 install git+https://github.com/cloudera-labs/cdpy@main#egg=cdpy && \
     #pip3 install git+https://github.com/cloudera-labs/cdpy@devel#egg=cdpy && \
     pip3 uninstall -y cdpcli-beta && pip install cdpcli && \
-    ansible-galaxy collection install community.general -vv && \
     #ansible-galaxy collection install git+https://github.com/cloudera-labs/cloudera.cloud.git,devel
-    ansible-galaxy collection install git+https://github.com/cloudera-labs/cloudera.cloud.git,main
+    ansible-galaxy collection install git+https://github.com/cloudera-labs/cloudera.cloud.git,main && \
+    ansible-galaxy collection install 'community.general:==9.5.0' --force -vv && \
+    ansible-doc -j community.general.keycloak_client community.general.keycloak_group community.general.keycloak_realm | \
+      python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(not all(d.get('community.general.'+n) for n in ('keycloak_client','keycloak_group','keycloak_realm')))" && \
+    ansible-doc -t filter -j community.general.json_query | \
+      python3 -c "import json,sys; sys.exit(not json.load(sys.stdin).get('community.general.json_query'))"
 
 COPY entrypoint/hol-patch-python-deps.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/hol-patch-python-deps.sh && /usr/local/bin/hol-patch-python-deps.sh
