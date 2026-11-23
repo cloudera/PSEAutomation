@@ -487,13 +487,16 @@ pipeline {
                     if (!selected) {
                         return ''
                     }
+                    def cloudStatuses = cloud == 'AWS'
+                        ? [env.AWS_BUILD_OK, env.AWS_DEPLOY_OK, env.AWS_DESTROY_OK, env.AWS_PROMOTE_OK]
+                        : [env.AZURE_BUILD_OK, env.AZURE_DEPLOY_OK, env.AZURE_DESTROY_OK, env.AZURE_PROMOTE_OK]
                     """
                     <tr>
                         <td>${cloud}</td>
-                        <td>${statusText(env["${cloud.toUpperCase()}_BUILD_OK"])}</td>
-                        <td>${statusText(env["${cloud.toUpperCase()}_DEPLOY_OK"])}</td>
-                        <td>${statusText(env["${cloud.toUpperCase()}_DESTROY_OK"])}</td>
-                        <td>${statusText(env["${cloud.toUpperCase()}_PROMOTE_OK"])}</td>
+                        <td>${statusText(cloudStatuses[0])}</td>
+                        <td>${statusText(cloudStatuses[1])}</td>
+                        <td>${statusText(cloudStatuses[2])}</td>
+                        <td>${statusText(cloudStatuses[3])}</td>
                     </tr>
                     """
                 }
@@ -528,13 +531,16 @@ pipeline {
                     if (!selected) {
                         return ''
                     }
+                    def cloudStatuses = cloud == 'AWS'
+                        ? [env.AWS_BUILD_OK, env.AWS_DEPLOY_OK, env.AWS_DESTROY_OK, env.AWS_PROMOTE_OK]
+                        : [env.AZURE_BUILD_OK, env.AZURE_DEPLOY_OK, env.AZURE_DESTROY_OK, env.AZURE_PROMOTE_OK]
                     """
                     <tr>
                         <td>${cloud}</td>
-                        <td>${statusText(env["${cloud.toUpperCase()}_BUILD_OK"])}</td>
-                        <td>${statusText(env["${cloud.toUpperCase()}_DEPLOY_OK"])}</td>
-                        <td>${statusText(env["${cloud.toUpperCase()}_DESTROY_OK"])}</td>
-                        <td>${statusText(env["${cloud.toUpperCase()}_PROMOTE_OK"])}</td>
+                        <td>${statusText(cloudStatuses[0])}</td>
+                        <td>${statusText(cloudStatuses[1])}</td>
+                        <td>${statusText(cloudStatuses[2])}</td>
+                        <td>${statusText(cloudStatuses[3])}</td>
                     </tr>
                     """
                 }
